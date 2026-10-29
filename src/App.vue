@@ -10,7 +10,7 @@
           </div>
           <div>
             <h1 class="text-base font-bold tracking-tight">理发店会员额度管家</h1>
-            <p class="text-xs text-indigo-300">纯单机免服务器 · 离线秒开 · 微信安全备份</p>
+            <p class="text-[11px] text-indigo-300">独立单机版 · 离线秒开 · 微信安全备份</p>
           </div>
         </div>
 
@@ -51,7 +51,7 @@
         <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
           <div class="flex items-center justify-between pb-2 border-b border-slate-100">
             <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">今日小店收支简报</span>
-            <span class="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-medium">● 单机已就绪</span>
+            <span class="text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-medium">● 离线单机运行</span>
           </div>
 
           <div class="grid grid-cols-2 gap-3 mt-3">
@@ -83,38 +83,42 @@
               <span class="font-bold text-slate-800 tabular-nums">¥ {{ formatCent(dashboard.totalBalance || 0) }}</span>
             </div>
             <div>
-              <span class="text-slate-400">会员总人数：</span>
+              <span class="text-slate-400">全店会员总数：</span>
               <span class="font-bold text-slate-800 tabular-nums">{{ dashboard.memberCount || 0 }} 人</span>
             </div>
           </div>
         </div>
 
         <!-- 快捷入口 -->
-        <div class="grid grid-cols-2 gap-3">
+        <div class="grid grid-cols-3 gap-2 text-center">
           <button 
             @click="activeTab = 'members'"
-            class="flex items-center space-x-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-left btn-press"
+            class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm btn-press flex flex-col items-center justify-center"
           >
-            <div class="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl">
+            <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg mb-1">
               👥
             </div>
-            <div>
-              <div class="font-bold text-sm text-slate-800">全部会员名册</div>
-              <div class="text-xs text-slate-500">查余额 · 充值扣费</div>
+            <div class="font-bold text-xs text-slate-800">全部会员</div>
+          </button>
+
+          <button 
+            @click="activeTab = 'services'"
+            class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm btn-press flex flex-col items-center justify-center"
+          >
+            <div class="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center text-lg mb-1">
+              💈
             </div>
+            <div class="font-bold text-xs text-slate-800">服务定价</div>
           </button>
 
           <button 
             @click="activeTab = 'backup'"
-            class="flex items-center space-x-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-left btn-press"
+            class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm btn-press flex flex-col items-center justify-center"
           >
-            <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">
-              📤
+            <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg mb-1">
+              🛡️
             </div>
-            <div>
-              <div class="font-bold text-sm text-slate-800">备份与导出</div>
-              <div class="text-xs text-slate-500">发到微信 · Excel</div>
-            </div>
+            <div class="font-bold text-xs text-slate-800">微信备份</div>
           </button>
         </div>
 
@@ -176,7 +180,7 @@
       <div v-if="activeTab === 'members'" class="space-y-3">
         <div class="flex items-center justify-between px-1">
           <span class="text-xs text-slate-500 font-semibold">共 {{ membersList.length }} 位客户</span>
-          <div class="text-xs text-slate-400">点击查看充值消费明细</div>
+          <div class="text-xs text-slate-400">点击卡片可查看或编辑资料</div>
         </div>
 
         <div class="space-y-2">
@@ -203,11 +207,11 @@
         </div>
       </div>
 
-      <!-- TAB 3: 流水明细 -->
+      <!-- TAB 3: 流水明细与撤销冲正 -->
       <div v-if="activeTab === 'ledgers'" class="space-y-3">
-        <div class="flex space-x-2 bg-slate-200/70 p-1 rounded-xl text-xs font-medium">
+        <div class="flex space-x-1.5 bg-slate-200/70 p-1 rounded-xl text-xs font-medium">
           <button 
-            v-for="type in [{ key: '', label: '全部流水' }, { key: 'CONSUME', label: '剪发扣费' }, { key: 'RECHARGE', label: '储值入账' }]"
+            v-for="type in [{ key: '', label: '全部' }, { key: 'CONSUME', label: '剪发扣费' }, { key: 'RECHARGE', label: '储值入账' }, { key: 'REFUND', label: '撤销冲正' }]"
             :key="type.key"
             @click="ledgerFilterType = type.key; refreshLedgers()"
             class="flex-1 py-1.5 rounded-lg transition"
@@ -224,15 +228,15 @@
           <div 
             v-for="item in ledgersList" 
             :key="item.id"
-            class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-xs"
+            class="bg-white p-3.5 rounded-xl border border-slate-200 shadow-sm text-xs relative"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-2">
                 <span 
                   class="px-2 py-0.5 rounded-md font-bold text-[11px]"
-                  :class="item.type === 'RECHARGE' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'"
+                  :class="getBadgeClass(item.type)"
                 >
-                  {{ item.type === 'RECHARGE' ? '充值入账' : '消费扣减' }}
+                  {{ getTypeText(item.type) }}
                 </span>
                 <span class="font-bold text-slate-800 text-sm">{{ item.memberName }}</span>
                 <span class="text-slate-400 font-mono">{{ formatPhone(item.memberPhone) }}</span>
@@ -247,28 +251,85 @@
 
             <div class="mt-2 flex items-center justify-between text-slate-500 pt-1 border-t border-slate-100 text-[11px]">
               <div class="truncate max-w-[200px] text-slate-600">
-                {{ item.remark || '无项目说明' }}
+                {{ item.remark || '无说明' }}
               </div>
               <div>
-                扣后余额: ¥{{ (item.balanceAfter / 100).toFixed(2) }}
+                变动后余额: ¥{{ (item.balanceAfter / 100).toFixed(2) }}
               </div>
             </div>
 
-            <div class="flex items-center justify-end text-slate-400 text-[10px] mt-1">
+            <!-- 操作时间与撤销按钮 -->
+            <div class="flex items-center justify-between text-slate-400 text-[10px] mt-2 pt-1 border-t border-dashed border-slate-100">
               <span>{{ formatTime(item.created_at) }}</span>
+              
+              <button 
+                v-if="item.type !== 'REFUND' && !item.isRefunded"
+                @click.stop="confirmRefundLedger(item)"
+                class="text-rose-600 hover:text-rose-700 bg-rose-50 px-2 py-0.5 rounded font-medium active:bg-rose-100"
+              >
+                撤销此单
+              </button>
+              <span v-else-if="item.isRefunded" class="text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                已撤销
+              </span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- TAB 4: 微信备份 & 导出安全中心 -->
+      <!-- TAB 4: 理发项目与价格设置 -->
+      <div v-if="activeTab === 'services'" class="space-y-4">
+        <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div>
+              <h2 class="font-bold text-slate-900 text-sm">理发服务项目与定价</h2>
+              <p class="text-xs text-slate-400">扣款时一键带入常用项目与金额</p>
+            </div>
+            <button 
+              @click="openAddServiceModal"
+              class="bg-indigo-600 text-white text-xs px-3 py-1.5 rounded-lg font-bold shadow btn-press"
+            >
+              + 新增项目
+            </button>
+          </div>
+
+          <div class="divide-y divide-slate-100 mt-2">
+            <div 
+              v-for="s in hairServices" 
+              :key="s.id"
+              class="py-3 flex items-center justify-between text-xs"
+            >
+              <div>
+                <span class="font-bold text-slate-800 text-sm">{{ s.name }}</span>
+                <span class="text-indigo-600 font-bold ml-2 text-sm">¥ {{ s.price }}</span>
+              </div>
+              <div class="flex space-x-2">
+                <button 
+                  @click="openEditServiceModal(s)"
+                  class="text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg font-bold active:bg-indigo-100"
+                >
+                  修改
+                </button>
+                <button 
+                  @click="deleteServiceItem(s.id)"
+                  class="text-rose-600 bg-rose-50 px-2.5 py-1 rounded-lg font-bold active:bg-rose-100"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 5: 微信备份 & 导出安全中心 -->
       <div v-if="activeTab === 'backup'" class="space-y-4">
         <div class="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
           <div class="flex items-center space-x-2 mb-2">
             <span class="text-xl">🛡️</span>
             <div>
-              <h2 class="font-bold text-slate-900 text-sm">单机数据安全与微信备份</h2>
-              <p class="text-xs text-slate-400">不用云服务器，数据存在手机里，换机也不怕丢</p>
+              <h2 class="font-bold text-slate-900 text-sm">单机账本安全与微信备份</h2>
+              <p class="text-xs text-slate-400">数据存放在手机私有沙盒内，微信备份双保险</p>
             </div>
           </div>
 
@@ -281,8 +342,8 @@
               <div class="flex items-center space-x-2">
                 <span class="text-lg">📤</span>
                 <div class="text-left">
-                  <div>一键备份所有账本 (发送至微信)</div>
-                  <div class="text-[10px] text-emerald-100 font-normal">生成加密备份文件，可发给微信文件传输助手永久保存</div>
+                  <div>一键备份所有账本 (发到微信)</div>
+                  <div class="text-[10px] text-emerald-100 font-normal">生成全店备份，发给微信文件传输助手永久保存</div>
                 </div>
               </div>
               <span>›</span>
@@ -297,7 +358,7 @@
                 <span class="text-lg">📊</span>
                 <div class="text-left">
                   <div>导出 Excel 对账报表 (.csv)</div>
-                  <div class="text-[10px] text-blue-100 font-normal">方便用手机 WPS 或电脑 Excel 打开核算</div>
+                  <div class="text-[10px] text-blue-100 font-normal">手机 WPS 或电脑 Excel 直接打开核算</div>
                 </div>
               </div>
               <span>›</span>
@@ -310,7 +371,7 @@
                   <span class="text-lg">📥</span>
                   <div class="text-left">
                     <div>从微信/手机备份文件恢复数据</div>
-                    <div class="text-[10px] text-slate-400 font-normal">换新手机或误删时，选中之前备份的文件即可1秒还原</div>
+                    <div class="text-[10px] text-slate-400 font-normal">换新手机或误操作时，选中备份文件1秒还原</div>
                   </div>
                 </div>
                 <span>选择文件</span>
@@ -323,17 +384,17 @@
         <div class="bg-indigo-50/70 p-4 rounded-2xl border border-indigo-100 text-xs text-indigo-900 leading-relaxed space-y-2">
           <div class="font-bold flex items-center space-x-1">
             <span>💡</span>
-            <span>店主日常使用小建议：</span>
+            <span>店主省心锦囊：</span>
           </div>
-          <p>1. 本 App 是<strong>完全本地单机运行</strong>，店里 WiFi 断网也能正常扣费记账，完全不消耗流量。</p>
-          <p>2. 建议<strong>每周日打烊时</strong>，顺手点一下「一键备份所有账本」，发一份到微信“文件传输助手”或微信群里，换新手机时随时导入，双重保险最安心！</p>
+          <p>1. 本 App 为<strong>纯安卓原生独立应用</strong>，运行在手机专属私有沙盒内，手机管家清理“垃圾”不会误删账本。</p>
+          <p>2. 建议<strong>每周日打烊时</strong>点一下「一键备份所有账本」，顺手发给微信“文件传输助手”，双重保险最安心！</p>
         </div>
       </div>
 
     </main>
 
     <!-- 底部固定导航栏 -->
-    <nav class="fixed bottom-0 left-0 right-0 max-w-[460px] mx-auto bg-white/95 backdrop-blur-md border-t border-slate-200 z-30 pb-safe shadow-lg">
+    <nav class="fixed bottom-0 left-0 right-0 max-w-[480px] mx-auto bg-white/95 backdrop-blur-md border-t border-slate-200 z-30 pb-safe shadow-lg">
       <div class="grid grid-cols-4 h-14">
         <button 
           @click="activeTab = 'home'"
@@ -359,7 +420,7 @@
           :class="activeTab === 'ledgers' ? 'text-indigo-600 font-bold' : 'text-slate-400'"
         >
           <span class="text-lg">📋</span>
-          <span class="text-[10px] mt-0.5">账单流水</span>
+          <span class="text-[10px] mt-0.5">流水账单</span>
         </button>
 
         <button 
@@ -368,21 +429,20 @@
           :class="activeTab === 'backup' ? 'text-indigo-600 font-bold' : 'text-slate-400'"
         >
           <span class="text-lg">🛡️</span>
-          <span class="text-[10px] mt-0.5">备份对账</span>
+          <span class="text-[10px] mt-0.5">安全备份</span>
         </button>
       </div>
     </nav>
 
     <!-- ================== 弹窗/抽屉层 ================== -->
 
-    <!-- 1. 会员详情与收银面板 -->
+    <!-- 1. 会员详情卡片 -->
     <div 
       v-if="selectedMember" 
       class="fixed inset-0 bg-black/60 z-40 flex flex-col justify-end animate-fade-in"
       @click.self="selectedMember = null"
     >
-      <div class="bg-white rounded-t-3xl max-h-[90vh] flex flex-col animate-slide-up shadow-2xl max-w-[460px] mx-auto w-full">
-        <!-- 弹窗顶栏 -->
+      <div class="bg-white rounded-t-3xl max-h-[90vh] flex flex-col animate-slide-up shadow-2xl max-w-[480px] mx-auto w-full">
         <div class="p-4 border-b border-slate-100 flex items-center justify-between">
           <div class="flex items-center space-x-3">
             <div class="w-10 h-10 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-base">
@@ -396,15 +456,22 @@
               <div class="text-xs text-slate-400 font-mono tracking-wider">{{ formatPhone(selectedMember.phone) }}</div>
             </div>
           </div>
-          <button 
-            @click="selectedMember = null" 
-            class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-sm font-bold active:bg-slate-200"
-          >
-            ✕
-          </button>
+          <div class="flex items-center space-x-2">
+            <button 
+              @click="openEditMemberModal(selectedMember)"
+              class="text-xs text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full font-bold active:bg-indigo-100"
+            >
+              编辑
+            </button>
+            <button 
+              @click="selectedMember = null" 
+              class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-sm font-bold active:bg-slate-200"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
-        <!-- 内容滚动区 -->
         <div class="flex-1 overflow-y-auto p-4 space-y-4">
           <!-- 核心额度大卡片 -->
           <div class="bg-gradient-to-br from-indigo-700 to-purple-800 rounded-2xl p-5 text-white shadow-md relative overflow-hidden">
@@ -449,9 +516,9 @@
                   <div class="flex items-center space-x-2">
                     <span 
                       class="px-1.5 py-0.5 rounded text-[10px] font-bold"
-                      :class="l.type === 'RECHARGE' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'"
+                      :class="getBadgeClass(l.type)"
                     >
-                      {{ l.type === 'RECHARGE' ? '充值' : '扣费' }}
+                      {{ getTypeText(l.type) }}
                     </span>
                     <span class="font-medium text-slate-800">{{ l.remark || '无' }}</span>
                   </div>
@@ -474,9 +541,19 @@
               </div>
             </div>
           </div>
+
+          <!-- 删除会员按钮 (余额为0时显示) -->
+          <div v-if="selectedMember.balance === 0" class="pt-2 text-center">
+            <button 
+              @click="handleDeleteMember(selectedMember)"
+              class="text-xs text-slate-400 hover:text-rose-600 underline"
+            >
+              删除该会员档案 (仅限余额为0)
+            </button>
+          </div>
         </div>
 
-        <!-- 底部核心两项操作按钮 (拇指热区) -->
+        <!-- 底部核心两项操作按钮 -->
         <div class="p-4 border-t border-slate-200 bg-white grid grid-cols-2 gap-3 pb-safe">
           <button 
             @click="openRechargeModal(selectedMember)"
@@ -501,7 +578,7 @@
       class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in"
       @click.self="consumingMember = null"
     >
-      <div class="bg-white rounded-t-3xl flex flex-col animate-slide-up shadow-2xl max-w-[460px] mx-auto w-full">
+      <div class="bg-white rounded-t-3xl flex flex-col animate-slide-up shadow-2xl max-w-[480px] mx-auto w-full">
         <div class="p-3.5 border-b border-slate-100 flex items-center justify-between">
           <div class="flex items-center space-x-2">
             <span class="text-lg">✂️</span>
@@ -532,30 +609,28 @@
 
         <!-- 理发店快捷服务标签 -->
         <div class="p-3 bg-white border-b border-slate-100">
-          <div class="text-[11px] text-slate-400 mb-1.5 font-medium">点击快速带入常用服务项目：</div>
+          <div class="text-[11px] text-slate-400 mb-1.5 font-medium">点击带入常用项目与价格：</div>
           <div class="flex flex-wrap gap-1.5">
             <button 
               v-for="item in hairServices" 
               :key="item.id"
               @click="setConsumePreset(item)"
-              class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 active:bg-indigo-50 active:border-indigo-400 text-slate-700"
+              class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 active:bg-indigo-50 active:border-indigo-400 text-slate-700 font-medium"
             >
               {{ item.name }} (¥{{ item.price }})
             </button>
           </div>
 
-          <!-- 手动输入备注 -->
           <div class="mt-2">
             <input 
               v-model="consumeSummary" 
               type="text" 
-              placeholder="项目备注（如：洗剪吹 + 护发素）..." 
+              placeholder="项目备注（如：洗剪吹 + 护发）..." 
               class="w-full text-xs p-2 bg-slate-100 rounded-lg border-0 focus:ring-1 focus:ring-indigo-500 outline-none"
             />
           </div>
         </div>
 
-        <!-- 移动端大按键数字键盘 -->
         <Keypad 
           v-model="consumeAmountStr" 
           confirmText="确认扣除" 
@@ -572,7 +647,7 @@
       class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in"
       @click.self="rechargingMember = null"
     >
-      <div class="bg-white rounded-t-3xl max-h-[92vh] flex flex-col animate-slide-up shadow-2xl max-w-[460px] mx-auto w-full">
+      <div class="bg-white rounded-t-3xl max-h-[92vh] flex flex-col animate-slide-up shadow-2xl max-w-[480px] mx-auto w-full">
         <div class="p-4 border-b border-slate-100 flex items-center justify-between">
           <div>
             <div class="font-bold text-base text-slate-800">
@@ -676,23 +751,25 @@
       </div>
     </div>
 
-    <!-- 4. 新建会员弹窗 -->
+    <!-- 4. 新建/编辑会员弹窗 -->
     <div 
-      v-if="showNewMemberModal" 
+      v-if="showMemberModal" 
       class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in"
-      @click.self="showNewMemberModal = false"
+      @click.self="showMemberModal = false"
     >
       <div class="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
         <div class="flex items-center justify-between border-b pb-2">
-          <h3 class="font-bold text-base text-slate-900">登记新会员档案</h3>
-          <button @click="showNewMemberModal = false" class="text-slate-400">✕</button>
+          <h3 class="font-bold text-base text-slate-900">
+            {{ editingMemberId ? '编辑会员档案' : '登记新会员档案' }}
+          </h3>
+          <button @click="showMemberModal = false" class="text-slate-400">✕</button>
         </div>
 
         <div class="space-y-3 text-xs">
           <div>
             <label class="font-bold text-slate-700 block mb-1">客户姓名 <span class="text-red-500">*</span></label>
             <input 
-              v-model="newMemberForm.name" 
+              v-model="memberForm.name" 
               type="text" 
               placeholder="如：张姐 / 8号熟客" 
               class="w-full p-2.5 border rounded-lg outline-none focus:border-indigo-500"
@@ -702,17 +779,17 @@
           <div>
             <label class="font-bold text-slate-700 block mb-1">手机号码 <span class="text-red-500">*</span></label>
             <input 
-              v-model="newMemberForm.phone" 
+              v-model="memberForm.phone" 
               type="tel" 
               placeholder="报手机尾号查找的依据" 
               class="w-full p-2.5 border rounded-lg outline-none focus:border-indigo-500"
             />
           </div>
 
-          <div>
+          <div v-if="!editingMemberId">
             <label class="font-bold text-slate-700 block mb-1">开卡初始储值额 (元，可填0)</label>
             <input 
-              v-model.number="newMemberForm.initialBalance" 
+              v-model.number="memberForm.initialBalance" 
               type="number" 
               step="0.01" 
               placeholder="0.00" 
@@ -723,9 +800,9 @@
           <div>
             <label class="font-bold text-slate-700 block mb-1">发型与习惯偏好备注</label>
             <textarea 
-              v-model="newMemberForm.notes" 
+              v-model="memberForm.notes" 
               rows="2" 
-              placeholder="如：喜欢短发寸头、染发用栗棕色、不喜欢推子太贴皮等" 
+              placeholder="如：喜欢短发寸头、染发用板栗色、不喜欢推子太贴皮等" 
               class="w-full p-2 border rounded-lg outline-none focus:border-indigo-500 resize-none"
             ></textarea>
           </div>
@@ -733,23 +810,78 @@
 
         <div class="flex space-x-2 pt-2">
           <button 
-            @click="showNewMemberModal = false"
+            @click="showMemberModal = false"
             class="flex-1 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-600"
           >
             取消
           </button>
           <button 
-            @click="submitCreateMember"
-            :disabled="!newMemberForm.name || !newMemberForm.phone"
+            @click="submitMemberForm"
+            :disabled="!memberForm.name || !memberForm.phone"
             class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-xs font-bold text-white shadow"
           >
-            确认建档
+            保存档案
           </button>
         </div>
       </div>
     </div>
 
-    <!-- 5. 微信致谢通知卡片 -->
+    <!-- 5. 新增/编辑服务项目弹窗 -->
+    <div 
+      v-if="showServiceModal" 
+      class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in"
+      @click.self="showServiceModal = false"
+    >
+      <div class="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b pb-2">
+          <h3 class="font-bold text-base text-slate-900">
+            {{ serviceForm.id ? '修改服务项目' : '新增服务项目' }}
+          </h3>
+          <button @click="showServiceModal = false" class="text-slate-400">✕</button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">服务名称 <span class="text-red-500">*</span></label>
+            <input 
+              v-model="serviceForm.name" 
+              type="text" 
+              placeholder="如：深层精油护理 / 洗剪吹" 
+              class="w-full p-2.5 border rounded-lg outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label class="font-bold text-slate-700 block mb-1">服务价格 (元) <span class="text-red-500">*</span></label>
+            <input 
+              v-model.number="serviceForm.price" 
+              type="number" 
+              step="0.01" 
+              placeholder="0.00" 
+              class="w-full p-2.5 border rounded-lg outline-none focus:border-indigo-500"
+            />
+          </div>
+        </div>
+
+        <div class="flex space-x-2 pt-2">
+          <button 
+            @click="showServiceModal = false"
+            class="flex-1 py-2.5 rounded-xl border border-slate-300 text-xs font-bold text-slate-600"
+          >
+            取消
+          </button>
+          <button 
+            @click="submitServiceForm"
+            :disabled="!serviceForm.name || serviceForm.price === ''"
+            class="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 text-xs font-bold text-white shadow"
+          >
+            保存项目
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. 微信致谢通知卡片 -->
     <div 
       v-if="receiptModal" 
       class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in"
@@ -762,7 +894,6 @@
         <h3 class="font-bold text-slate-900 text-base">充值入账成功</h3>
         <p class="text-xs text-slate-500">已为会员 {{ receiptModal.name }} 存入额度</p>
 
-        <!-- 通知文案框 -->
         <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 text-left text-xs text-slate-700 leading-relaxed font-mono select-all">
           {{ receiptModal.messageText }}
         </div>
@@ -797,26 +928,30 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { localDb, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from './storage.js';
+import { localDb } from './storage.js';
 import Keypad from './components/Keypad.vue';
 
-// 页面标签：'home' | 'members' | 'ledgers' | 'backup'
+// 页面标签：'home' | 'members' | 'ledgers' | 'services' | 'backup'
 const activeTab = ref('home');
 
 // 全局状态
 const dashboard = ref({});
 const membersList = ref([]);
 const ledgersList = ref([]);
+const hairServices = ref([]);
+const rechargePlans = ref([]);
 const searchQuery = ref('');
 const toastMessage = ref('');
 
-// 模态弹窗状态
+// 选中的会员
 const selectedMember = ref(null);
 
+// 消费扣款抽屉
 const consumingMember = ref(null);
 const consumeAmountStr = ref('');
 const consumeSummary = ref('精致洗剪吹');
 
+// 充值抽屉
 const rechargingMember = ref(null);
 const rechargeForm = ref({
   actualPay: 300,
@@ -825,22 +960,28 @@ const rechargeForm = ref({
   remark: ''
 });
 
-const showNewMemberModal = ref(false);
-const newMemberForm = ref({
+// 新增/编辑会员表单
+const showMemberModal = ref(false);
+const editingMemberId = ref(null);
+const memberForm = ref({
   name: '',
   phone: '',
   initialBalance: 0,
   notes: ''
 });
 
+// 服务项目表单
+const showServiceModal = ref(false);
+const serviceForm = ref({
+  id: '',
+  name: '',
+  price: 38
+});
+
+// 微信通知
 const receiptModal = ref(null);
 const ledgerFilterType = ref('');
 
-// 理发店快捷服务与充值套餐
-const hairServices = ref(DEFAULT_SERVICES);
-const rechargePlans = ref(DEFAULT_RECHARGE_PLANS);
-
-// 辅助方法：分转元
 function formatCent(cent) {
   return ((cent || 0) / 100).toFixed(2);
 }
@@ -860,6 +1001,20 @@ function formatTime(isoStr) {
   return `${m}-${date} ${h}:${min}`;
 }
 
+function getTypeText(type) {
+  if (type === 'RECHARGE') return '储值入账';
+  if (type === 'CONSUME') return '剪发扣款';
+  if (type === 'REFUND') return '撤销冲正';
+  return '流水';
+}
+
+function getBadgeClass(type) {
+  if (type === 'RECHARGE') return 'bg-emerald-100 text-emerald-700';
+  if (type === 'CONSUME') return 'bg-rose-100 text-rose-700';
+  if (type === 'REFUND') return 'bg-amber-100 text-amber-700';
+  return 'bg-slate-100 text-slate-700';
+}
+
 function showToast(msg) {
   toastMessage.value = msg;
   setTimeout(() => {
@@ -867,11 +1022,12 @@ function showToast(msg) {
   }, 2500);
 }
 
-// 刷新数据
+// 刷新全部
 function refreshAll() {
   localDb.init();
   membersList.value = localDb.getMembers(searchQuery.value);
   dashboard.value = localDb.getDashboard();
+  hairServices.value = localDb.getServices();
   refreshLedgers();
 }
 
@@ -888,7 +1044,6 @@ function clearSearch() {
   refreshAll();
 }
 
-// 当前选中的会员流水
 const currentMemberLedgers = computed(() => {
   if (!selectedMember.value) return [];
   return localDb.getLedgers({ memberId: selectedMember.value.id });
@@ -899,7 +1054,7 @@ function selectMember(m) {
   selectedMember.value = latest || m;
 }
 
-// 打开充值
+// 充值
 function openRechargeModal(m) {
   rechargingMember.value = m;
   rechargeForm.value = {
@@ -915,7 +1070,6 @@ function applyRechargePlan(plan) {
   rechargeForm.value.giftAmount = plan.gift;
 }
 
-// 提交充值
 function submitRecharge() {
   try {
     const res = localDb.recharge({
@@ -933,7 +1087,6 @@ function submitRecharge() {
     rechargingMember.value = null;
     showToast('充值成功！');
 
-    // 微信通知文案
     receiptModal.value = {
       name: memberName,
       messageText: `【理发店会员充值通知】\n尊敬的 ${memberName}，您好！\n本次充值已成功入账：¥${totalCredit.toFixed(2)} 元\n当前卡内剩余额度为：¥${balanceAfter} 元。\n感谢您的支持与惠顾，祝您生活愉快！`
@@ -948,11 +1101,12 @@ function submitRecharge() {
   }
 }
 
-// 打开消费扣款
+// 扣款
 function openConsumeModal(m) {
   consumingMember.value = m;
   consumeAmountStr.value = '';
-  consumeSummary.value = '精致洗剪吹';
+  const first = hairServices.value[0];
+  consumeSummary.value = first ? first.name : '精致洗剪吹';
 }
 
 function setConsumePreset(item) {
@@ -966,7 +1120,6 @@ const isConsumeOverBalance = computed(() => {
   return cent > consumingMember.value.balance;
 });
 
-// 提交扣款
 function submitConsume() {
   const amountNum = parseFloat(consumeAmountStr.value);
   if (!amountNum || amountNum <= 0) {
@@ -993,30 +1146,106 @@ function submitConsume() {
   }
 }
 
-// 新增会员
+// 错单撤回 / 冲正退款
+function confirmRefundLedger(item) {
+  const amountYuan = Math.abs(item.changeAmount / 100).toFixed(2);
+  const actionText = item.type === 'CONSUME' ? `撤销扣款并退还 ¥${amountYuan}` : `撤销充值并扣回 ¥${amountYuan}`;
+  if (!confirm(`确定要${actionText}吗？系统将自动生成对冲冲正流水。`)) return;
+
+  try {
+    const res = localDb.refundLedger(item.id, '店主撤单冲正');
+    showToast(`撤销成功，当前卡内余额更新为 ¥${(res.newBalance / 100).toFixed(2)}`);
+    refreshAll();
+    if (selectedMember.value) {
+      selectedMember.value = localDb.getMemberById(selectedMember.value.id);
+    }
+  } catch (err) {
+    showToast('撤销失败: ' + err.message);
+  }
+}
+
+// 新增/编辑会员
 function openNewMemberModal() {
-  newMemberForm.value = {
+  editingMemberId.value = null;
+  memberForm.value = {
     name: '',
     phone: '',
     initialBalance: 0,
     notes: ''
   };
-  showNewMemberModal.value = true;
+  showMemberModal.value = true;
 }
 
-function submitCreateMember() {
+function openEditMemberModal(m) {
+  editingMemberId.value = m.id;
+  memberForm.value = {
+    name: m.name,
+    phone: m.phone,
+    notes: m.notes || ''
+  };
+  showMemberModal.value = true;
+}
+
+function submitMemberForm() {
   try {
-    const created = localDb.createMember(newMemberForm.value);
-    showNewMemberModal.value = false;
-    showToast(`会员 ${created.name} 建档成功！`);
-    refreshAll();
-    selectMember(created);
+    if (editingMemberId.value) {
+      const updated = localDb.updateMember(editingMemberId.value, memberForm.value);
+      showMemberModal.value = false;
+      showToast('会员档案修改成功！');
+      refreshAll();
+      selectMember(updated);
+    } else {
+      const created = localDb.createMember(memberForm.value);
+      showMemberModal.value = false;
+      showToast(`会员 ${created.name} 建档成功！`);
+      refreshAll();
+      selectMember(created);
+    }
   } catch (err) {
     showToast(err.message);
   }
 }
 
-// 复制通知
+function handleDeleteMember(m) {
+  if (!confirm(`确定要彻底删除会员「${m.name}」吗？`)) return;
+  try {
+    localDb.deleteMember(m.id);
+    selectedMember.value = null;
+    showToast('会员档案已删除');
+    refreshAll();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+// 服务项目增删改
+function openAddServiceModal() {
+  serviceForm.value = { id: '', name: '', price: 38 };
+  showServiceModal.value = true;
+}
+
+function openEditServiceModal(s) {
+  serviceForm.value = { id: s.id, name: s.name, price: s.price };
+  showServiceModal.value = true;
+}
+
+function submitServiceForm() {
+  try {
+    localDb.saveService(serviceForm.value);
+    showServiceModal.value = false;
+    showToast('服务项目已更新');
+    hairServices.value = localDb.getServices();
+  } catch (err) {
+    showToast(err.message);
+  }
+}
+
+function deleteServiceItem(id) {
+  if (!confirm('确定要删除该服务项目吗？')) return;
+  hairServices.value = localDb.deleteService(id);
+  showToast('服务项目已删除');
+}
+
 function copyReceiptText(text) {
   if (navigator.clipboard) {
     navigator.clipboard.writeText(text);
@@ -1026,7 +1255,7 @@ function copyReceiptText(text) {
   }
 }
 
-// 一键导出备份 (支持 Web Share API 或自动下载)
+// 微信/本地一键备份导出
 async function handleExportBackup() {
   try {
     const content = localDb.exportBackupData();
@@ -1035,23 +1264,21 @@ async function handleExportBackup() {
     const blob = new Blob([content], { type: 'application/json' });
     const file = new File([blob], fileName, { type: 'application/json' });
 
-    // 手机端如果支持系统分享直接唤起微信分享
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({
         title: '理发店会员账本备份',
         text: `备份时间: ${new Date().toLocaleString()}`,
         files: [file]
       });
-      showToast('分享成功！');
+      showToast('已唤起分享！');
     } else {
-      // 否则触发本地文件下载保存
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
-      showToast('备份文件已下载到手机，可发送给微信文件传输助手');
+      showToast('备份文件已下载保存');
     }
   } catch (err) {
     if (err.name !== 'AbortError') {
@@ -1060,7 +1287,6 @@ async function handleExportBackup() {
   }
 }
 
-// 导出 CSV
 function handleExportCSV() {
   try {
     const csv = localDb.exportCSV();
@@ -1079,7 +1305,6 @@ function handleExportCSV() {
   }
 }
 
-// 从文件恢复备份
 function handleImportBackup(e) {
   const file = e.target.files?.[0];
   if (!file) return;
