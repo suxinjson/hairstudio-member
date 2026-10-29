@@ -14,40 +14,45 @@ jobs:
     - name: 1. 拉取项目源码
       uses: actions/checkout@v4
 
-    - name: 2. 安装 Node.js 环境
+    - name: 2. 安装 Node.js 20
       uses: actions/setup-node@v4
       with:
-        node-version: 22
+        node-version: 20
         cache: 'npm'
 
-    - name: 3. 安装 Java JDK 17
+    - name: 3. 安装 Java 17
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '17'
+        cache: 'gradle'
 
     - name: 4. 安装前端依赖
       run: npm install
 
-    - name: 5. 编译前端静态代码
+    - name: 5. 编译前端离线资产
       run: npm run build
 
-    - name: 6. 同步至 Android 工程
+    - name: 6. 同步至 Android 原生目录
       run: npx cap sync android
 
-    - name: 7. 执行 Gradle 编译生成 APK
+    - name: 7. 接受 Android SDK 协议与修复执行权限
       run: |
+        yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
         sed -i -e 's/\r$//' ./android/gradlew
         chmod +x ./android/gradlew
-        cd android
-        ./gradlew assembleDebug --no-daemon --stacktrace
 
-    - name: 8. 收集生成好的 APK
+    - name: 8. 执行 Gradle 编译生成 APK
+      run: |
+        cd android
+        ./gradlew assembleDebug --no-daemon
+
+    - name: 9. 收集生成好的 APK
       run: |
         mkdir -p output_apk
         cp android/app/build/outputs/apk/debug/app-debug.apk output_apk/理发店会员管家_v1.0.apk
 
-    - name: 9. 上传安装包供直接下载
+    - name: 10. 上传安装包供直接下载
       uses: actions/upload-artifact@v4
       with:
         name: 理发店会员管家-安卓安装包
