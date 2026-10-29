@@ -1,0 +1,8 @@
+{
+  "appId": "com.hairstudio.memberapp",
+  "appName": "理发店会员管家",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

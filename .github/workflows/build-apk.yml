@@ -1,0 +1,61 @@
+name: 自动编译安卓安装包(APK)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: 编译 APK 安装包
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 1. 拉取项目源码
+      uses: actions/checkout@v4
+
+    - name: 2. 安装 Node.js 环境
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: 'npm'
+
+    - name: 3. 安装 Java JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '17'
+
+    - name: 4. 安装 Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: 5. 安装前端依赖
+      run: npm install
+
+    - name: 6. 编译前端静态代码
+      run: npm run build
+
+    - name: 7. 同步代码至 Android 原生目录
+      run: npx cap sync android
+
+    - name: 8. 修复跨平台脚本换行符与权限
+      run: |
+        sed -i -e 's/\r$//' ./android/gradlew
+        chmod +x ./android/gradlew
+
+    - name: 9. 执行 Gradle 编译生成 APK
+      run: |
+        cd android
+        ./gradlew assembleDebug --no-daemon
+
+    - name: 10. 重命名并打包安装包
+      run: |
+        mkdir -p output_apk
+        cp android/app/build/outputs/apk/debug/app-debug.apk output_apk/理发店会员管家_v1.0.apk
+
+    - name: 11. 上传 APK 供一键下载
+      uses: actions/upload-artifact@v4
+      with:
+        name: 理发店会员管家-安卓安装包
+        path: output_apk/理发店会员管家_v1.0.apk
+        retention-days: 30
