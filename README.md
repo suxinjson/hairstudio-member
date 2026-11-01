@@ -1,4 +1,4 @@
-# ✂️ 理发店会员额度管家（独立安卓原生 App）
+# ✂️ 梦飞空间会员管家（独立安卓原生 App）
 
 专为**家庭理发店 / 个人发型工作室**量身定制的会员储值与剪发记账独立安卓 App。
 
@@ -52,13 +52,42 @@ member/
 ## 🚀 如何获取并安装 `.apk` 安装包？
 
 ### 方式 A：云端自动打包（最省电脑、推荐 ⭐⭐⭐⭐⭐）
-由于您的老旧电脑不需要安装几千兆庞大的 Android Studio 和 Java 环境，本项目已配置好 GitHub Actions 自动化编译工作流：
+首次发布前需要创建一份长期使用的 Android release keystore，并将其配置为 GitHub 仓库 Actions secrets。此后 GitHub Actions 使用同一密钥构建 release APK：
 1. 将当前项目推送至您自己的 GitHub 仓库；
-2. 仓库页面点击 **Actions** 标签，工作流会自动在云端高配服务器上完成编译（约 2 分钟）；
-3. 编译完成后，在页面直接下载生成的 **`hairstudio-member-app.apk`**；
-4. 微信把该 `.apk` 发送到手机上，点击即可直接安装使用！
+2. 在安全设备上只创建一次签名密钥，并至少离线保存两份 keystore 备份。密钥一旦丢失，后续 APK 将无法覆盖安装到当前版本；不要把 keystore 或密码提交到 Git；
+3. 在 GitHub 仓库 **Settings → Secrets and variables → Actions** 设置 secrets：`SIGNING_KEYSTORE_BASE64`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`；再设置变量 `RELEASE_CERT_SHA256` 为该别名证书的 SHA-256 指纹；`SIGNING_KEYSTORE_BASE64` 是 keystore 文件的 Base64 内容；
+4. 推送至 `main`/`master` 或手动运行 Actions。工作流会运行测试、使用同一签名构建 release APK，并验证签名；缺少密钥时会失败，不会提供 debug APK；
+5. 下载 Actions 产物 `hairstudio-member-v*.apk` 安装。以后不要更换 keystore、别名或密码，也不要重命名 `.github/workflows/build-apk.yml`（版本序号按该工作流递增）。
+
+生成 keystore 的示例命令（请替换别名，并自行安全保管输入的密码）：
+
+```sh
+keytool -genkeypair -v -keystore hairstudio-release.jks -alias hairstudio-release -keyalg RSA -keysize 4096 -validity 10000
+```
+
+PowerShell 可用以下命令生成要填入 `SIGNING_KEYSTORE_BASE64` 的单行值：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes(".\hairstudio-release.jks"))
+```
+
+查看并记录证书指纹（不要在后续版本更换）：
+
+```sh
+keytool -list -v -keystore hairstudio-release.jks -alias hairstudio-release
+```
+
+将输出中的 `SHA256` 指纹填入 `RELEASE_CERT_SHA256`。CI 会逐次比对 APK 的实际签名证书与该指纹；密钥被误换时构建会失败。
+
+### 持续升级与账本保护
+
+- `capacitor.config.json` 的 `appId` 是 Android 包名的唯一来源。保持它不变、保持同一 release keystore，并安装更高 `versionCode` 的 APK，Android 才会按应用内升级处理并保留沙盒数据。
+- 多键账本写入先落恢复日志；应用若在写入过程中被系统终止，下次启动会先恢复旧数据。若设备空间不足以保存恢复点，操作会在修改账本前失败。
+- 更新前仍应通过应用内“备份全部账本”导出 JSON，尤其是跨手机迁移、卸载重装或切换首次固定签名版本时。卸载/清除应用数据不属于原位升级，应用无法保证本地账本仍存在。
+- 旧版 Actions 产物是 runner 临时签名的 debug APK，无法与新固定签名版本直接覆盖安装。切换时先在旧版导出 JSON，再安装首次固定签名版本并导入备份；之后的版本才可直接升级。
 
 ### 方式 B：本地 Android Studio 导出（如有开发机）
 1. 在电脑上运行 `npm run build`；
-2. 使用 Android Studio 打开 `D:\UGit\member\android` 目录；
-3. 点击顶部菜单栏 **Build -> Build APK(s)**，即可在本地直接输出安装包。
+2. 使用 Android Studio 打开项目中的 `android` 目录；
+3. 配置 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD` 和递增的 `VERSION_CODE` 环境变量；
+4. 运行 `gradlew assembleRelease`。没有有效签名配置时，release 构建会失败。

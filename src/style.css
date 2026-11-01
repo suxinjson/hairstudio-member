@@ -4,6 +4,10 @@
 :root {
   --safe-top: max(env(safe-area-inset-top, 0px), 48px);
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), 24px);
+  --app-accent: #167c68;
+  --app-ink: #202a36;
+  --app-border: #e4e9ed;
+  --app-canvas: #f3f6f6;
 }
 
 * {
@@ -15,7 +19,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
-  background-color: #0b0f19;
+  background-color: #e9eeee;
   color: #0f172a;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -23,13 +27,297 @@ body {
 }
 
 #app {
-  max-width: 500px;
+  max-width: 760px;
   min-height: 100vh;
   margin: 0 auto;
-  background-color: #f8fafc;
+  background-color: var(--app-canvas);
   position: relative;
   display: flex;
   flex-direction: column;
+}
+
+.app-shell {
+  background: var(--app-canvas);
+}
+
+.app-header {
+  background: #24333a !important;
+  border-color: #35464b !important;
+  box-shadow: 0 3px 14px rgb(24 39 43 / 14%) !important;
+}
+
+.app-header .text-indigo-300 {
+  color: #a8d9c9;
+}
+
+.brand-title {
+  max-width: 18ch;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.app-header input {
+  background: #304147;
+  border-color: #506168;
+  border-radius: 14px;
+}
+
+.app-content {
+  width: 100%;
+  padding: 18px 20px 28px;
+}
+
+.dashboard-card,
+.member-card {
+  border-color: var(--app-border);
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgb(34 52 57 / 5%);
+}
+
+/* 大字号与克制圆角，优先保证长者阅读和文字留白 */
+.app-shell .rounded-3xl {
+  border-radius: 14px !important;
+}
+
+.app-shell .rounded-2xl {
+  border-radius: 11px !important;
+}
+
+.app-shell .rounded-xl {
+  border-radius: 9px !important;
+}
+
+.app-shell .text-xs {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.app-shell .text-sm {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.app-shell [class*="text-[11px]"] {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.dashboard-card {
+  padding: 18px;
+}
+
+.member-card {
+  padding: 17px;
+}
+
+.app-content button,
+.app-shell button {
+  touch-action: manipulation;
+}
+
+.app-shell button:focus-visible,
+.app-shell input:focus-visible {
+  outline: 3px solid rgb(22 124 104 / 32%);
+  outline-offset: 2px;
+}
+
+.app-nav {
+  max-width: 760px;
+  border-color: var(--app-border);
+  box-shadow: 0 -4px 18px rgb(34 52 57 / 7%);
+}
+
+.app-nav button {
+  position: relative;
+  min-height: 60px;
+}
+
+.app-nav button:active {
+  background: #f1f6f4;
+}
+
+.app-shell input,
+.app-shell textarea,
+.app-shell select {
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.app-shell input::placeholder {
+  opacity: 0.78;
+}
+
+.app-shell [class*="rounded-t-[32px]"] {
+  max-height: min(92dvh, 900px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 16px 16px 0 0 !important;
+}
+
+.modal-header {
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 18px;
+}
+
+.modal-header-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.modal-title {
+  min-width: 0;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  padding: 2px 0;
+}
+
+.modal-header > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.modal-header > button,
+.modal-header > div:last-child button {
+  flex-shrink: 0;
+}
+
+.modal-dialog {
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: 14px !important;
+  padding: 20px !important;
+}
+
+.modal-dialog input,
+.modal-dialog textarea {
+  border-radius: 10px !important;
+}
+
+.modal-dialog .select-all {
+  overflow-wrap: anywhere;
+}
+
+.app-shell input,
+.app-shell textarea {
+  font-size: 16px;
+}
+
+.app-shell label {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.app-nav .text-xs {
+  font-size: 14px;
+}
+
+.feedback-backdrop {
+  background: rgb(13 24 28 / 72%);
+  backdrop-filter: blur(4px);
+}
+
+.feedback-dialog {
+  border: 1px solid #e2e8e8;
+  border-radius: 18px;
+  padding: 28px 24px 24px;
+  animation: feedbackPop 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.feedback-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  font-size: 38px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.feedback-icon-success {
+  color: #087554;
+  background: #d9f4e9;
+}
+
+.feedback-icon-error {
+  color: #a83232;
+  background: #fde7e5;
+}
+
+.feedback-amount {
+  border: 1px solid #f2d7d3;
+  background: #fff8f7;
+}
+
+.feedback-confirm {
+  min-height: 56px;
+}
+
+@keyframes feedbackPop {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (min-width: 640px) {
+  .app-content {
+    padding: 22px 24px 32px;
+  }
+
+  .dashboard-card {
+    padding: 22px;
+  }
+}
+
+@media (max-width: 380px) {
+  .app-content {
+    padding: 12px 12px 24px;
+  }
+
+  .dashboard-card {
+    padding: 14px;
+  }
+
+  .member-card {
+    padding: 13px;
+  }
+
+  .member-card > div:first-child {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .member-card > div:first-child > div:last-child {
+    margin-left: auto;
+  }
+
+  .app-header button {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .brand-title {
+    font-size: 17px;
+  }
+
+  .feedback-dialog {
+    padding: 24px 18px 18px;
+  }
+
+  .modal-dialog {
+    padding: 16px !important;
+  }
+
+  .app-content .dashboard-card > div:last-child {
+    align-items: flex-start;
+    gap: 6px 16px;
+    flex-wrap: wrap;
+  }
+
+  .app-content .dashboard-card > div:last-child > div {
+    font-size: 14px;
+  }
 }
 
 /* 顶部水滴屏安全防遮挡 */

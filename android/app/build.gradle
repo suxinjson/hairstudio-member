@@ -1,14 +1,35 @@
 apply plugin: 'com.android.application'
 
+def capacitorConfig = new groovy.json.JsonSlurper().parse(file('../../capacitor.config.json'))
+def releaseStoreFile = project.findProperty('RELEASE_STORE_FILE') ?: System.getenv('RELEASE_STORE_FILE')
+def releaseStorePassword = project.findProperty('RELEASE_STORE_PASSWORD') ?: System.getenv('RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = project.findProperty('RELEASE_KEY_ALIAS') ?: System.getenv('RELEASE_KEY_ALIAS')
+def releaseKeyPassword = project.findProperty('RELEASE_KEY_PASSWORD') ?: System.getenv('RELEASE_KEY_PASSWORD')
+def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
+    .every { it != null && !it.toString().trim().isEmpty() }
+def versionCodeOverride = project.findProperty('VERSION_CODE') ?: System.getenv('VERSION_CODE')
+def appVersionCode = (versionCodeOverride ?: '1').toInteger()
+def appVersionName = project.findProperty('VERSION_NAME') ?: System.getenv('VERSION_NAME') ?: '1.0'
+
 android {
     namespace = "com.hairstudio.memberapp"
     compileSdk = rootProject.ext.compileSdkVersion
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     defaultConfig {
-        applicationId "com.hairstudio.memberapp"
+        applicationId capacitorConfig.appId
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -18,10 +39,30 @@ android {
     }
     buildTypes {
         release {
+            if (hasReleaseSigning) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+}
+
+def validateReleaseSigningTask = tasks.register('validateReleaseSigning') {
+    doLast {
+        if (!hasReleaseSigning) {
+            throw new GradleException('Release APK requires RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD.')
+        }
+        if (!file(releaseStoreFile).isFile()) {
+            throw new GradleException("Release keystore does not exist: ${releaseStoreFile}")
+        }
+        if (versionCodeOverride == null || versionCodeOverride.toString().trim().isEmpty()) {
+            throw new GradleException('Release APK requires a new, incremented VERSION_CODE.')
+        }
+        if (appVersionCode < 1) throw new GradleException('VERSION_CODE must be a positive integer.')
+    }
+}
+
+tasks.matching { it.name == 'assembleRelease' || it.name == 'bundleRelease' }.configureEach {
+    dependsOn validateReleaseSigningTask
 }
 
 repositories {

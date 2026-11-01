@@ -1,11 +1,12 @@
 {
   "name": "hairstudio-member-app",
   "version": "1.0.0",
-  "description": "理发店会员额度管家 - 独立安卓原生App",
+  "description": "梦飞空间会员管家 - 独立安卓原生App",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build && npx cap sync android",
+    "test": "node --test",
     "sync": "npx cap sync android",
     "open:android": "npx cap open android"
   },
@@ -13,6 +14,8 @@
     "@capacitor/android": "^7.0.1",
     "@capacitor/cli": "^7.0.1",
     "@capacitor/core": "^7.0.1",
+    "@capacitor/filesystem": "^7.1.9",
+    "@capacitor/share": "^7.0.4",
     "vue": "^3.5.13"
   },
   "devDependencies": {

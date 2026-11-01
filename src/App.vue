@@ -1,16 +1,16 @@
 <template>
-  <div class="flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none pb-28">
+  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none pb-28">
     
     <!-- 顶部状态栏与大搜索框 (适配水滴屏/挖孔屏，48px+ safe-area 防遮挡) -->
-    <header class="bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white pt-status-safe sticky top-0 z-30 shadow-lg border-b border-slate-800">
+    <header class="app-header bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white pt-status-safe sticky top-0 z-30 shadow-lg border-b border-slate-800">
       <div class="px-4 pt-3.5 pb-4">
         <!-- 标题行与新建按钮 -->
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-3">
             <span class="text-3xl">💈</span>
             <div>
-              <h1 class="text-xl font-black tracking-tight text-white flex items-center space-x-2">
-                <span>理发店会员管家</span>
+              <h1 class="brand-title text-xl font-black tracking-tight text-white">
+                梦飞空间会员管家
               </h1>
               <div class="text-xs text-indigo-300 font-semibold mt-0.5 tracking-wide">
                 {{ currentDateText }} · 离线极速记账
@@ -20,6 +20,7 @@
 
           <!-- 新建会员大按钮 (50px高度，高触感) -->
           <button 
+            v-if="activeTab !== 'settings'"
             @click="openNewMemberModal"
             class="h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm px-4 rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center space-x-1.5"
           >
@@ -29,17 +30,17 @@
         </div>
 
         <!-- 醒目放大搜索框 (56px大高度，报手机号后4位或姓名秒查) -->
-        <div class="mt-3.5 relative">
+        <div v-if="activeTab !== 'settings'" class="mt-3.5 relative">
           <input 
-            v-model="searchQuery" 
+            v-model="headerSearchQuery"
             @input="handleSearch"
             type="text" 
-            placeholder="报手机尾号 (如8888) 或输入姓名查找..." 
+            :placeholder="searchPlaceholder"
             class="w-full h-14 bg-slate-800/90 border-2 border-slate-700/90 text-white text-base rounded-2xl pl-12 pr-12 placeholder:text-slate-400 focus:outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 transition shadow-inner font-bold"
           />
           <span class="absolute left-4 top-4 text-xl text-slate-400 pointer-events-none">🔍</span>
           <button 
-            v-if="searchQuery" 
+            v-if="headerSearchQuery"
             @click="clearSearch"
             class="absolute right-3.5 top-3 text-slate-300 hover:text-white text-base w-8 h-8 flex items-center justify-center rounded-full bg-slate-700 active:bg-slate-600"
           >
@@ -50,13 +51,13 @@
     </header>
 
     <!-- 主视口内容 -->
-    <main class="flex-1 p-3.5 space-y-4">
+    <main class="app-content flex-1 p-3.5 space-y-4">
       
       <!-- ==================== TAB 1: 收银台 / 首页 ==================== -->
       <div v-if="activeTab === 'home'" class="space-y-4">
         
         <!-- 今日营业收支卡片 (高档清爽配色，清晰大字) -->
-        <div class="bg-white rounded-3xl p-4.5 shadow-[0_2px_12px_rgba(0,0,0,0.04)] border border-slate-200/90">
+        <div class="dashboard-card bg-white rounded-3xl p-4.5 shadow-[0_2px_12px_rgba(0,0,0,0.04)] border border-slate-200/90">
           <div class="flex items-center justify-between pb-3 border-b border-slate-100">
             <span class="text-sm font-black text-slate-800 flex items-center space-x-2">
               <span class="text-base">📊</span>
@@ -127,7 +128,7 @@
           <div 
             v-for="m in membersList" 
             :key="m.id"
-            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] transition"
+            class="member-card bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] transition"
           >
             <!-- 顶部信息行 (点击查看历史明细) -->
             <div class="flex items-start justify-between cursor-pointer" @click="selectMember(m)">
@@ -230,12 +231,12 @@
           </button>
         </div>
 
-        <div v-if="ledgersList.length === 0" class="bg-white rounded-3xl p-8 text-center border border-slate-200/90 text-slate-400 text-base font-bold">
-          暂无相关账目流水
+        <div v-if="filteredLedgersList.length === 0" class="bg-white rounded-3xl p-8 text-center border border-slate-200/90 text-slate-500 text-base font-bold">
+          {{ ledgerSearchQuery ? '没有找到匹配的流水，请换个姓名、手机号或关键词试试' : '暂无相关账目流水' }}
         </div>
         <div v-else class="space-y-3">
           <div 
-            v-for="item in ledgersList" 
+            v-for="item in filteredLedgersList"
             :key="item.id"
             class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] text-sm"
           >
@@ -404,7 +405,7 @@
     </main>
 
     <!-- 底部固定导航栏 (适配全面屏手势条，大触控热区) -->
-    <nav class="fixed bottom-0 left-0 right-0 max-w-[500px] mx-auto bg-white/95 backdrop-blur-md border-t border-slate-200/90 z-30 pb-gesture-safe shadow-lg">
+    <nav class="app-nav fixed bottom-0 left-0 right-0 max-w-[500px] mx-auto bg-white/95 backdrop-blur-md border-t border-slate-200/90 z-30 pb-gesture-safe shadow-lg">
       <div class="grid grid-cols-4 h-16">
         <button 
           @click="activeTab = 'home'"
@@ -457,9 +458,9 @@
         <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
 
         <!-- 弹窗顶栏 -->
-        <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <div class="font-black text-xl text-slate-900 flex items-center space-x-2">
+        <div class="modal-header px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div class="modal-header-copy">
+            <div class="modal-title font-black text-xl text-slate-900 flex items-center space-x-2">
               <span>✂️ 剪发扣款</span>
               <span class="text-indigo-600">— {{ consumingMember.name }}</span>
             </div>
@@ -525,7 +526,7 @@
           v-model="consumeAmountStr" 
           confirmText="确认扣除" 
           theme="danger"
-          :disabled="isConsumeOverBalance"
+          :disabled="isConsumeOverBalance || isSubmittingConsume"
           @confirm="submitConsume" 
         />
       </div>
@@ -541,9 +542,9 @@
         <!-- 弹窗把手 -->
         <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
 
-        <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div>
-            <div class="font-black text-xl text-slate-900">
+        <div class="modal-header px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div class="modal-header-copy">
+            <div class="modal-title font-black text-xl text-slate-900">
               💳 会员储值 — {{ rechargingMember.name }}
             </div>
             <div class="text-sm text-slate-500 font-semibold mt-0.5">
@@ -580,6 +581,7 @@
               <input 
                 v-model.number="rechargeForm.actualPay" 
                 type="number" 
+                min="0"
                 step="0.01" 
                 placeholder="0.00"
                 class="w-full h-14 bg-white px-4 text-xl font-black text-slate-900 rounded-2xl border-2 border-slate-300 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
@@ -591,6 +593,7 @@
               <input 
                 v-model.number="rechargeForm.giftAmount" 
                 type="number" 
+                min="0"
                 step="0.01" 
                 placeholder="0.00"
                 class="w-full h-14 bg-white px-4 text-xl font-black text-emerald-600 rounded-2xl border-2 border-slate-300 outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
@@ -608,7 +611,7 @@
           <!-- 收款渠道 (放大按钮50px) -->
           <div>
             <div class="text-xs font-black text-slate-500 mb-2.5">收款渠道</div>
-            <div class="grid grid-cols-4 gap-2 text-sm font-black">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-sm font-black">
               <button 
                 v-for="m in ['微信支付', '支付宝', '现金收款', '其他方式']"
                 :key="m"
@@ -635,14 +638,57 @@
 
         <div class="p-5 border-t border-slate-100 bg-white pb-gesture-safe">
           <button 
-            @click="submitRecharge"
-            :disabled="!(rechargeForm.actualPay > 0 || rechargeForm.giftAmount > 0)"
+            @click="requestRechargeConfirmation"
+            :disabled="!canSubmitRecharge || isSubmittingRecharge"
             class="w-full h-14 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 active:to-teal-800 disabled:bg-slate-300 text-white rounded-2xl font-black text-lg shadow-lg shadow-emerald-500/25 btn-press"
           >
-            确认完成充值
+            核对充值信息
           </button>
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="rechargeConfirmation"
+      class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-5 animate-fade-in"
+      @click.self="rechargeConfirmation = null"
+    >
+      <section class="feedback-dialog w-full max-w-sm bg-white text-center shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="recharge-confirm-title">
+        <div class="feedback-icon feedback-icon-success mx-auto">¥</div>
+        <h2 id="recharge-confirm-title" class="mt-4 text-2xl font-black text-slate-900">请再核对一次</h2>
+        <p class="mt-2 text-base text-slate-700">确认后将立即为 {{ rechargeConfirmation.memberName }} 充值入账。</p>
+        <div class="feedback-amount mt-5 rounded-xl px-4 py-4 text-left">
+          <div class="flex justify-between gap-3 text-base"><span>实收金额</span><strong>¥{{ rechargeConfirmation.actualPay.toFixed(2) }}</strong></div>
+          <div class="mt-2 flex justify-between gap-3 text-base"><span>赠送额度</span><strong>¥{{ rechargeConfirmation.giftAmount.toFixed(2) }}</strong></div>
+          <div class="mt-3 border-t border-emerald-200 pt-3 flex justify-between gap-3 text-lg font-black text-emerald-800"><span>总到账</span><strong>¥{{ (rechargeConfirmation.actualPay + rechargeConfirmation.giftAmount).toFixed(2) }}</strong></div>
+          <div class="mt-2 text-sm text-slate-600">收款方式：{{ rechargeConfirmation.payMethod }}</div>
+        </div>
+        <div class="mt-6 grid grid-cols-2 gap-3">
+          <button @click="rechargeConfirmation = null" class="h-14 rounded-xl border-2 border-slate-300 text-base font-bold text-slate-700 btn-press">返回修改</button>
+          <button @click="confirmRecharge" :disabled="isSubmittingRecharge" class="h-14 rounded-xl bg-emerald-700 text-base font-black text-white btn-press disabled:opacity-60">确认充值</button>
+        </div>
+      </section>
+    </div>
+
+    <div
+      v-if="backupRestoreRequest"
+      class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-5 animate-fade-in"
+      @click.self="backupRestoreRequest = null"
+    >
+      <section class="feedback-dialog w-full max-w-sm bg-white text-center shadow-2xl" role="alertdialog" aria-modal="true" aria-labelledby="restore-confirm-title">
+        <div class="feedback-icon feedback-icon-error mx-auto">!</div>
+        <h2 id="restore-confirm-title" class="mt-4 text-2xl font-black text-slate-900">确认替换当前账本？</h2>
+        <p class="mt-2 text-base leading-relaxed text-slate-700">恢复备份会替换这台手机上的会员、流水和服务设置。请先确认当前账本已有备份。</p>
+        <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-700">
+          <div class="font-bold">备份文件</div>
+          <div class="mt-1 break-all">{{ backupRestoreRequest.fileName }}</div>
+          <div class="mt-2 font-bold">包含会员：{{ backupRestoreRequest.memberCount }} 位</div>
+        </div>
+        <div class="mt-6 grid grid-cols-2 gap-3">
+          <button @click="backupRestoreRequest = null" :disabled="isRestoringBackup" class="h-14 rounded-xl border-2 border-slate-300 text-base font-bold text-slate-700 btn-press">暂不恢复</button>
+          <button @click="confirmBackupRestore" :disabled="isRestoringBackup" class="h-14 rounded-xl bg-rose-700 text-base font-black text-white btn-press disabled:opacity-60">确认替换</button>
+        </div>
+      </section>
     </div>
 
     <!-- 3. 会员详情卡片抽屉 (点击会员查看全貌) -->
@@ -655,13 +701,13 @@
         <!-- 弹窗把手 -->
         <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
 
-        <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div class="modal-header px-5 py-3 border-b border-slate-100 flex items-center justify-between">
           <div class="flex items-center space-x-3.5">
             <div class="w-13 h-13 rounded-2xl bg-gradient-to-tr from-indigo-700 to-slate-900 text-white flex items-center justify-center font-black text-2xl shadow-sm">
               {{ selectedMember.name.charAt(0) }}
             </div>
             <div>
-              <div class="flex items-center space-x-2">
+              <div class="flex flex-wrap items-center gap-1.5">
                 <h3 class="font-black text-xl text-slate-900">{{ selectedMember.name }}</h3>
                 <span class="text-xs bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-black">储值会员</span>
               </div>
@@ -790,7 +836,7 @@
       class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
       @click.self="showMemberModal = false"
     >
-      <div class="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+      <div class="modal-dialog bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
         <div class="flex items-center justify-between border-b pb-3">
           <h3 class="font-black text-xl text-slate-900">
             {{ editingMemberId ? '修改会员档案' : '登记新会员档案' }}
@@ -850,7 +896,7 @@
           </button>
           <button 
             @click="submitMemberForm"
-            :disabled="!memberForm.name || !memberForm.phone"
+            :disabled="isSavingMember || !memberForm.name || !memberForm.phone"
             class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20 btn-press"
           >
             保存档案
@@ -865,7 +911,7 @@
       class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
       @click.self="showServiceModal = false"
     >
-      <div class="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+      <div class="modal-dialog bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
         <div class="flex items-center justify-between border-b pb-3">
           <h3 class="font-black text-xl text-slate-900">
             {{ serviceForm.id ? '修改服务项目' : '新增服务项目' }}
@@ -905,7 +951,7 @@
           </button>
           <button 
             @click="submitServiceForm"
-            :disabled="!serviceForm.name || serviceForm.price === ''"
+            :disabled="isSavingService || !serviceForm.name || serviceForm.price === ''"
             class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20 btn-press"
           >
             保存项目
@@ -920,7 +966,7 @@
       class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
       @click.self="receiptModal = null"
     >
-      <div class="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl text-center">
+      <div class="modal-dialog bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl text-center">
         <div class="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black">
           ✓
         </div>
@@ -956,6 +1002,39 @@
       <span>{{ toastMessage }}</span>
     </div>
 
+    <div
+      v-if="feedbackModal"
+      class="feedback-backdrop fixed inset-0 z-[70] flex items-center justify-center p-5 animate-fade-in"
+      @click.self="feedbackModal = null"
+      role="presentation"
+    >
+      <section
+        class="feedback-dialog w-full max-w-sm bg-white text-center shadow-2xl"
+        role="alertdialog"
+        aria-modal="true"
+        :aria-labelledby="'feedback-title'"
+      >
+        <div class="feedback-icon mx-auto" :class="feedbackModal.type === 'success' ? 'feedback-icon-success' : 'feedback-icon-error'">
+          {{ feedbackModal.type === 'success' ? '✓' : '!' }}
+        </div>
+        <h2 id="feedback-title" class="mt-4 text-2xl font-black text-slate-900">{{ feedbackModal.title }}</h2>
+        <p class="mt-2 text-base leading-relaxed text-slate-700">{{ feedbackModal.message }}</p>
+        <div v-if="feedbackModal.amount" class="feedback-amount mt-5 rounded-xl px-4 py-3">
+          <div class="text-sm font-bold text-slate-600">本次扣款</div>
+          <div class="mt-1 text-3xl font-black tabular-nums text-rose-700">¥ {{ feedbackModal.amount }}</div>
+          <div class="mt-2 text-base font-bold text-slate-700">{{ feedbackModal.memberName }} · 扣后余额 ¥{{ feedbackModal.balance }}</div>
+        </div>
+        <button
+          @click="feedbackModal = null"
+          class="feedback-confirm mt-6 w-full h-14 rounded-xl text-lg font-black text-white btn-press"
+          :class="feedbackModal.type === 'success' ? 'bg-emerald-700' : 'bg-slate-800'"
+          autofocus
+        >
+          知道了
+        </button>
+      </section>
+    </div>
+
   </div>
 </template>
 
@@ -974,7 +1053,9 @@ const ledgersList = ref([]);
 const hairServices = ref([]);
 const rechargePlans = ref([]);
 const searchQuery = ref('');
+const ledgerSearchQuery = ref('');
 const toastMessage = ref('');
+const feedbackModal = ref(null);
 
 // 选中的会员卡片
 const selectedMember = ref(null);
@@ -983,18 +1064,22 @@ const selectedMember = ref(null);
 const consumingMember = ref(null);
 const consumeAmountStr = ref('');
 const consumeSummary = ref('精致洗剪吹');
+const isSubmittingConsume = ref(false);
 
 // 储值充值抽屉
 const rechargingMember = ref(null);
 const rechargeForm = ref({
-  actualPay: 300,
-  giftAmount: 40,
+  actualPay: '',
+  giftAmount: 0,
   payMethod: '微信支付',
   remark: ''
 });
+const rechargeConfirmation = ref(null);
+const isSubmittingRecharge = ref(false);
 
 // 新建/修改会员
 const showMemberModal = ref(false);
+const isSavingMember = ref(false);
 const editingMemberId = ref(null);
 const memberForm = ref({
   name: '',
@@ -1005,6 +1090,7 @@ const memberForm = ref({
 
 // 服务项目增删改
 const showServiceModal = ref(false);
+const isSavingService = ref(false);
 const serviceForm = ref({
   id: '',
   name: '',
@@ -1013,7 +1099,35 @@ const serviceForm = ref({
 
 // 微信通知
 const receiptModal = ref(null);
+const backupRestoreRequest = ref(null);
+const isRestoringBackup = ref(false);
 const ledgerFilterType = ref('');
+
+const headerSearchQuery = computed({
+  get: () => activeTab.value === 'ledgers' ? ledgerSearchQuery.value : searchQuery.value,
+  set: value => {
+    if (activeTab.value === 'ledgers') ledgerSearchQuery.value = value;
+    else searchQuery.value = value;
+  }
+});
+
+const searchPlaceholder = computed(() => activeTab.value === 'ledgers'
+  ? '搜索姓名、手机号、服务项目或备注…'
+  : '输入会员姓名或手机号码查找…'
+);
+
+const filteredLedgersList = computed(() => {
+  const query = ledgerSearchQuery.value.trim().toLocaleLowerCase();
+  if (!query) return ledgersList.value;
+  const digits = query.replace(/\D/g, '');
+  return ledgersList.value.filter(item => {
+    const searchableText = [item.memberName, item.memberPhone, item.remark, getTypeText(item.type)]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase();
+    return searchableText.includes(query) || (digits && String(item.memberPhone || '').includes(digits));
+  });
+});
 
 // 日期文本展示
 const currentDateText = computed(() => {
@@ -1065,19 +1179,22 @@ function showToast(msg) {
   }, 2500);
 }
 
+function showFeedback(message, type = 'error', details = {}) {
+  feedbackModal.value = {
+    type,
+    title: details.title || (type === 'success' ? '操作成功' : '操作未完成'),
+    message,
+    ...details
+  };
+}
+
 // 刷新全量数据
 function refreshAll() {
   localDb.init();
   membersList.value = localDb.getMembers(searchQuery.value);
   dashboard.value = localDb.getDashboard();
   hairServices.value = localDb.getServices();
-  rechargePlans.value = [
-    { pay: 200, gift: 20 },
-    { pay: 300, gift: 40 },
-    { pay: 500, gift: 80 },
-    { pay: 1000, gift: 200 },
-    { pay: 2000, gift: 500 }
-  ];
+  rechargePlans.value = localDb.getRechargePlans();
   refreshLedgers();
 }
 
@@ -1086,12 +1203,17 @@ function refreshLedgers() {
 }
 
 function handleSearch() {
+  if (activeTab.value === 'ledgers') return;
   membersList.value = localDb.getMembers(searchQuery.value);
 }
 
 function clearSearch() {
-  searchQuery.value = '';
-  refreshAll();
+  if (activeTab.value === 'ledgers') {
+    ledgerSearchQuery.value = '';
+  } else {
+    searchQuery.value = '';
+    membersList.value = localDb.getMembers();
+  }
 }
 
 const currentMemberLedgers = computed(() => {
@@ -1107,9 +1229,11 @@ function selectMember(m) {
 // 充值
 function openRechargeModal(m) {
   rechargingMember.value = m;
+  rechargeConfirmation.value = null;
+  isSubmittingRecharge.value = false;
   rechargeForm.value = {
-    actualPay: 300,
-    giftAmount: 40,
+    actualPay: '',
+    giftAmount: 0,
     payMethod: '微信支付',
     remark: ''
   };
@@ -1120,26 +1244,55 @@ function applyRechargePlan(plan) {
   rechargeForm.value.giftAmount = plan.gift;
 }
 
-function submitRecharge() {
+const canSubmitRecharge = computed(() => {
+  const actualPay = Number(rechargeForm.value.actualPay);
+  const giftAmount = Number(rechargeForm.value.giftAmount);
+  const validMoney = value => Number.isFinite(value) && value >= 0 && Math.round(value * 100) === value * 100;
+  return validMoney(actualPay) && actualPay > 0 && validMoney(giftAmount);
+});
+
+function requestRechargeConfirmation() {
+  if (!rechargingMember.value || isSubmittingRecharge.value) return;
+  if (!canSubmitRecharge.value) {
+    showFeedback('请填写大于 0 的实收金额，赠送额度可以填写 0。');
+    return;
+  }
+
+  rechargeConfirmation.value = {
+    memberId: rechargingMember.value.id,
+    memberName: rechargingMember.value.name,
+    actualPay: Number(rechargeForm.value.actualPay),
+    giftAmount: Number(rechargeForm.value.giftAmount),
+    payMethod: rechargeForm.value.payMethod,
+    remark: rechargeForm.value.remark
+  };
+}
+
+function confirmRecharge() {
+  const confirmation = rechargeConfirmation.value;
+  if (!confirmation || isSubmittingRecharge.value) return;
+  isSubmittingRecharge.value = true;
+
   try {
     const res = localDb.recharge({
-      memberId: rechargingMember.value.id,
-      actualPay: rechargeForm.value.actualPay,
-      giftAmount: rechargeForm.value.giftAmount,
-      payMethod: rechargeForm.value.payMethod,
-      remark: rechargeForm.value.remark
+      memberId: confirmation.memberId,
+      actualPay: confirmation.actualPay,
+      giftAmount: confirmation.giftAmount,
+      payMethod: confirmation.payMethod,
+      remark: confirmation.remark
     });
 
-    const memberName = rechargingMember.value.name;
+    const memberName = confirmation.memberName;
     const totalCredit = res.totalCredit / 100;
     const balanceAfter = (res.balanceAfter / 100).toFixed(2);
 
     rechargingMember.value = null;
+    rechargeConfirmation.value = null;
     showToast('充值成功！');
 
     receiptModal.value = {
       name: memberName,
-      messageText: `【理发店会员充值通知】\n尊敬的 ${memberName}，您好！\n本次充值已成功入账：¥${totalCredit.toFixed(2)} 元\n当前卡内剩余额度为：¥${balanceAfter} 元。\n感谢您的支持与惠顾，祝您生活愉快！`
+      messageText: `【梦飞空间会员充值通知】\n尊敬的 ${memberName}，您好！\n本次充值已成功入账：¥${totalCredit.toFixed(2)} 元\n当前卡内剩余额度为：¥${balanceAfter} 元。\n感谢您的支持与惠顾，祝您生活愉快！`
     };
 
     refreshAll();
@@ -1147,13 +1300,16 @@ function submitRecharge() {
       selectedMember.value = localDb.getMemberById(selectedMember.value.id);
     }
   } catch (err) {
-    showToast(err.message);
+    showFeedback(err.message, 'error', { title: '充值失败' });
+  } finally {
+    isSubmittingRecharge.value = false;
   }
 }
 
 // 扣款
 function openConsumeModal(m) {
   consumingMember.value = m;
+  isSubmittingConsume.value = false;
   consumeAmountStr.value = '';
   const first = hairServices.value[0];
   consumeSummary.value = first ? first.name : '精致洗剪吹';
@@ -1171,28 +1327,38 @@ const isConsumeOverBalance = computed(() => {
 });
 
 function submitConsume() {
+  if (!consumingMember.value || isSubmittingConsume.value) return;
   const amountNum = parseFloat(consumeAmountStr.value);
   if (!amountNum || amountNum <= 0) {
-    showToast('请输入有效的扣款金额');
+    showFeedback('请输入大于 0 的有效扣款金额。');
     return;
   }
 
+  isSubmittingConsume.value = true;
   try {
-    localDb.consume({
+    const result = localDb.consume({
       memberId: consumingMember.value.id,
       amount: amountNum,
       itemsSummary: consumeSummary.value
     });
 
+    const memberName = consumingMember.value.name;
     consumingMember.value = null;
-    showToast(`扣费成功，已扣减 ¥${amountNum.toFixed(2)}`);
 
     refreshAll();
     if (selectedMember.value) {
       selectedMember.value = localDb.getMemberById(selectedMember.value.id);
     }
+    showFeedback('本次服务已记入会员账本。', 'success', {
+      title: '消费成功',
+      amount: (result.deductedAmount / 100).toFixed(2),
+      memberName,
+      balance: (result.balanceAfter / 100).toFixed(2)
+    });
   } catch (err) {
-    showToast(err.message);
+    showFeedback(err.message, 'error', { title: '扣款失败' });
+  } finally {
+    isSubmittingConsume.value = false;
   }
 }
 
@@ -1210,7 +1376,7 @@ function confirmRefundLedger(item) {
       selectedMember.value = localDb.getMemberById(selectedMember.value.id);
     }
   } catch (err) {
-    showToast('撤销失败: ' + err.message);
+    showFeedback(err.message, 'error', { title: '撤销失败' });
   }
 }
 
@@ -1237,6 +1403,8 @@ function openEditMemberModal(m) {
 }
 
 function submitMemberForm() {
+  if (isSavingMember.value) return;
+  isSavingMember.value = true;
   try {
     if (editingMemberId.value) {
       const updated = localDb.updateMember(editingMemberId.value, memberForm.value);
@@ -1252,7 +1420,9 @@ function submitMemberForm() {
       selectMember(created);
     }
   } catch (err) {
-    showToast(err.message);
+    showFeedback(err.message);
+  } finally {
+    isSavingMember.value = false;
   }
 }
 
@@ -1264,7 +1434,7 @@ function handleDeleteMember(m) {
     showToast('会员档案已注销');
     refreshAll();
   } catch (err) {
-    showToast(err.message);
+    showFeedback(err.message);
   }
 }
 
@@ -1280,13 +1450,17 @@ function openEditServiceModal(s) {
 }
 
 function submitServiceForm() {
+  if (isSavingService.value) return;
+  isSavingService.value = true;
   try {
     localDb.saveService(serviceForm.value);
     showServiceModal.value = false;
     showToast('服务项目已更新');
     hairServices.value = localDb.getServices();
   } catch (err) {
-    showToast(err.message);
+    showFeedback(err.message);
+  } finally {
+    isSavingService.value = false;
   }
 }
 
@@ -1310,13 +1484,13 @@ async function handleExportBackup() {
   try {
     const content = localDb.exportBackupData();
     const dateStr = new Date().toISOString().split('T')[0];
-    const fileName = `理发店会员账本备份_${dateStr}.json`;
+    const fileName = `梦飞空间会员账本备份_${dateStr}.json`;
     const blob = new Blob([content], { type: 'application/json' });
     const file = new File([blob], fileName, { type: 'application/json' });
 
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       await navigator.share({
-        title: '理发店会员账本备份',
+        title: '梦飞空间会员账本备份',
         text: `备份时间: ${new Date().toLocaleString()}`,
         files: [file]
       });
@@ -1332,7 +1506,7 @@ async function handleExportBackup() {
     }
   } catch (err) {
     if (err.name !== 'AbortError') {
-      showToast('导出异常: ' + err.message);
+      showFeedback(err.message, 'error', { title: '备份导出失败' });
     }
   }
 }
@@ -1341,7 +1515,7 @@ function handleExportCSV() {
   try {
     const csv = localDb.exportCSV();
     const dateStr = new Date().toISOString().split('T')[0];
-    const fileName = `理发店对账明细_${dateStr}.csv`;
+    const fileName = `梦飞空间对账明细_${dateStr}.csv`;
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1351,25 +1525,55 @@ function handleExportCSV() {
     URL.revokeObjectURL(url);
     showToast('Excel报表已下载');
   } catch (err) {
-    showToast('导出异常: ' + err.message);
+    showFeedback(err.message, 'error', { title: '报表导出失败' });
   }
 }
 
 function handleImportBackup(e) {
-  const file = e.target.files?.[0];
+  const input = e.target;
+  const file = input.files?.[0];
   if (!file) return;
 
   const reader = new FileReader();
   reader.onload = (event) => {
     try {
-      const res = localDb.importBackupData(event.target.result);
-      showToast(`成功恢复 ${res.count} 位会员数据！`);
-      refreshAll();
+      const content = String(event.target.result || '');
+      const backup = JSON.parse(content);
+      if (!Array.isArray(backup?.data?.members)) {
+        throw new Error('备份文件格式不正确，找不到会员名册');
+      }
+      backupRestoreRequest.value = {
+        content,
+        fileName: file.name,
+        memberCount: backup.data.members.length
+      };
     } catch (err) {
-      showToast(err.message);
+      showFeedback(err.message, 'error', { title: '备份恢复失败' });
+    } finally {
+      input.value = '';
     }
   };
+  reader.onerror = () => {
+    input.value = '';
+    showFeedback('无法读取所选文件，请重新选择备份文件。', 'error', { title: '备份读取失败' });
+  };
   reader.readAsText(file);
+}
+
+function confirmBackupRestore() {
+  const request = backupRestoreRequest.value;
+  if (!request || isRestoringBackup.value) return;
+  isRestoringBackup.value = true;
+  try {
+    const result = localDb.importBackupData(request.content);
+    backupRestoreRequest.value = null;
+    refreshAll();
+    showFeedback(`已恢复 ${result.count} 位会员及对应账本数据。`, 'success', { title: '备份恢复完成' });
+  } catch (err) {
+    showFeedback(err.message, 'error', { title: '备份恢复失败' });
+  } finally {
+    isRestoringBackup.value = false;
+  }
 }
 
 onMounted(() => {

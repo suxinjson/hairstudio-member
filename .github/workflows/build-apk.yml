@@ -7,8 +7,11 @@ on:
 
 jobs:
   build:
-    name: 编译 APK 安装包
+    name: 使用固定签名编译升级包
     runs-on: ubuntu-latest
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 1.0.${{ github.run_number }}
 
     steps:
     - name: 1. 拉取项目源码
@@ -27,14 +30,29 @@ jobs:
         java-version: '21'
         cache: 'gradle'
 
-    - name: 4. 安装前端依赖
-      run: npm install
+    - name: 4. 安装锁定依赖并运行测试
+      run: npm ci && npm test
 
     - name: 5. 编译前端离线资产
       run: npm run build
 
-    - name: 6. 同步至 Android 原生目录
-      run: npx cap sync android
+    - name: 6. 配置固定发布签名
+      env:
+        SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+      run: |
+        test -n "$SIGNING_KEYSTORE_BASE64" || { echo "::error::Missing SIGNING_KEYSTORE_BASE64 repository secret"; exit 1; }
+        test -n "$RELEASE_STORE_PASSWORD" || { echo "::error::Missing RELEASE_STORE_PASSWORD repository secret"; exit 1; }
+        test -n "$RELEASE_KEY_ALIAS" || { echo "::error::Missing RELEASE_KEY_ALIAS repository secret"; exit 1; }
+        test -n "$RELEASE_KEY_PASSWORD" || { echo "::error::Missing RELEASE_KEY_PASSWORD repository secret"; exit 1; }
+        KEYSTORE_PATH="$RUNNER_TEMP/hairstudio-release.jks"
+        printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+        echo "RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+        echo "RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
+        echo "RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
+        echo "RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
 
     - name: 7. 接受 Android SDK 协议与修复执行权限
       run: |
@@ -42,19 +60,36 @@ jobs:
         sed -i -e 's/\r$//' ./android/gradlew
         chmod +x ./android/gradlew
 
-    - name: 8. 执行 Gradle 编译生成 APK
+    - name: 8. 执行 Gradle 编译生成固定签名 APK
       run: |
         cd android
-        ./gradlew assembleDebug --no-daemon --info --stacktrace
+        ./gradlew validateReleaseSigning assembleRelease --no-daemon --stacktrace
 
-    - name: 9. 收集生成好的 APK
+    - name: 9. 验证 APK 签名
+      env:
+        RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
+      run: |
+        APK="android/app/build/outputs/apk/release/app-release.apk"
+        APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+        test -x "$APKSIGNER"
+        test -n "$RELEASE_CERT_SHA256" || { echo "::error::Missing RELEASE_CERT_SHA256 repository variable"; exit 1; }
+        SIGNER_INFO=$("$APKSIGNER" verify --verbose --print-certs "$APK")
+        printf '%s\n' "$SIGNER_INFO"
+        ACTUAL_FINGERPRINT=$(printf '%s\n' "$SIGNER_INFO" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+        EXPECTED_FINGERPRINT=$(printf '%s' "$RELEASE_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
+        test -n "$ACTUAL_FINGERPRINT" && test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT" || {
+          echo "::error::APK signing certificate does not match RELEASE_CERT_SHA256; refusing to publish an incompatible update"
+          exit 1
+        }
+
+    - name: 10. 收集生成好的 APK
       run: |
         mkdir -p output_apk
-        cp android/app/build/outputs/apk/debug/app-debug.apk output_apk/理发店会员管家_v1.0.apk
+        cp android/app/build/outputs/apk/release/app-release.apk "output_apk/hairstudio-member-v${VERSION_NAME}.apk"
 
-    - name: 10. 上传安装包供直接下载
+    - name: 11. 上传安装包供直接下载
       uses: actions/upload-artifact@v4
       with:
-        name: 理发店会员管家-安卓安装包
-        path: output_apk/理发店会员管家_v1.0.apk
+        name: hairstudio-member-${{ env.VERSION_NAME }}
+        path: output_apk/hairstudio-member-v*.apk
         retention-days: 30

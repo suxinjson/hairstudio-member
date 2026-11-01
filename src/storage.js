@@ -6,6 +6,7 @@ const STORAGE_KEYS = {
   SERVICES: 'hairstudio_services_v2',
   RECHARGE_PLANS: 'hairstudio_plans_v2'
 };
+const PENDING_WRITE_KEY = 'hairstudio_pending_write_v1';
 
 // 默认理发店常用服务项目
 export const DEFAULT_SERVICES = [
@@ -28,12 +29,15 @@ export const DEFAULT_RECHARGE_PLANS = [
 ];
 
 function load(key, defaultVal = []) {
+  const raw = localStorage.getItem(key);
+  if (raw === null) return defaultVal;
   try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : defaultVal;
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) throw new Error('数据结构不是数组');
+    return data;
   } catch (e) {
     console.error('读取存储异常:', e);
-    return defaultVal;
+    throw new Error(`本地账本数据异常（${key}），为避免覆盖请先恢复备份`);
   }
 }
 
@@ -42,7 +46,122 @@ function save(key, data) {
     localStorage.setItem(key, JSON.stringify(data));
   } catch (e) {
     console.error('写入存储异常:', e);
-    alert('本地存储写入异常，请检查手机可用空间！');
+    throw new Error('本地存储写入失败，请检查可用空间后重试');
+  }
+}
+
+function saveBatch(entries) {
+  recoverPendingWrite();
+  const writes = Object.entries(entries).map(([key, value]) => ({
+    key,
+    value: JSON.stringify(value),
+    previous: localStorage.getItem(key)
+  }));
+  try {
+    localStorage.setItem(PENDING_WRITE_KEY, JSON.stringify({ version: 1, writes }));
+  } catch (error) {
+    console.error('事务写入异常:', error);
+    throw new Error('无法建立本地恢复点，账本未修改；请导出备份并清理存储空间后重试');
+  }
+
+  try {
+    for (const write of writes) localStorage.setItem(write.key, write.value);
+    localStorage.removeItem(PENDING_WRITE_KEY);
+  } catch (error) {
+    try {
+      recoverPendingWrite();
+    } catch (recoveryError) {
+      console.error('事务回滚待下次启动恢复:', recoveryError);
+    }
+    console.error('事务写入异常:', error);
+    throw new Error('本地存储写入失败，账本已回滚或将在下次启动时恢复');
+  }
+}
+
+function recoverPendingWrite() {
+  const raw = localStorage.getItem(PENDING_WRITE_KEY);
+  if (!raw) return;
+  try {
+    const pending = JSON.parse(raw);
+    if (pending.version !== 1 || !Array.isArray(pending.writes)) throw new Error('恢复日志格式无效');
+    for (const write of [...pending.writes].reverse()) {
+      if (typeof write.key !== 'string' ||
+          (write.previous !== null && typeof write.previous !== 'string')) {
+        throw new Error('恢复日志内容无效');
+      }
+      if (localStorage.getItem(write.key) === write.previous) continue;
+      if (write.previous === null) localStorage.removeItem(write.key);
+      else localStorage.setItem(write.key, write.previous);
+    }
+    localStorage.removeItem(PENDING_WRITE_KEY);
+  } catch (error) {
+    console.error('本地事务恢复失败:', error);
+    throw new Error('检测到未完成的数据恢复；请勿清除应用数据，并尽快导出账本或联系支持');
+  }
+}
+
+function moneyToCent(value, label) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0 || Math.round(amount * 100) !== amount * 100) {
+    throw new Error(`${label}必须是非负且最多两位小数的金额`);
+  }
+  const cents = Math.round(amount * 100);
+  if (!Number.isSafeInteger(cents)) throw new Error(`${label}超出可处理范围`);
+  return cents;
+}
+
+function removeUntouchedDemoData() {
+  const members = load(STORAGE_KEYS.MEMBERS);
+  const ledgers = load(STORAGE_KEYS.LEDGERS);
+  const demoMembers = [
+    {
+      name: '陈女士(熟客)', phone: '13812345678', balance: 38000,
+      total_recharge: 50000, total_consume: 12000,
+      notes: '染发喜欢板栗色，偏好温水洗头', ledgerCount: 2
+    },
+    {
+      name: '刘大哥', phone: '13988886666', balance: 16200,
+      total_recharge: 20000, total_consume: 3800,
+      notes: '每个月固定剪寸头', ledgerCount: 0
+    }
+  ];
+  let membersChanged = false;
+  let ledgersChanged = false;
+
+  for (const demo of demoMembers) {
+    const member = members.find(item => item.name === demo.name && item.phone === demo.phone &&
+      item.balance === demo.balance && item.total_recharge === demo.total_recharge &&
+      item.total_consume === demo.total_consume && item.notes === demo.notes &&
+      Number.isFinite(Date.parse(item.created_at)) && Number.isFinite(Date.parse(item.updated_at)) &&
+      Math.abs(Date.parse(item.created_at) - Date.parse(item.updated_at)) < 60000);
+    if (!member) continue;
+
+    const linkedLedgers = ledgers.filter(item => item.memberId === member.id);
+    const validSeedLedgers = demo.name === '陈女士(熟客)' && linkedLedgers.length === 2 &&
+      linkedLedgers.some(item => item.type === 'RECHARGE' && item.changeAmount === 50000 &&
+        item.balanceBefore === 0 && item.balanceAfter === 50000 &&
+        item.remark === '开卡充值 实充¥400 送¥100 [微信支付]') &&
+      linkedLedgers.some(item => item.type === 'CONSUME' && item.changeAmount === -12000 &&
+        item.balanceBefore === 50000 && item.balanceAfter === 38000 &&
+        item.remark === '时尚冷烫/卷发 (做大卷造型)');
+    if ((demo.ledgerCount === 2 && !validSeedLedgers) ||
+        (demo.ledgerCount === 0 && linkedLedgers.length !== 0)) continue;
+
+    members.splice(members.indexOf(member), 1);
+    membersChanged = true;
+    if (linkedLedgers.length) {
+      const linkedIds = new Set(linkedLedgers.map(item => item.id));
+      for (let i = ledgers.length - 1; i >= 0; i--) {
+        if (linkedIds.has(ledgers[i].id)) ledgers.splice(i, 1);
+      }
+      ledgersChanged = true;
+    }
+  }
+
+  if (membersChanged) {
+    const changes = { [STORAGE_KEYS.MEMBERS]: members };
+    if (ledgersChanged) changes[STORAGE_KEYS.LEDGERS] = ledgers;
+    saveBatch(changes);
   }
 }
 
@@ -56,73 +175,19 @@ function nowISO() {
 
 export const localDb = {
   init() {
+    recoverPendingWrite();
     // 初始化服务项目
-    if (!localStorage.getItem(STORAGE_KEYS.SERVICES)) {
+    if (localStorage.getItem(STORAGE_KEYS.SERVICES) === null) {
       save(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
     }
     // 初始化充值档位
-    if (!localStorage.getItem(STORAGE_KEYS.RECHARGE_PLANS)) {
+    if (localStorage.getItem(STORAGE_KEYS.RECHARGE_PLANS) === null) {
       save(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
     }
 
-    // 初始化会员
-    const members = load(STORAGE_KEYS.MEMBERS, null);
-    if (!members) {
-      const initMembers = [
-        {
-          id: generateId('M'),
-          name: '陈女士(熟客)',
-          phone: '13812345678',
-          balance: 38000, // 380元
-          total_recharge: 50000,
-          total_consume: 12000,
-          notes: '染发喜欢板栗色，偏好温水洗头',
-          created_at: nowISO(),
-          updated_at: nowISO()
-        },
-        {
-          id: generateId('M'),
-          name: '刘大哥',
-          phone: '13988886666',
-          balance: 16200, // 162元
-          total_recharge: 20000,
-          total_consume: 3800,
-          notes: '每个月固定剪寸头',
-          created_at: nowISO(),
-          updated_at: nowISO()
-        }
-      ];
-      save(STORAGE_KEYS.MEMBERS, initMembers);
-
-      // 初始化初始流水
-      const initLedgers = [
-        {
-          id: generateId('TX'),
-          memberId: initMembers[0].id,
-          memberName: initMembers[0].name,
-          memberPhone: initMembers[0].phone,
-          type: 'RECHARGE',
-          changeAmount: 50000,
-          balanceBefore: 0,
-          balanceAfter: 50000,
-          remark: '开卡充值 实充¥400 送¥100 [微信支付]',
-          created_at: new Date(Date.now() - 86400000 * 2).toISOString()
-        },
-        {
-          id: generateId('TX'),
-          memberId: initMembers[0].id,
-          memberName: initMembers[0].name,
-          memberPhone: initMembers[0].phone,
-          type: 'CONSUME',
-          changeAmount: -12000,
-          balanceBefore: 50000,
-          balanceAfter: 38000,
-          remark: '时尚冷烫/卷发 (做大卷造型)',
-          created_at: new Date(Date.now() - 86400000).toISOString()
-        }
-      ];
-      save(STORAGE_KEYS.LEDGERS, initLedgers);
-    }
+    if (localStorage.getItem(STORAGE_KEYS.MEMBERS) === null) save(STORAGE_KEYS.MEMBERS, []);
+    if (localStorage.getItem(STORAGE_KEYS.LEDGERS) === null) save(STORAGE_KEYS.LEDGERS, []);
+    removeUntouchedDemoData();
   },
 
   // --- 会员管理 ---
@@ -132,8 +197,9 @@ export const localDb = {
       return [...members].sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
     }
     const q = query.trim().toLowerCase();
+    const phoneQuery = q.replace(/\D/g, '');
     return members.filter(m => 
-      m.name.toLowerCase().includes(q) || m.phone.includes(q)
+      m.name.toLowerCase().includes(q) || m.phone.includes(q) || (phoneQuery && m.phone.includes(phoneQuery))
     ).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
   },
 
@@ -152,7 +218,7 @@ export const localDb = {
       throw new Error(`手机号 ${cleanPhone} 已存在`);
     }
 
-    const initCent = Math.round(Number(initialBalance || 0) * 100);
+    const initCent = moneyToCent(initialBalance || 0, '初始余额');
     const now = nowISO();
     const newMember = {
       id: generateId('M'),
@@ -167,17 +233,19 @@ export const localDb = {
     };
 
     members.unshift(newMember);
-    save(STORAGE_KEYS.MEMBERS, members);
-
     if (initCent > 0) {
-      this.recordLedger({
-        memberId: newMember.id,
+      const ledgers = load(STORAGE_KEYS.LEDGERS);
+      ledgers.unshift(this.makeLedger({
+        member: newMember,
         type: 'RECHARGE',
         changeAmount: initCent,
         balanceBefore: 0,
         balanceAfter: initCent,
         remark: '开卡初始存入额度'
-      });
+      }));
+      saveBatch({ [STORAGE_KEYS.MEMBERS]: members, [STORAGE_KEYS.LEDGERS]: ledgers });
+    } else {
+      save(STORAGE_KEYS.MEMBERS, members);
     }
 
     return newMember;
@@ -223,31 +291,33 @@ export const localDb = {
     const m = members.find(item => item.id === memberId);
     if (!m) throw new Error('会员不存在');
 
-    const actualCent = Math.round(Number(actualPay || 0) * 100);
-    const giftCent = Math.round(Number(giftAmount || 0) * 100);
+    const actualCent = moneyToCent(actualPay ?? 0, '实收金额');
+    const giftCent = moneyToCent(giftAmount ?? 0, '赠送金额');
     const totalCredit = actualCent + giftCent;
-    if (totalCredit <= 0) throw new Error('充值总额必须大于0');
+    if (!Number.isSafeInteger(totalCredit) || totalCredit <= 0) throw new Error('充值总额必须是有效的正数');
 
     const before = m.balance;
     const after = before + totalCredit;
+    if (!Number.isSafeInteger(after)) throw new Error('充值后余额超出可处理范围');
 
     m.balance = after;
     m.total_recharge = (m.total_recharge || 0) + totalCredit;
     m.updated_at = nowISO();
-    save(STORAGE_KEYS.MEMBERS, members);
-
     const remarkText = giftCent > 0 
       ? `实充¥${(actualCent/100).toFixed(2)}，送¥${(giftCent/100).toFixed(2)} [${payMethod}]${remark ? ' ' + remark : ''}`
       : `充值¥${(actualCent/100).toFixed(2)} [${payMethod}]${remark ? ' ' + remark : ''}`;
 
-    const ledger = this.recordLedger({
-      memberId: m.id,
+    const ledgers = load(STORAGE_KEYS.LEDGERS);
+    const ledger = this.makeLedger({
+      member: m,
       type: 'RECHARGE',
       changeAmount: totalCredit,
       balanceBefore: before,
       balanceAfter: after,
       remark: remarkText
     });
+    ledgers.unshift(ledger);
+    saveBatch({ [STORAGE_KEYS.MEMBERS]: members, [STORAGE_KEYS.LEDGERS]: ledgers });
 
     return {
       memberId: m.id,
@@ -263,29 +333,31 @@ export const localDb = {
     const m = members.find(item => item.id === memberId);
     if (!m) throw new Error('会员不存在');
 
-    const amountCent = Math.round(Number(amount) * 100);
-    if (isNaN(amountCent) || amountCent <= 0) throw new Error('消费扣款金额必须大于0');
+    const amountCent = moneyToCent(amount, '消费扣款金额');
+    if (amountCent <= 0) throw new Error('消费扣款金额必须大于0');
     if (m.balance < amountCent) {
       throw new Error(`卡内余额不足！当前剩余 ¥${(m.balance/100).toFixed(2)}，无法扣除 ¥${(amountCent/100).toFixed(2)}`);
     }
 
     const before = m.balance;
     const after = before - amountCent;
+    if (!Number.isSafeInteger(after)) throw new Error('扣款后余额超出可处理范围');
 
     m.balance = after;
     m.total_consume = (m.total_consume || 0) + amountCent;
     m.updated_at = nowISO();
-    save(STORAGE_KEYS.MEMBERS, members);
-
     const detail = itemsSummary + (remark ? ` (${remark})` : '');
-    const ledger = this.recordLedger({
-      memberId: m.id,
+    const ledgers = load(STORAGE_KEYS.LEDGERS);
+    const ledger = this.makeLedger({
+      member: m,
       type: 'CONSUME',
       changeAmount: -amountCent,
       balanceBefore: before,
       balanceAfter: after,
       remark: detail
     });
+    ledgers.unshift(ledger);
+    saveBatch({ [STORAGE_KEYS.MEMBERS]: members, [STORAGE_KEYS.LEDGERS]: ledgers });
 
     return {
       memberId: m.id,
@@ -336,8 +408,6 @@ export const localDb = {
 
     target.isRefunded = true;
     m.updated_at = nowISO();
-    save(STORAGE_KEYS.MEMBERS, members);
-
     // 记录冲正流水
     const refundLedgerRecord = {
       id: generateId('TX'),
@@ -353,7 +423,7 @@ export const localDb = {
     };
 
     ledgers.unshift(refundLedgerRecord);
-    save(STORAGE_KEYS.LEDGERS, ledgers);
+    saveBatch({ [STORAGE_KEYS.MEMBERS]: members, [STORAGE_KEYS.LEDGERS]: ledgers });
 
     return {
       success: true,
@@ -364,15 +434,22 @@ export const localDb = {
 
   // --- 不可变流水记录 ---
   recordLedger({ memberId, type, changeAmount, balanceBefore, balanceAfter, remark }) {
-    const ledgers = load(STORAGE_KEYS.LEDGERS);
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === memberId);
+    if (!m) throw new Error('关联会员不存在');
+    const record = this.makeLedger({ member: m, memberId, type, changeAmount, balanceBefore, balanceAfter, remark });
+    const ledgers = load(STORAGE_KEYS.LEDGERS);
+    ledgers.unshift(record);
+    save(STORAGE_KEYS.LEDGERS, ledgers);
+    return record;
+  },
 
-    const record = {
+  makeLedger({ member, memberId = member.id, type, changeAmount, balanceBefore, balanceAfter, remark }) {
+    return {
       id: generateId('TX'),
       memberId,
-      memberName: m ? m.name : '未知会员',
-      memberPhone: m ? m.phone : '',
+      memberName: member.name,
+      memberPhone: member.phone,
       type, // 'RECHARGE' | 'CONSUME' | 'REFUND'
       changeAmount,
       balanceBefore,
@@ -380,11 +457,6 @@ export const localDb = {
       remark,
       created_at: nowISO()
     };
-
-    ledgers.unshift(record);
-    if (ledgers.length > 3000) ledgers.length = 3000;
-    save(STORAGE_KEYS.LEDGERS, ledgers);
-    return record;
   },
 
   getLedgers({ memberId = '', type = '' } = {}) {
@@ -401,6 +473,10 @@ export const localDb = {
   // --- 店主自定义服务品项与价格 ---
   getServices() {
     return load(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
+  },
+
+  getRechargePlans() {
+    return load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
   },
 
   saveService(item) {
@@ -478,7 +554,7 @@ export const localDb = {
     const backup = {
       version: '2.0',
       exportedAt: nowISO(),
-      appName: '理发店会员管家独立App',
+      appName: '梦飞空间会员管家',
       data: {
         members: load(STORAGE_KEYS.MEMBERS),
         ledgers: load(STORAGE_KEYS.LEDGERS),
@@ -495,16 +571,47 @@ export const localDb = {
       if (!parsed.data || !Array.isArray(parsed.data.members)) {
         throw new Error('备份文件格式不正确，缺少会员名册数据');
       }
-      save(STORAGE_KEYS.MEMBERS, parsed.data.members);
-      if (Array.isArray(parsed.data.ledgers)) {
-        save(STORAGE_KEYS.LEDGERS, parsed.data.ledgers);
+      const { members } = parsed.data;
+      const ledgers = parsed.data.ledgers ?? [];
+      const services = parsed.data.services ?? DEFAULT_SERVICES;
+      const rechargePlans = parsed.data.rechargePlans ?? DEFAULT_RECHARGE_PLANS;
+      if (!Array.isArray(ledgers) || !Array.isArray(services) || !Array.isArray(rechargePlans)) {
+        throw new Error('备份文件中的流水、服务项目或充值档位格式不正确');
       }
-      if (Array.isArray(parsed.data.services)) {
-        save(STORAGE_KEYS.SERVICES, parsed.data.services);
+      const memberIds = new Set();
+      for (const member of members) {
+        if (!member || typeof member.id !== 'string' || !member.id || memberIds.has(member.id) ||
+            typeof member.name !== 'string' || !member.name.trim() || typeof member.phone !== 'string' ||
+            !Number.isSafeInteger(member.balance) || member.balance < 0 ||
+            !Number.isSafeInteger(member.total_recharge) || member.total_recharge < 0 ||
+            !Number.isSafeInteger(member.total_consume) || member.total_consume < 0) {
+          throw new Error('备份文件包含无效或重复的会员数据');
+        }
+        memberIds.add(member.id);
       }
-      if (Array.isArray(parsed.data.rechargePlans)) {
-        save(STORAGE_KEYS.RECHARGE_PLANS, parsed.data.rechargePlans);
+      for (const ledger of ledgers) {
+        if (!ledger || typeof ledger.id !== 'string' || !memberIds.has(ledger.memberId) ||
+            !['RECHARGE', 'CONSUME', 'REFUND'].includes(ledger.type) ||
+            !Number.isSafeInteger(ledger.changeAmount) || !Number.isSafeInteger(ledger.balanceBefore) ||
+            !Number.isSafeInteger(ledger.balanceAfter) || typeof ledger.created_at !== 'string' ||
+            Number.isNaN(Date.parse(ledger.created_at))) {
+          throw new Error('备份文件包含无效的流水数据');
+        }
       }
+      if (services.some(item => !item || typeof item.id !== 'string' || typeof item.name !== 'string' ||
+          !item.name.trim() || !Number.isFinite(item.price) || item.price < 0)) {
+        throw new Error('备份文件包含无效的服务项目');
+      }
+      if (rechargePlans.some(plan => !plan || !Number.isFinite(plan.pay) || plan.pay <= 0 ||
+          !Number.isFinite(plan.gift) || plan.gift < 0)) {
+        throw new Error('备份文件包含无效的充值档位');
+      }
+      saveBatch({
+        [STORAGE_KEYS.MEMBERS]: members,
+        [STORAGE_KEYS.LEDGERS]: ledgers,
+        [STORAGE_KEYS.SERVICES]: services,
+        [STORAGE_KEYS.RECHARGE_PLANS]: rechargePlans
+      });
       return { success: true, count: parsed.data.members.length };
     } catch (e) {
       throw new Error('导入失败：' + e.message);
