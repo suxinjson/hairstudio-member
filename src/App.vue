@@ -1,29 +1,29 @@
 <template>
-  <div class="flex flex-col min-h-screen bg-slate-100 text-slate-900 select-none pb-28">
+  <div class="flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none pb-28">
     
-    <!-- 顶部状态栏与大搜索框 (适配水滴屏/挖孔屏，防止遮挡文字) -->
+    <!-- 顶部状态栏与大搜索框 (适配水滴屏/挖孔屏，48px+ safe-area 防遮挡) -->
     <header class="bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white pt-status-safe sticky top-0 z-30 shadow-lg border-b border-slate-800">
       <div class="px-4 pt-3.5 pb-4">
         <!-- 标题行与新建按钮 -->
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-3">
-            <span class="text-3xl">✂️</span>
+            <span class="text-3xl">💈</span>
             <div>
               <h1 class="text-xl font-black tracking-tight text-white flex items-center space-x-2">
                 <span>理发店会员管家</span>
               </h1>
               <div class="text-xs text-indigo-300 font-semibold mt-0.5 tracking-wide">
-                {{ currentDateText }} · 单机离线秒开
+                {{ currentDateText }} · 离线极速记账
               </div>
             </div>
           </div>
 
-          <!-- 新建会员大按钮 -->
+          <!-- 新建会员大按钮 (50px高度，高触感) -->
           <button 
             @click="openNewMemberModal"
-            class="bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm px-4 py-2.5 rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center space-x-1.5"
+            class="h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm px-4 rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center space-x-1.5"
           >
-            <span class="text-base">+</span>
+            <span class="text-base font-black">+</span>
             <span>登记新会员</span>
           </button>
         </div>
@@ -35,7 +35,7 @@
             @input="handleSearch"
             type="text" 
             placeholder="报手机尾号 (如8888) 或输入姓名查找..." 
-            class="w-full h-14 bg-slate-800/90 border-2 border-slate-700/80 text-white text-base rounded-2xl pl-12 pr-12 placeholder:text-slate-400 focus:outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 transition shadow-inner font-bold"
+            class="w-full h-14 bg-slate-800/90 border-2 border-slate-700/90 text-white text-base rounded-2xl pl-12 pr-12 placeholder:text-slate-400 focus:outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 transition shadow-inner font-bold"
           />
           <span class="absolute left-4 top-4 text-xl text-slate-400 pointer-events-none">🔍</span>
           <button 
@@ -55,8 +55,8 @@
       <!-- ==================== TAB 1: 收银台 / 首页 ==================== -->
       <div v-if="activeTab === 'home'" class="space-y-4">
         
-        <!-- 今日营业收支卡片 (高档配色，清晰大字) -->
-        <div class="bg-white rounded-3xl p-4.5 shadow-sm border border-slate-200/90">
+        <!-- 今日营业收支卡片 (高档清爽配色，清晰大字) -->
+        <div class="bg-white rounded-3xl p-4.5 shadow-[0_2px_12px_rgba(0,0,0,0.04)] border border-slate-200/90">
           <div class="flex items-center justify-between pb-3 border-b border-slate-100">
             <span class="text-sm font-black text-slate-800 flex items-center space-x-2">
               <span class="text-base">📊</span>
@@ -68,7 +68,7 @@
           </div>
 
           <div class="grid grid-cols-2 gap-3 mt-3.5">
-            <div class="bg-gradient-to-br from-emerald-50/70 to-emerald-50/30 p-4 rounded-2xl border border-emerald-100">
+            <div class="bg-gradient-to-br from-emerald-50/80 to-teal-50/40 p-4 rounded-2xl border border-emerald-100">
               <div class="text-xs text-emerald-800 font-bold">今日储值充值</div>
               <div class="text-2xl font-black text-emerald-600 tabular-nums mt-1">
                 ¥ {{ formatCent(dashboard.today?.rechargeCreditTotal || 0) }}
@@ -78,7 +78,7 @@
               </div>
             </div>
 
-            <div class="bg-gradient-to-br from-rose-50/70 to-rose-50/30 p-4 rounded-2xl border border-rose-100">
+            <div class="bg-gradient-to-br from-rose-50/80 to-orange-50/40 p-4 rounded-2xl border border-rose-100">
               <div class="text-xs text-rose-800 font-bold">今日剪发扣额</div>
               <div class="text-2xl font-black text-rose-600 tabular-nums mt-1">
                 ¥ {{ formatCent(dashboard.today?.consumeAmount || 0) }}
@@ -111,11 +111,11 @@
         <div v-if="membersList.length === 0" class="bg-white rounded-3xl p-8 text-center border border-slate-200/90 shadow-sm space-y-3">
           <div class="text-5xl">🔍</div>
           <p class="text-base font-black text-slate-800">未找到此手机号或姓名</p>
-          <p class="text-sm text-slate-500">可直接为新顾客建卡登记</p>
+          <p class="text-sm text-slate-500 font-medium">可直接为新顾客建卡登记</p>
           <div class="pt-2">
             <button 
               @click="openNewMemberModal" 
-              class="h-12 bg-indigo-600 text-white text-sm px-6 rounded-2xl font-black shadow-md shadow-indigo-500/20 btn-press"
+              class="h-13 bg-indigo-600 active:bg-indigo-700 text-white text-base px-6 rounded-2xl font-black shadow-md shadow-indigo-500/20 btn-press"
             >
               + 立即建档录入
             </button>
@@ -127,12 +127,12 @@
           <div 
             v-for="m in membersList" 
             :key="m.id"
-            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-sm transition"
+            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] transition"
           >
             <!-- 顶部信息行 (点击查看历史明细) -->
             <div class="flex items-start justify-between cursor-pointer" @click="selectMember(m)">
               <div class="flex items-start space-x-3.5">
-                <div class="w-13 h-13 rounded-2xl bg-gradient-to-tr from-indigo-600 to-slate-900 text-white flex items-center justify-center font-black text-2xl shadow-sm flex-shrink-0 mt-0.5">
+                <div class="w-13 h-13 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-slate-900 text-white flex items-center justify-center font-black text-2xl shadow-sm flex-shrink-0 mt-0.5">
                   {{ m.name.charAt(0) }}
                 </div>
                 <div>
@@ -170,7 +170,7 @@
 
               <button 
                 @click.stop="openRechargeModal(m)"
-                class="h-13 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 active:from-emerald-700 active:to-emerald-800 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-500/25 flex items-center justify-center space-x-1.5 btn-press"
+                class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 active:to-teal-800 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-600/25 flex items-center justify-center space-x-1.5 btn-press"
               >
                 <span class="text-lg">💳</span>
                 <span>会员充值</span>
@@ -192,7 +192,7 @@
             v-for="m in membersList" 
             :key="m.id"
             @click="selectMember(m)"
-            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-sm flex items-center justify-between active:bg-slate-50 cursor-pointer"
+            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex items-center justify-between active:bg-slate-50 cursor-pointer"
           >
             <div class="flex items-center space-x-3.5">
               <div class="w-13 h-13 rounded-2xl bg-gradient-to-tr from-indigo-700 to-slate-900 text-white flex items-center justify-center font-black text-xl shadow-sm">
@@ -218,12 +218,12 @@
       <!-- ==================== TAB 3: 流水明细与撤销冲正 ==================== -->
       <div v-if="activeTab === 'ledgers'" class="space-y-3.5">
         <!-- 筛选标签 -->
-        <div class="flex space-x-1.5 bg-slate-200 p-1.5 rounded-2xl text-sm font-black">
+        <div class="flex space-x-1.5 bg-slate-200/80 p-1.5 rounded-2xl text-sm font-black">
           <button 
             v-for="type in [{ key: '', label: '全部流水' }, { key: 'CONSUME', label: '剪发扣费' }, { key: 'RECHARGE', label: '储值入账' }, { key: 'REFUND', label: '撤销记录' }]"
             :key="type.key"
             @click="ledgerFilterType = type.key; refreshLedgers()"
-            class="flex-1 py-2.5 rounded-xl transition text-center"
+            class="flex-1 py-2.5 rounded-xl transition text-center btn-press"
             :class="ledgerFilterType === type.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'"
           >
             {{ type.label }}
@@ -237,7 +237,7 @@
           <div 
             v-for="item in ledgersList" 
             :key="item.id"
-            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-sm text-sm"
+            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] text-sm"
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center space-x-2">
@@ -274,7 +274,7 @@
               <button 
                 v-if="item.type !== 'REFUND' && !item.isRefunded"
                 @click.stop="confirmRefundLedger(item)"
-                class="text-rose-600 hover:text-rose-700 bg-rose-50 border border-rose-200/80 px-3.5 py-1 rounded-xl font-bold active:bg-rose-100 text-xs"
+                class="text-rose-600 hover:text-rose-700 bg-rose-50 border border-rose-200/80 px-3.5 py-1.5 rounded-xl font-bold active:bg-rose-100 text-xs btn-press"
               >
                 撤销此单
               </button>
@@ -290,7 +290,7 @@
       <div v-if="activeTab === 'settings'" class="space-y-4">
         
         <!-- 理发项目与定价管理 -->
-        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm">
+        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
           <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
             <div>
               <h2 class="font-black text-slate-900 text-lg">💈 服务项目与定价设置</h2>
@@ -298,7 +298,7 @@
             </div>
             <button 
               @click="openAddServiceModal"
-              class="h-10 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 rounded-xl font-black shadow-sm btn-press"
+              class="h-11 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 rounded-xl font-black shadow-sm btn-press"
             >
               + 新增项目
             </button>
@@ -317,13 +317,13 @@
               <div class="flex space-x-2">
                 <button 
                   @click="openEditServiceModal(s)"
-                  class="h-9 px-3.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl font-bold text-xs active:bg-indigo-100"
+                  class="h-9 px-3.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl font-bold text-xs active:bg-indigo-100 btn-press"
                 >
                   修改
                 </button>
                 <button 
                   @click="deleteServiceItem(s.id)"
-                  class="h-9 px-3.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl font-bold text-xs active:bg-rose-100"
+                  class="h-9 px-3.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl font-bold text-xs active:bg-rose-100 btn-press"
                 >
                   删除
                 </button>
@@ -333,7 +333,7 @@
         </div>
 
         <!-- 微信安全备份中心 -->
-        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-sm">
+        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
           <div class="flex items-center space-x-3 mb-2">
             <span class="text-3xl">🛡️</span>
             <div>
@@ -346,13 +346,13 @@
             <!-- 导出备份发到微信 -->
             <button 
               @click="handleExportBackup"
-              class="w-full h-18 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white px-4 rounded-2xl font-black text-sm flex items-center justify-between shadow-md shadow-emerald-500/20 btn-press"
+              class="w-full h-18 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white px-4.5 rounded-2xl font-black text-sm flex items-center justify-between shadow-md shadow-emerald-600/20 btn-press"
             >
               <div class="flex items-center space-x-3">
                 <span class="text-2xl">📤</span>
                 <div class="text-left">
                   <div class="text-base font-black">一键备份所有账本 (发送至微信)</div>
-                  <div class="text-xs text-emerald-100 font-medium">生成全店加密备份文件，发给微信文件传输助手保存</div>
+                  <div class="text-xs text-emerald-100 font-medium">生成全店备份文件，发给微信“文件传输助手”保存</div>
                 </div>
               </div>
               <span class="text-xl">›</span>
@@ -361,7 +361,7 @@
             <!-- 导出 Excel 表格 -->
             <button 
               @click="handleExportCSV"
-              class="w-full h-18 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-4 rounded-2xl font-black text-sm flex items-center justify-between shadow-md shadow-blue-500/20 btn-press"
+              class="w-full h-18 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white px-4.5 rounded-2xl font-black text-sm flex items-center justify-between shadow-md shadow-blue-500/20 btn-press"
             >
               <div class="flex items-center space-x-3">
                 <span class="text-2xl">📊</span>
@@ -375,12 +375,12 @@
 
             <!-- 恢复备份 -->
             <div class="pt-2">
-              <label class="w-full h-18 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 px-4 rounded-2xl font-black text-sm flex items-center justify-between border-2 border-slate-200 cursor-pointer">
+              <label class="w-full h-18 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-800 px-4.5 rounded-2xl font-black text-sm flex items-center justify-between border-2 border-slate-200 cursor-pointer">
                 <div class="flex items-center space-x-3">
                   <span class="text-2xl">📥</span>
                   <div class="text-left">
                     <div class="text-base font-black text-slate-900">从微信备份文件恢复数据</div>
-                    <div class="text-xs text-slate-500 font-medium">换新手机或误删时，选中文件 1 秒瞬间还原</div>
+                    <div class="text-xs text-slate-500 font-medium">换新手机或误删时，选中备份文件一秒瞬间还原</div>
                   </div>
                 </div>
                 <span class="text-indigo-600 font-extrabold text-xs bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-xl">选择文件</span>
@@ -408,7 +408,7 @@
       <div class="grid grid-cols-4 h-16">
         <button 
           @click="activeTab = 'home'"
-          class="flex flex-col items-center justify-center transition"
+          class="flex flex-col items-center justify-center transition btn-press"
           :class="activeTab === 'home' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
         >
           <span class="text-2xl">🏪</span>
@@ -417,7 +417,7 @@
 
         <button 
           @click="activeTab = 'members'"
-          class="flex flex-col items-center justify-center transition"
+          class="flex flex-col items-center justify-center transition btn-press"
           :class="activeTab === 'members' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
         >
           <span class="text-2xl">👥</span>
@@ -426,7 +426,7 @@
 
         <button 
           @click="activeTab = 'ledgers'"
-          class="flex flex-col items-center justify-center transition"
+          class="flex flex-col items-center justify-center transition btn-press"
           :class="activeTab === 'ledgers' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
         >
           <span class="text-2xl">📋</span>
@@ -435,7 +435,7 @@
 
         <button 
           @click="activeTab = 'settings'"
-          class="flex flex-col items-center justify-center transition"
+          class="flex flex-col items-center justify-center transition btn-press"
           :class="activeTab === 'settings' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
         >
           <span class="text-2xl">⚙️</span>
@@ -449,12 +449,12 @@
     <!-- 1. 剪发消费扣款抽屉 (核心大按键收银台) -->
     <div 
       v-if="consumingMember" 
-      class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in"
+      class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
       @click.self="consumingMember = null"
     >
       <div class="bg-white rounded-t-[32px] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
         <!-- 弹窗把手 -->
-        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2"></div>
+        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
 
         <!-- 弹窗顶栏 -->
         <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
@@ -469,7 +469,7 @@
           </div>
           <button 
             @click="consumingMember = null" 
-            class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold active:bg-slate-200"
+            class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold active:bg-slate-200 btn-press"
           >
             ✕
           </button>
@@ -482,7 +482,7 @@
         </div>
 
         <!-- 金额展示区 (超大数字) -->
-        <div class="p-4 bg-slate-50 text-center border-b border-slate-200">
+        <div class="p-4 bg-slate-50/90 text-center border-b border-slate-200">
           <div class="text-xs font-black text-slate-400 uppercase tracking-wider">本次扣款金额 (元)</div>
           <div class="text-5xl font-black text-slate-900 tracking-tight tabular-nums mt-1 flex items-center justify-center">
             <span class="text-3xl mr-1.5 text-slate-400">¥</span>
@@ -515,12 +515,12 @@
               v-model="consumeSummary" 
               type="text" 
               placeholder="项目明细备注 (如：精致洗剪吹 + 护发素)..." 
-              class="w-full h-12 text-sm px-4 bg-slate-100 rounded-2xl border-2 border-slate-200/80 focus:border-indigo-500 focus:bg-white outline-none font-bold"
+              class="w-full h-13 text-base px-4 bg-slate-50 rounded-2xl border-2 border-slate-200/90 focus:border-indigo-500 focus:bg-white outline-none font-bold"
             />
           </div>
         </div>
 
-        <!-- 手机专属大按键数字软键盘 (60px高度大按键) -->
+        <!-- 手机专属大按键数字软键盘 (64px高度大按键) -->
         <Keypad 
           v-model="consumeAmountStr" 
           confirmText="确认扣除" 
@@ -534,12 +534,12 @@
     <!-- 2. 会员储值充值抽屉 -->
     <div 
       v-if="rechargingMember" 
-      class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in"
+      class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
       @click.self="rechargingMember = null"
     >
       <div class="bg-white rounded-t-[32px] max-h-[92vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
         <!-- 弹窗把手 -->
-        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2"></div>
+        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
 
         <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
           <div>
@@ -550,7 +550,7 @@
               当前卡内余额：<strong class="text-indigo-600 font-black text-base">¥ {{ formatCent(rechargingMember.balance) }}</strong>
             </div>
           </div>
-          <button @click="rechargingMember = null" class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold">✕</button>
+          <button @click="rechargingMember = null" class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold btn-press">✕</button>
         </div>
 
         <div class="p-5 overflow-y-auto space-y-4">
@@ -573,7 +573,7 @@
             </div>
           </div>
 
-          <!-- 自定义实收与赠送 (输入框大高度54px) -->
+          <!-- 自定义实收与赠送 (输入框大高度56px，高对比) -->
           <div class="space-y-3.5 bg-slate-50 p-4.5 rounded-3xl border border-slate-200/90">
             <div>
               <label class="text-sm font-black text-slate-800 block mb-1.5">实收充值金额 (元) <span class="text-rose-500">*</span></label>
@@ -613,7 +613,7 @@
                 v-for="m in ['微信支付', '支付宝', '现金收款', '其他方式']"
                 :key="m"
                 @click="rechargeForm.payMethod = m"
-                class="h-12 rounded-2xl border-2 text-center transition flex items-center justify-center"
+                class="h-12 rounded-2xl border-2 text-center transition flex items-center justify-center btn-press"
                 :class="rechargeForm.payMethod === m ? 'border-emerald-500 bg-emerald-50 text-emerald-900 font-black shadow-sm' : 'border-slate-200 text-slate-600 font-bold'"
               >
                 {{ m }}
@@ -621,14 +621,14 @@
             </div>
           </div>
 
-          <!-- 充值备注 -->
+          <!-- 充值备注 (放大到52px) -->
           <div>
             <label class="text-sm font-black text-slate-800 block mb-1.5">充值备注说明 (选填)</label>
             <input 
               v-model="rechargeForm.remark" 
               type="text" 
               placeholder="例：周年店庆活动储值" 
-              class="w-full h-13 text-sm px-4 bg-slate-50 rounded-2xl border-2 border-slate-200 outline-none font-bold"
+              class="w-full h-13 text-base px-4 bg-slate-50 rounded-2xl border-2 border-slate-200 outline-none font-bold focus:bg-white focus:border-emerald-500"
             />
           </div>
         </div>
@@ -637,7 +637,7 @@
           <button 
             @click="submitRecharge"
             :disabled="!(rechargeForm.actualPay > 0 || rechargeForm.giftAmount > 0)"
-            class="w-full h-14 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 active:from-emerald-700 active:to-emerald-800 disabled:bg-slate-300 text-white rounded-2xl font-black text-lg shadow-lg shadow-emerald-500/25 btn-press"
+            class="w-full h-14 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 active:to-teal-800 disabled:bg-slate-300 text-white rounded-2xl font-black text-lg shadow-lg shadow-emerald-500/25 btn-press"
           >
             确认完成充值
           </button>
@@ -648,12 +648,12 @@
     <!-- 3. 会员详情卡片抽屉 (点击会员查看全貌) -->
     <div 
       v-if="selectedMember" 
-      class="fixed inset-0 bg-black/60 z-40 flex flex-col justify-end animate-fade-in"
+      class="fixed inset-0 bg-black/60 z-40 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
       @click.self="selectedMember = null"
     >
       <div class="bg-white rounded-t-[32px] max-h-[90vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
         <!-- 弹窗把手 -->
-        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2"></div>
+        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
 
         <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
           <div class="flex items-center space-x-3.5">
@@ -671,13 +671,13 @@
           <div class="flex items-center space-x-2">
             <button 
               @click="openEditMemberModal(selectedMember)"
-              class="h-9 px-3.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl font-bold text-xs active:bg-indigo-100"
+              class="h-9 px-3.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl font-bold text-xs active:bg-indigo-100 btn-press"
             >
               修改档案
             </button>
             <button 
               @click="selectedMember = null" 
-              class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold"
+              class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold btn-press"
             >
               ✕
             </button>
@@ -685,7 +685,7 @@
         </div>
 
         <div class="flex-1 overflow-y-auto p-5 space-y-4">
-          <!-- 醒目大额度渐变卡片 -->
+          <!-- 醒目大额度黑金渐变卡片 -->
           <div class="bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 rounded-3xl p-5 text-white shadow-md relative border border-slate-800">
             <div class="text-xs text-indigo-200 font-black uppercase tracking-wider">卡内当前可用额度</div>
             <div class="text-4xl font-black tracking-tight mt-1.5 tabular-nums">
@@ -769,7 +769,7 @@
         <div class="p-5 border-t border-slate-200 bg-white grid grid-cols-2 gap-3 pb-gesture-safe">
           <button 
             @click="openRechargeModal(selectedMember)"
-            class="h-13 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center space-x-1.5 btn-press"
+            class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center space-x-1.5 btn-press"
           >
             <span>💳 额度充值</span>
           </button>
@@ -784,10 +784,10 @@
       </div>
     </div>
 
-    <!-- 4. 新增/编辑会员档案弹窗 (输入框放大到52px，标签清晰高对比) -->
+    <!-- 4. 新增/编辑会员档案弹窗 (输入框放大到54px，标签清晰高对比) -->
     <div 
       v-if="showMemberModal" 
-      class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in"
+      class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
       @click.self="showMemberModal = false"
     >
       <div class="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
@@ -795,7 +795,7 @@
           <h3 class="font-black text-xl text-slate-900">
             {{ editingMemberId ? '修改会员档案' : '登记新会员档案' }}
           </h3>
-          <button @click="showMemberModal = false" class="text-slate-400 text-xl font-bold">✕</button>
+          <button @click="showMemberModal = false" class="text-slate-400 text-xl font-bold btn-press">✕</button>
         </div>
 
         <div class="space-y-4 text-sm">
@@ -805,7 +805,7 @@
               v-model="memberForm.name" 
               type="text" 
               placeholder="如：张姐 / 8号熟客" 
-              class="w-full h-13 px-4 border-2 border-slate-200 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
+              class="w-full h-14 px-4 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
             />
           </div>
 
@@ -815,7 +815,7 @@
               v-model="memberForm.phone" 
               type="tel" 
               placeholder="报手机尾号查找的唯一依据" 
-              class="w-full h-13 px-4 border-2 border-slate-200 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-mono font-black text-base"
+              class="w-full h-14 px-4 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-mono font-black text-base"
             />
           </div>
 
@@ -826,7 +826,7 @@
               type="number" 
               step="0.01" 
               placeholder="0.00" 
-              class="w-full h-13 px-4 border-2 border-slate-200 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
+              class="w-full h-14 px-4 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
             />
           </div>
 
@@ -836,7 +836,7 @@
               v-model="memberForm.notes" 
               rows="2" 
               placeholder="如：短发圆寸、染发板栗色、不喜欢推子太贴皮等" 
-              class="w-full p-3.5 border-2 border-slate-200 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 resize-none font-bold text-sm"
+              class="w-full p-3.5 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 resize-none font-bold text-sm"
             ></textarea>
           </div>
         </div>
@@ -844,14 +844,14 @@
         <div class="flex space-x-3 pt-2">
           <button 
             @click="showMemberModal = false"
-            class="flex-1 h-13 rounded-2xl border-2 border-slate-200 text-sm font-black text-slate-600 active:bg-slate-100"
+            class="flex-1 h-13 rounded-2xl border-2 border-slate-300 text-sm font-black text-slate-600 active:bg-slate-100 btn-press"
           >
             取消
           </button>
           <button 
             @click="submitMemberForm"
             :disabled="!memberForm.name || !memberForm.phone"
-            class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20"
+            class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20 btn-press"
           >
             保存档案
           </button>
@@ -859,10 +859,10 @@
       </div>
     </div>
 
-    <!-- 5. 服务定价增改弹窗 (输入框放大到52px) -->
+    <!-- 5. 服务定价增改弹窗 (输入框放大到54px) -->
     <div 
       v-if="showServiceModal" 
-      class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in"
+      class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
       @click.self="showServiceModal = false"
     >
       <div class="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
@@ -870,7 +870,7 @@
           <h3 class="font-black text-xl text-slate-900">
             {{ serviceForm.id ? '修改服务项目' : '新增服务项目' }}
           </h3>
-          <button @click="showServiceModal = false" class="text-slate-400 text-xl font-bold">✕</button>
+          <button @click="showServiceModal = false" class="text-slate-400 text-xl font-bold btn-press">✕</button>
         </div>
 
         <div class="space-y-4 text-sm">
@@ -880,7 +880,7 @@
               v-model="serviceForm.name" 
               type="text" 
               placeholder="如：洗剪吹 / 精油护理" 
-              class="w-full h-13 px-4 border-2 border-slate-200 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
+              class="w-full h-14 px-4 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
             />
           </div>
 
@@ -891,7 +891,7 @@
               type="number" 
               step="0.01" 
               placeholder="0.00" 
-              class="w-full h-13 px-4 border-2 border-slate-200 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
+              class="w-full h-14 px-4 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
             />
           </div>
         </div>
@@ -899,14 +899,14 @@
         <div class="flex space-x-3 pt-2">
           <button 
             @click="showServiceModal = false"
-            class="flex-1 h-13 rounded-2xl border-2 border-slate-200 text-sm font-black text-slate-600 active:bg-slate-100"
+            class="flex-1 h-13 rounded-2xl border-2 border-slate-300 text-sm font-black text-slate-600 active:bg-slate-100 btn-press"
           >
             取消
           </button>
           <button 
             @click="submitServiceForm"
             :disabled="!serviceForm.name || serviceForm.price === ''"
-            class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20"
+            class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20 btn-press"
           >
             保存项目
           </button>
@@ -917,7 +917,7 @@
     <!-- 6. 充值微信致谢通知卡片 -->
     <div 
       v-if="receiptModal" 
-      class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in"
+      class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
       @click.self="receiptModal = null"
     >
       <div class="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl text-center">
@@ -940,7 +940,7 @@
 
         <button 
           @click="receiptModal = null"
-          class="w-full py-2.5 text-slate-400 text-sm font-bold"
+          class="w-full py-2.5 text-slate-400 text-sm font-bold btn-press"
         >
           关闭
         </button>
