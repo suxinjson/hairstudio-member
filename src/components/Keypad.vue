@@ -1,70 +1,85 @@
 <template>
-  <div class="bg-slate-100 border-t border-slate-200 select-none pb-gesture-safe">
-    <div class="grid grid-cols-4 gap-1.5 p-2 bg-slate-200/80">
+  <div class="bg-slate-100/90 border-t border-slate-200 select-none pb-gesture-safe">
+    <div class="grid grid-cols-4 gap-2 p-2.5 bg-slate-200/90">
+      <!-- 1, 2, 3 -->
       <button 
         v-for="k in ['1', '2', '3']" 
         :key="k"
         @click="append(k)"
-        class="h-14 bg-white text-2xl font-bold rounded-xl shadow-sm text-slate-900 flex items-center justify-center btn-press active:bg-slate-200"
+        class="h-15 bg-white text-2xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-100"
       >
         {{ k }}
       </button>
+
+      <!-- 退格键 -->
       <button 
         @click="backspace"
-        class="h-14 bg-slate-300/80 text-slate-800 font-bold rounded-xl flex items-center justify-center btn-press active:bg-slate-400"
+        class="h-15 bg-slate-300 text-slate-800 font-extrabold rounded-2xl flex items-center justify-center btn-press active:bg-slate-400 border border-slate-300 shadow-sm"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z" />
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z" />
         </svg>
       </button>
 
+      <!-- 4, 5, 6 -->
       <button 
         v-for="k in ['4', '5', '6']" 
         :key="k"
         @click="append(k)"
-        class="h-14 bg-white text-2xl font-bold rounded-xl shadow-sm text-slate-900 flex items-center justify-center btn-press active:bg-slate-200"
+        class="h-15 bg-white text-2xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-100"
       >
         {{ k }}
       </button>
+
+      <!-- 清空键 -->
       <button 
         @click="clear"
-        class="h-14 bg-slate-300/80 text-slate-800 font-bold text-base rounded-xl flex items-center justify-center btn-press active:bg-slate-400"
+        class="h-15 bg-slate-300 text-slate-800 font-black text-base rounded-2xl flex items-center justify-center btn-press active:bg-slate-400 border border-slate-300 shadow-sm"
       >
         清空
       </button>
 
+      <!-- 7, 8, 9 -->
       <button 
         v-for="k in ['7', '8', '9']" 
         :key="k"
         @click="append(k)"
-        class="h-14 bg-white text-2xl font-bold rounded-xl shadow-sm text-slate-900 flex items-center justify-center btn-press active:bg-slate-200"
+        class="h-15 bg-white text-2xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-100"
       >
         {{ k }}
       </button>
+
+      <!-- 确认大按键 (跨两行) -->
       <button 
         @click="$emit('confirm')"
         :disabled="disabled || !isValidAmount"
-        class="row-span-2 rounded-xl font-bold text-white flex flex-col items-center justify-center transition-all btn-press shadow-md"
+        class="row-span-2 rounded-2xl font-black text-white flex flex-col items-center justify-center transition-all btn-press shadow-md tracking-wider"
         :class="disabled || !isValidAmount ? 'bg-slate-400 opacity-60 cursor-not-allowed' : confirmColorClass"
       >
-        <span class="text-lg tracking-wide">{{ confirmText }}</span>
+        <span class="text-xl font-black">{{ confirmText }}</span>
+        <span v-if="isValidAmount" class="text-xs font-semibold opacity-90 mt-0.5">确认提交</span>
       </button>
 
+      <!-- 点号 . -->
       <button 
         @click="append('.')"
-        class="h-14 bg-white text-3xl font-extrabold rounded-xl shadow-sm text-slate-900 flex items-center justify-center btn-press active:bg-slate-200"
+        class="h-15 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-100"
       >
         .
       </button>
+
+      <!-- 0 -->
       <button 
         @click="append('0')"
-        class="h-14 bg-white text-2xl font-bold rounded-xl shadow-sm text-slate-900 flex items-center justify-center btn-press active:bg-slate-200"
+        class="h-15 bg-white text-2xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-100"
       >
         0
       </button>
+
+      <!-- 00 -->
       <button 
         @click="append('00')"
-        class="h-14 bg-white text-xl font-bold rounded-xl shadow-sm text-slate-900 flex items-center justify-center btn-press active:bg-slate-200"
+        class="h-15 bg-white text-xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-100"
       >
         00
       </button>
@@ -102,7 +117,9 @@ const isValidAmount = computed(() => {
 });
 
 const confirmColorClass = computed(() => {
-  return props.theme === 'danger' ? 'bg-rose-600 active:bg-rose-700' : 'bg-indigo-600 active:bg-indigo-700';
+  return props.theme === 'danger' 
+    ? 'bg-gradient-to-b from-rose-500 to-rose-600 active:from-rose-600 active:to-rose-700 shadow-rose-500/30' 
+    : 'bg-gradient-to-b from-indigo-500 to-indigo-600 active:from-indigo-600 active:to-indigo-700 shadow-indigo-500/30';
 });
 
 function append(char) {
@@ -111,7 +128,6 @@ function append(char) {
     if (val.includes('.')) return;
     if (val === '') val = '0';
   }
-  // 限制小数位最多两位
   if (val.includes('.')) {
     const parts = val.split('.');
     if (parts[1].length >= 2 && char !== '.') return;

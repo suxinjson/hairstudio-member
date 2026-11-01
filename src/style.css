@@ -3,7 +3,7 @@
 /* 移动端与水滴屏/挖孔屏专属安全区与字体规范 */
 :root {
   --safe-top: max(env(safe-area-inset-top, 0px), 36px);
-  --safe-bottom: max(env(safe-area-inset-bottom, 0px), 16px);
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), 18px);
 }
 
 * {
@@ -15,7 +15,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
-  background-color: #0f172a;
+  background-color: #0b0f19;
   color: #0f172a;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -47,10 +47,10 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* 按钮点击回弹与触觉反馈 */
+/* 输入框与按钮微交互 */
 .btn-press:active {
-  transform: scale(0.96);
-  opacity: 0.88;
+  transform: scale(0.97);
+  opacity: 0.9;
 }
 
 /* 抽屉弹窗动画 */
@@ -60,7 +60,7 @@ body {
 }
 
 .animate-slide-up {
-  animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes fadeIn {
@@ -69,5 +69,5 @@ body {
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.15s ease-out forwards;
+  animation: fadeIn 0.16s ease-out forwards;
 }
