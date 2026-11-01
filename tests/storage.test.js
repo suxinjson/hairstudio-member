@@ -208,3 +208,100 @@ test('invalid backup leaves existing data unchanged and valid backup restores pl
   assert.deepEqual(JSON.parse(localStorage.getItem(servicesKey)), []);
   assert.deepEqual(JSON.parse(localStorage.getItem(plansKey)), [{ pay: 88, gift: 12 }]);
 });
+
+test('previewBackup accurately counts new and duplicated records and detects newer local transactions', () => {
+  resetStorage();
+  localDb.init();
+  const existingMember = localDb.createMember({ name: '老会员', phone: '13811112222', initialBalance: 100 });
+  const tx = localDb.getLedgers()[0];
+
+  const backupData = {
+    exportedAt: new Date(Date.now() - 3600000).toISOString(),
+    appName: '梦飞空间会员管家',
+    data: {
+      members: [
+        { id: existingMember.id, name: '老会员', phone: '13811112222', balance: 10000, total_recharge: 10000, total_consume: 0, notes: '', created_at: existingMember.created_at, updated_at: existingMember.updated_at },
+        { id: 'M-NEW', name: '新会员', phone: '13999998888', balance: 5000, total_recharge: 5000, total_consume: 0, notes: '喜欢短发', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+      ],
+      ledgers: [
+        { id: tx.id, memberId: existingMember.id, type: 'RECHARGE', changeAmount: 10000, balanceBefore: 0, balanceAfter: 10000, created_at: tx.created_at, remark: '充值' },
+        { id: 'TX-BACKUP-ONLY', memberId: 'M-NEW', type: 'RECHARGE', changeAmount: 5000, balanceBefore: 0, balanceAfter: 5000, created_at: new Date(Date.now() - 1800000).toISOString(), remark: '备份独有流水' }
+      ],
+      services: [],
+      rechargePlans: []
+    }
+  };
+
+  const preview = localDb.previewBackup(JSON.stringify(backupData));
+  assert.equal(preview.isValid, true);
+  assert.equal(preview.diff.newMembersCount, 1);
+  assert.equal(preview.diff.existingMembersCount, 1);
+  assert.equal(preview.diff.duplicateLedgersCount, 1);
+  assert.equal(preview.diff.newLedgersCount, 1);
+});
+
+test('merge mode never overwrites newer member balance and never duplicates ledgers', () => {
+  resetStorage();
+  localDb.init();
+  // 1. 创建现有会员并发生消费，当前最新余额为 6200 分 (62元)
+  const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  localDb.consume({ memberId: member.id, amount: 38, itemsSummary: '精致洗剪吹' });
+  const currentMember = localDb.getMemberById(member.id);
+  assert.equal(currentMember.balance, 6200);
+  const currentLedgerCount = localDb.getLedgers().length; // 2 条流水 (开卡充值100 + 消费38)
+
+  // 2. 模拟一个较早之前的备份，此时张姐卡内余额还是 10000 分 (100元)，且备份中还有一个新熟客李大哥
+  const olderBackup = {
+    exportedAt: new Date(Date.now() - 7200000).toISOString(),
+    appName: '梦飞空间会员管家',
+    data: {
+      members: [
+        { id: member.id, name: '张姐', phone: '13800001111', balance: 10000, total_recharge: 10000, total_consume: 0, notes: '偏好温水', created_at: member.created_at, updated_at: member.created_at },
+        { id: 'M-LI', name: '李大哥', phone: '13922223333', balance: 20000, total_recharge: 20000, total_consume: 0, notes: '平头', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
+      ],
+      ledgers: [
+        // 备份中包含张姐最初的开卡充值单号 (已存在于当前)
+        localDb.getLedgers().find(l => l.type === 'RECHARGE'),
+        // 以及一条李大哥在备份时的开卡流水
+        { id: 'TX-LI-INIT', memberId: 'M-LI', type: 'RECHARGE', changeAmount: 20000, balanceBefore: 0, balanceAfter: 20000, created_at: new Date(Date.now() - 7200000).toISOString(), remark: '李大哥开卡' }
+      ],
+      services: [],
+      rechargePlans: []
+    }
+  };
+
+  // 3. 执行智能增量合并导入
+  const result = localDb.importBackupData(JSON.stringify(olderBackup), { mode: 'merge' });
+  assert.equal(result.success, true);
+  assert.equal(result.mode, 'merge');
+  assert.equal(result.newMembersAdded, 1);
+  assert.equal(result.newLedgersAdded, 1);
+
+  // 4. 验证核心数据安全：张姐的卡内最新余额 6200 (62元) 绝未被旧备份的 10000 (100元) 覆盖！
+  const verifyZhang = localDb.getMemberById(member.id);
+  assert.equal(verifyZhang.balance, 6200);
+  assert.equal(verifyZhang.notes, '偏好温水'); // 补充了偏好备注
+
+  // 5. 验证新会员李大哥成功并入
+  const li = localDb.getMembers('李大哥')[0];
+  assert.ok(li);
+  assert.equal(li.phone, '13922223333');
+  assert.equal(li.balance, 20000);
+
+  // 6. 验证流水去重：已有的充值流水不重复，总流水刚好增加了李大哥的一条流水
+  assert.equal(localDb.getLedgers().length, currentLedgerCount + 1);
+  assert.equal(localDb.getLedgers().filter(l => l.id === olderBackup.data.ledgers[0].id).length, 1);
+});
+
+test('exporting backup records snapshot in local snapshot archive', () => {
+  resetStorage();
+  localDb.init();
+  localDb.createMember({ name: '测试会员', phone: '13888889999', initialBalance: 50 });
+
+  assert.equal(localDb.getLocalSnapshots().length, 0);
+  localDb.exportBackupData();
+  const snapshots = localDb.getLocalSnapshots();
+  assert.equal(snapshots.length, 1);
+  assert.equal(snapshots[0].memberCount, 1);
+  assert.ok(snapshots[0].fileName.includes('梦飞空间会员账本备份'));
+});

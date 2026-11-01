@@ -391,6 +391,96 @@
           </div>
         </div>
 
+        <!-- 导出目录与保存位置展示卡片 -->
+        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] space-y-3">
+          <div class="flex items-center space-x-2.5">
+            <span class="text-2xl">📁</span>
+            <div>
+              <h3 class="font-black text-slate-900 text-base">导出文件默认保存路径</h3>
+              <p class="text-xs text-slate-400 font-medium">可在手机文件管理器中查找备份与Excel表格</p>
+            </div>
+          </div>
+
+          <div class="space-y-2 text-xs">
+            <div class="p-3 bg-slate-50 rounded-2xl border border-slate-200/90 flex items-start space-x-2.5">
+              <span class="text-base">📱</span>
+              <div class="flex-1">
+                <div class="font-bold text-slate-800">手机本地直接下载目录：</div>
+                <div class="font-mono text-indigo-700 font-bold select-all mt-0.5">内部存储 / Download (下载文件夹)</div>
+                <div class="text-[11px] text-slate-500 mt-0.5">打开手机自带「文件管理」App，点击「下载」或「Download」文件夹即可直接查看。</div>
+              </div>
+            </div>
+
+            <div class="p-3 bg-emerald-50/70 rounded-2xl border border-emerald-200/90 flex items-start space-x-2.5">
+              <span class="text-base">💬</span>
+              <div class="flex-1">
+                <div class="font-bold text-emerald-950">微信文件传输助手保存：</div>
+                <div class="font-mono text-emerald-800 font-bold select-all mt-0.5">微信聊天记录 > 文件传输助手</div>
+                <div class="text-[11px] text-emerald-800 mt-0.5">备份发给微信后聊天记录永不过期，换新手机时在微信点开该文件即可一键导入恢复。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- App内检测到的备份文件与本地快照列表 -->
+        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
+          <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
+            <div class="flex items-center space-x-2.5">
+              <span class="text-2xl">📑</span>
+              <div>
+                <h3 class="font-black text-slate-900 text-base">App检测到的本地备份 (共 {{ localSnapshots.length }} 份)</h3>
+                <p class="text-xs text-slate-400 font-medium">手机专属沙盒内安全快照，点击可直接恢复</p>
+              </div>
+            </div>
+            <button 
+              @click="handleCreateManualSnapshot"
+              class="h-9 px-3 bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-bold rounded-xl btn-press"
+            >
+              + 立即归档
+            </button>
+          </div>
+
+          <div v-if="localSnapshots.length === 0" class="py-8 text-center text-xs text-slate-400 font-bold">
+            暂无历史快照，点击上方「一键备份所有账本」可自动生成并归档
+          </div>
+          <div v-else class="space-y-3 mt-3.5">
+            <div 
+              v-for="s in localSnapshots" 
+              :key="s.id" 
+              class="p-4 bg-slate-50/90 rounded-2xl border border-slate-200/90 text-xs space-y-2.5"
+            >
+              <div class="flex items-center justify-between">
+                <span class="font-black text-slate-900 text-sm truncate max-w-[210px]">{{ s.fileName }}</span>
+                <span class="text-[11px] bg-indigo-100 text-indigo-900 font-bold px-2 py-0.5 rounded-lg">{{ s.tag }}</span>
+              </div>
+              <div class="flex items-center justify-between text-slate-600 font-medium">
+                <span>{{ formatTime(s.createdAt) }}</span>
+                <span>包含 {{ s.memberCount }} 会员 · {{ s.ledgerCount }} 笔流水 · 额度 ¥{{ formatCent(s.totalBalance) }}</span>
+              </div>
+              <div class="flex space-x-2 pt-2 border-t border-slate-200/70">
+                <button 
+                  @click="handleRestoreSnapshot(s, 'merge')" 
+                  class="flex-1 h-9 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold rounded-xl btn-press shadow-xs"
+                >
+                  🛡️ 智能合并恢复 (推荐)
+                </button>
+                <button 
+                  @click="handleShareSnapshot(s)" 
+                  class="h-9 px-3.5 bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-800 font-bold rounded-xl btn-press"
+                >
+                  📤 分享
+                </button>
+                <button 
+                  @click="handleDeleteSnapshot(s.id)" 
+                  class="h-9 px-3 text-rose-700 bg-rose-50 border border-rose-200 hover:bg-rose-100 font-bold rounded-xl btn-press"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 理发店省心锦囊 -->
         <div class="bg-indigo-50 border border-indigo-100 p-4.5 rounded-3xl text-xs text-indigo-950 space-y-2 leading-relaxed">
           <div class="font-black text-sm flex items-center space-x-1.5">
@@ -670,23 +760,122 @@
       </section>
     </div>
 
+    <!-- 备份恢复与智能对账弹窗 -->
     <div
       v-if="backupRestoreRequest"
-      class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-5 animate-fade-in"
+      class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4 animate-fade-in"
       @click.self="backupRestoreRequest = null"
     >
-      <section class="feedback-dialog w-full max-w-sm bg-white text-center shadow-2xl" role="alertdialog" aria-modal="true" aria-labelledby="restore-confirm-title">
-        <div class="feedback-icon feedback-icon-error mx-auto">!</div>
-        <h2 id="restore-confirm-title" class="mt-4 text-2xl font-black text-slate-900">确认替换当前账本？</h2>
-        <p class="mt-2 text-base leading-relaxed text-slate-700">恢复备份会替换这台手机上的会员、流水和服务设置。请先确认当前账本已有备份。</p>
-        <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-700">
-          <div class="font-bold">备份文件</div>
-          <div class="mt-1 break-all">{{ backupRestoreRequest.fileName }}</div>
-          <div class="mt-2 font-bold">包含会员：{{ backupRestoreRequest.memberCount }} 位</div>
+      <section class="feedback-dialog w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl text-left" role="alertdialog" aria-modal="true" aria-labelledby="restore-confirm-title">
+        <div class="flex items-center space-x-3 pb-3 border-b border-slate-100">
+          <span class="text-3xl">🛡️</span>
+          <div>
+            <h2 id="restore-confirm-title" class="text-xl font-black text-slate-900">备份文件恢复与智能对账</h2>
+            <p class="text-xs text-slate-500 font-medium">检测并比对备份数据与手机当前数据</p>
+          </div>
         </div>
-        <div class="mt-6 grid grid-cols-2 gap-3">
-          <button @click="backupRestoreRequest = null" :disabled="isRestoringBackup" class="h-14 rounded-xl border-2 border-slate-300 text-base font-bold text-slate-700 btn-press">暂不恢复</button>
-          <button @click="confirmBackupRestore" :disabled="isRestoringBackup" class="h-14 rounded-xl bg-rose-700 text-base font-black text-white btn-press disabled:opacity-60">确认替换</button>
+
+        <!-- 文件与数据对比卡片 -->
+        <div class="mt-3.5 space-y-2.5 text-xs">
+          <div class="bg-slate-50 p-3 rounded-2xl border border-slate-200/80 space-y-1">
+            <div class="flex justify-between text-slate-500">
+              <span>备份文件名</span>
+              <span class="font-bold text-slate-700 truncate max-w-[200px]">{{ backupRestoreRequest.fileName }}</span>
+            </div>
+            <div class="flex justify-between text-slate-500">
+              <span>备份导出时间</span>
+              <span class="font-bold text-slate-700">{{ formatTime(backupRestoreRequest.preview?.exportedAt) || '未知' }}</span>
+            </div>
+            <div class="flex justify-between text-slate-500">
+              <span>备份内包含</span>
+              <span class="font-black text-indigo-700">{{ backupRestoreRequest.preview?.backupStats?.memberCount || 0 }} 位会员 · {{ backupRestoreRequest.preview?.backupStats?.ledgerCount || 0 }} 笔流水 · ¥{{ formatCent(backupRestoreRequest.preview?.backupStats?.totalBalance || 0) }}</span>
+            </div>
+          </div>
+
+          <!-- 当前手机系统数据对比 -->
+          <div class="bg-indigo-50/60 p-3 rounded-2xl border border-indigo-100 flex justify-between items-center text-xs">
+            <span class="text-indigo-950 font-bold">当前手机现有账本：</span>
+            <span class="font-black text-indigo-900">{{ backupRestoreRequest.preview?.currentStats?.memberCount || 0 }} 位会员 · {{ backupRestoreRequest.preview?.currentStats?.ledgerCount || 0 }} 笔流水</span>
+          </div>
+
+          <!-- 智能差异提示 -->
+          <div v-if="backupRestoreRequest.preview?.diff?.hasNewerLocalData" class="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-900 font-bold space-y-1">
+            <div class="flex items-center space-x-1.5 text-amber-800 font-black">
+              <span>⚠️</span>
+              <span>检测到当前手机有更新的开单记账！</span>
+            </div>
+            <p class="font-normal text-[11px] leading-relaxed text-amber-800">
+              备份生成后，手机上又有新增开单或充值。<strong>强烈建议使用【智能增量合并】</strong>，系统将保留今日最新扣款与最新余额，绝不回滚覆盖！
+            </p>
+          </div>
+
+          <!-- 对比明细统计 -->
+          <div class="p-3 bg-slate-50 border border-slate-200/80 rounded-2xl text-slate-600 grid grid-cols-3 gap-2 text-center">
+            <div>
+              <div class="text-[11px] text-slate-400">新增会员</div>
+              <div class="font-black text-sm text-emerald-600">+{{ backupRestoreRequest.preview?.diff?.newMembersCount || 0 }} 人</div>
+            </div>
+            <div>
+              <div class="text-[11px] text-slate-400">补充历史流水</div>
+              <div class="font-black text-sm text-emerald-600">+{{ backupRestoreRequest.preview?.diff?.newLedgersCount || 0 }} 笔</div>
+            </div>
+            <div>
+              <div class="text-[11px] text-slate-400">跳过重复流水</div>
+              <div class="font-black text-sm text-slate-500">{{ backupRestoreRequest.preview?.diff?.duplicateLedgersCount || 0 }} 笔</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 恢复模式单选切换 -->
+        <div class="mt-4 space-y-2">
+          <div class="text-xs font-black text-slate-700">选择恢复方式：</div>
+          
+          <label 
+            class="flex items-start p-3 rounded-2xl border-2 transition cursor-pointer"
+            :class="restoreMode === 'merge' ? 'border-emerald-500 bg-emerald-50/70 shadow-xs' : 'border-slate-200 bg-white'"
+          >
+            <input type="radio" value="merge" v-model="restoreMode" class="mt-1 mr-2.5 text-emerald-600" />
+            <div>
+              <div class="font-black text-sm text-slate-900 flex items-center space-x-1.5">
+                <span>🛡️ 智能增量合并</span>
+                <span class="text-[10px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded">强烈推荐</span>
+              </div>
+              <div class="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                保留当前最新卡内余额与今天新开单，仅补全备份中缺失的会员和历史记录，自动去重，绝不覆盖新账目。
+              </div>
+            </div>
+          </label>
+
+          <label 
+            class="flex items-start p-3 rounded-2xl border-2 transition cursor-pointer"
+            :class="restoreMode === 'replace' ? 'border-rose-500 bg-rose-50/70 shadow-xs' : 'border-slate-200 bg-white'"
+          >
+            <input type="radio" value="replace" v-model="restoreMode" class="mt-1 mr-2.5 text-rose-600" />
+            <div>
+              <div class="font-black text-sm text-slate-900">⚠️ 全量完全覆盖 (仅限换新机)</div>
+              <div class="text-xs text-slate-500 mt-0.5 leading-relaxed">
+                完全用备份文件替换当前手机的所有数据。若当前手机有比备份更新的消费，将被旧数据覆盖！
+              </div>
+            </div>
+          </label>
+        </div>
+
+        <div class="mt-5 grid grid-cols-2 gap-3">
+          <button 
+            @click="backupRestoreRequest = null" 
+            :disabled="isRestoringBackup" 
+            class="h-13 rounded-2xl border-2 border-slate-300 text-sm font-bold text-slate-700 btn-press"
+          >
+            取消
+          </button>
+          <button 
+            @click="confirmBackupRestore" 
+            :disabled="isRestoringBackup" 
+            class="h-13 rounded-2xl text-sm font-black text-white btn-press disabled:opacity-60 shadow-md shadow-emerald-600/20"
+            :class="restoreMode === 'merge' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'"
+          >
+            {{ isRestoringBackup ? '正在安全恢复...' : (restoreMode === 'merge' ? '确认增量合并' : '确认完全覆盖') }}
+          </button>
         </div>
       </section>
     </div>
@@ -1101,6 +1290,8 @@ const serviceForm = ref({
 const receiptModal = ref(null);
 const backupRestoreRequest = ref(null);
 const isRestoringBackup = ref(false);
+const localSnapshots = ref([]);
+const restoreMode = ref('merge');
 const ledgerFilterType = ref('');
 
 const headerSearchQuery = computed({
@@ -1195,6 +1386,7 @@ function refreshAll() {
   dashboard.value = localDb.getDashboard();
   hairServices.value = localDb.getServices();
   rechargePlans.value = localDb.getRechargePlans();
+  localSnapshots.value = localDb.getLocalSnapshots();
   refreshLedgers();
 }
 
@@ -1483,6 +1675,7 @@ function copyReceiptText(text) {
 async function handleExportBackup() {
   try {
     const content = localDb.exportBackupData();
+    refreshAll(); // 立即刷新检测到的本地快照列表
     const dateStr = new Date().toISOString().split('T')[0];
     const fileName = `梦飞空间会员账本备份_${dateStr}.json`;
     const blob = new Blob([content], { type: 'application/json' });
@@ -1494,7 +1687,7 @@ async function handleExportBackup() {
         text: `备份时间: ${new Date().toLocaleString()}`,
         files: [file]
       });
-      showToast('已唤起分享！');
+      showToast('已唤起分享！文件发给微信文件传输助手永久保存');
     } else {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1502,7 +1695,11 @@ async function handleExportBackup() {
       a.download = fileName;
       a.click();
       URL.revokeObjectURL(url);
-      showToast('备份文件已下载保存');
+      showFeedback(
+        `备份文件已保存至手机「内部存储 / Download」下载目录（文件名：${fileName}），同时已在App内留存安全快照。`,
+        'success',
+        { title: '备份导出成功' }
+      );
     }
   } catch (err) {
     if (err.name !== 'AbortError') {
@@ -1523,12 +1720,79 @@ function handleExportCSV() {
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
-    showToast('Excel报表已下载');
+    showFeedback(
+      `Excel报表已下载至手机「内部存储 / Download」目录，可用 WPS 直接打开对账。`,
+      'success',
+      { title: '对账报表已导出' }
+    );
   } catch (err) {
     showFeedback(err.message, 'error', { title: '报表导出失败' });
   }
 }
 
+// 手动创建本地快照
+function handleCreateManualSnapshot() {
+  try {
+    localDb.saveLocalSnapshot('店主手动归档', '在设置备份页面点击立即归档');
+    refreshAll();
+    showToast('已在手机本地生成一份最新账本快照');
+  } catch (err) {
+    showFeedback(err.message, 'error', { title: '归档失败' });
+  }
+}
+
+// 删除快照
+function handleDeleteSnapshot(id) {
+  if (!confirm('确定要删除此份本地快照记录吗？')) return;
+  localDb.deleteLocalSnapshot(id);
+  refreshAll();
+  showToast('已删除此份本地快照');
+}
+
+// 分享/导出快照
+async function handleShareSnapshot(s) {
+  try {
+    const blob = new Blob([s.content], { type: 'application/json' });
+    const file = new File([blob], s.fileName, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({
+        title: '梦飞空间会员账本备份',
+        text: `备份时间: ${formatTime(s.createdAt)}`,
+        files: [file]
+      });
+      showToast('已唤起分享！');
+    } else {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = s.fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('备份文件已下载保存');
+    }
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      showFeedback(err.message, 'error', { title: '分享导出失败' });
+    }
+  }
+}
+
+// 从快照快速触发恢复
+function handleRestoreSnapshot(s, mode = 'merge') {
+  try {
+    const preview = localDb.previewBackup(s.content);
+    restoreMode.value = mode;
+    backupRestoreRequest.value = {
+      content: s.content,
+      fileName: s.fileName,
+      preview
+    };
+  } catch (err) {
+    showFeedback(err.message, 'error', { title: '读取快照失败' });
+  }
+}
+
+// 从外部选文件恢复
 function handleImportBackup(e) {
   const input = e.target;
   const file = input.files?.[0];
@@ -1538,17 +1802,15 @@ function handleImportBackup(e) {
   reader.onload = (event) => {
     try {
       const content = String(event.target.result || '');
-      const backup = JSON.parse(content);
-      if (!Array.isArray(backup?.data?.members)) {
-        throw new Error('备份文件格式不正确，找不到会员名册');
-      }
+      const preview = localDb.previewBackup(content);
+      restoreMode.value = 'merge'; // 默认智能增量合并 (绝不覆盖新数据)
       backupRestoreRequest.value = {
         content,
         fileName: file.name,
-        memberCount: backup.data.members.length
+        preview
       };
     } catch (err) {
-      showFeedback(err.message, 'error', { title: '备份恢复失败' });
+      showFeedback(err.message, 'error', { title: '备份校验失败' });
     } finally {
       input.value = '';
     }
@@ -1560,15 +1822,25 @@ function handleImportBackup(e) {
   reader.readAsText(file);
 }
 
+// 确认执行恢复
 function confirmBackupRestore() {
   const request = backupRestoreRequest.value;
   if (!request || isRestoringBackup.value) return;
   isRestoringBackup.value = true;
   try {
-    const result = localDb.importBackupData(request.content);
+    const mode = restoreMode.value;
+    const result = localDb.importBackupData(request.content, { mode });
     backupRestoreRequest.value = null;
     refreshAll();
-    showFeedback(`已恢复 ${result.count} 位会员及对应账本数据。`, 'success', { title: '备份恢复完成' });
+    if (result.mode === 'merge') {
+      showFeedback(
+        `增量安全合并完成！已自动并入 ${result.newMembersAdded} 位新会员与 ${result.newLedgersAdded} 笔历史流水，现有会员最新账目与卡内余额完整保留。已自动生成恢复快照。祝营业顺利！`,
+        'success',
+        { title: '备份恢复成功' }
+      );
+    } else {
+      showFeedback(`已完全覆盖恢复 ${result.count} 位会员及对应账本数据。`, 'success', { title: '全量恢复完成' });
+    }
   } catch (err) {
     showFeedback(err.message, 'error', { title: '备份恢复失败' });
   } finally {

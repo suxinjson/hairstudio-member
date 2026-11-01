@@ -4,7 +4,9 @@ const STORAGE_KEYS = {
   MEMBERS: 'hairstudio_members_v2',
   LEDGERS: 'hairstudio_ledgers_v2',
   SERVICES: 'hairstudio_services_v2',
-  RECHARGE_PLANS: 'hairstudio_plans_v2'
+  RECHARGE_PLANS: 'hairstudio_plans_v2',
+  SNAPSHOTS: 'hairstudio_local_snapshots_v1',
+  SAFETY_SNAPSHOT: 'hairstudio_pre_restore_safety_snapshot'
 };
 const PENDING_WRITE_KEY = 'hairstudio_pending_write_v1';
 
@@ -158,10 +160,11 @@ function removeUntouchedDemoData() {
     }
   }
 
-  if (membersChanged) {
-    const changes = { [STORAGE_KEYS.MEMBERS]: members };
-    if (ledgersChanged) changes[STORAGE_KEYS.LEDGERS] = ledgers;
-    saveBatch(changes);
+  if (membersChanged || ledgersChanged) {
+    saveBatch({
+      [STORAGE_KEYS.MEMBERS]: members,
+      [STORAGE_KEYS.LEDGERS]: ledgers
+    });
   }
 }
 
@@ -177,16 +180,22 @@ export const localDb = {
   init() {
     recoverPendingWrite();
     // 初始化服务项目
-    if (localStorage.getItem(STORAGE_KEYS.SERVICES) === null) {
+    if (!localStorage.getItem(STORAGE_KEYS.SERVICES)) {
       save(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
     }
     // 初始化充值档位
-    if (localStorage.getItem(STORAGE_KEYS.RECHARGE_PLANS) === null) {
+    if (!localStorage.getItem(STORAGE_KEYS.RECHARGE_PLANS)) {
       save(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
     }
 
-    if (localStorage.getItem(STORAGE_KEYS.MEMBERS) === null) save(STORAGE_KEYS.MEMBERS, []);
-    if (localStorage.getItem(STORAGE_KEYS.LEDGERS) === null) save(STORAGE_KEYS.LEDGERS, []);
+    // 初始化会员和流水
+    if (!localStorage.getItem(STORAGE_KEYS.MEMBERS)) {
+      save(STORAGE_KEYS.MEMBERS, []);
+    }
+    if (!localStorage.getItem(STORAGE_KEYS.LEDGERS)) {
+      save(STORAGE_KEYS.LEDGERS, []);
+    }
+
     removeUntouchedDemoData();
   },
 
@@ -196,11 +205,14 @@ export const localDb = {
     if (!query || !query.trim()) {
       return [...members].sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
     }
-    const q = query.trim().toLowerCase();
-    const phoneQuery = q.replace(/\D/g, '');
-    return members.filter(m => 
-      m.name.toLowerCase().includes(q) || m.phone.includes(q) || (phoneQuery && m.phone.includes(phoneQuery))
-    ).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+    const rawQuery = query.trim().toLowerCase();
+    const cleanQuery = rawQuery.replace(/\D/g, '');
+    return members.filter(m => {
+      const nameMatch = m.name.toLowerCase().includes(rawQuery);
+      const cleanPhone = (m.phone || '').replace(/\D/g, '');
+      const phoneMatch = Boolean(cleanQuery && cleanPhone.includes(cleanQuery));
+      return nameMatch || phoneMatch;
+    }).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
   },
 
   getMemberById(id) {
@@ -218,7 +230,7 @@ export const localDb = {
       throw new Error(`手机号 ${cleanPhone} 已存在`);
     }
 
-    const initCent = moneyToCent(initialBalance || 0, '初始余额');
+    const initCent = moneyToCent(initialBalance || 0, '开卡初始储值额');
     const now = nowISO();
     const newMember = {
       id: generateId('M'),
@@ -232,21 +244,24 @@ export const localDb = {
       updated_at: now
     };
 
-    members.unshift(newMember);
+    const nextMembers = [newMember, ...members];
+    const nextLedgers = [...load(STORAGE_KEYS.LEDGERS)];
     if (initCent > 0) {
-      const ledgers = load(STORAGE_KEYS.LEDGERS);
-      ledgers.unshift(this.makeLedger({
+      nextLedgers.unshift(this.makeLedger({
         member: newMember,
+        memberId: newMember.id,
         type: 'RECHARGE',
         changeAmount: initCent,
         balanceBefore: 0,
         balanceAfter: initCent,
         remark: '开卡初始存入额度'
       }));
-      saveBatch({ [STORAGE_KEYS.MEMBERS]: members, [STORAGE_KEYS.LEDGERS]: ledgers });
-    } else {
-      save(STORAGE_KEYS.MEMBERS, members);
     }
+
+    saveBatch({
+      [STORAGE_KEYS.MEMBERS]: nextMembers,
+      [STORAGE_KEYS.LEDGERS]: nextLedgers
+    });
 
     return newMember;
   },
@@ -291,32 +306,33 @@ export const localDb = {
     const m = members.find(item => item.id === memberId);
     if (!m) throw new Error('会员不存在');
 
-    const actualCent = moneyToCent(actualPay ?? 0, '实收金额');
-    const giftCent = moneyToCent(giftAmount ?? 0, '赠送金额');
+    const actualCent = moneyToCent(actualPay || 0, '实收充值金额');
+    const giftCent = moneyToCent(giftAmount || 0, '额外赠送额度');
     const totalCredit = actualCent + giftCent;
-    if (!Number.isSafeInteger(totalCredit) || totalCredit <= 0) throw new Error('充值总额必须是有效的正数');
+    if (totalCredit <= 0) throw new Error('充值总额必须大于0');
 
     const before = m.balance;
     const after = before + totalCredit;
-    if (!Number.isSafeInteger(after)) throw new Error('充值后余额超出可处理范围');
 
     m.balance = after;
     m.total_recharge = (m.total_recharge || 0) + totalCredit;
     m.updated_at = nowISO();
+
     const remarkText = giftCent > 0 
       ? `实充¥${(actualCent/100).toFixed(2)}，送¥${(giftCent/100).toFixed(2)} [${payMethod}]${remark ? ' ' + remark : ''}`
       : `充值¥${(actualCent/100).toFixed(2)} [${payMethod}]${remark ? ' ' + remark : ''}`;
 
-    const ledgers = load(STORAGE_KEYS.LEDGERS);
     const ledger = this.makeLedger({
       member: m,
+      memberId: m.id,
       type: 'RECHARGE',
       changeAmount: totalCredit,
       balanceBefore: before,
       balanceAfter: after,
       remark: remarkText
     });
-    ledgers.unshift(ledger);
+    const ledgers = [ledger, ...load(STORAGE_KEYS.LEDGERS)];
+
     saveBatch({ [STORAGE_KEYS.MEMBERS]: members, [STORAGE_KEYS.LEDGERS]: ledgers });
 
     return {
@@ -341,22 +357,23 @@ export const localDb = {
 
     const before = m.balance;
     const after = before - amountCent;
-    if (!Number.isSafeInteger(after)) throw new Error('扣款后余额超出可处理范围');
 
     m.balance = after;
     m.total_consume = (m.total_consume || 0) + amountCent;
     m.updated_at = nowISO();
+
     const detail = itemsSummary + (remark ? ` (${remark})` : '');
-    const ledgers = load(STORAGE_KEYS.LEDGERS);
     const ledger = this.makeLedger({
       member: m,
+      memberId: m.id,
       type: 'CONSUME',
       changeAmount: -amountCent,
       balanceBefore: before,
       balanceAfter: after,
       remark: detail
     });
-    ledgers.unshift(ledger);
+    const ledgers = [ledger, ...load(STORAGE_KEYS.LEDGERS)];
+
     saveBatch({ [STORAGE_KEYS.MEMBERS]: members, [STORAGE_KEYS.LEDGERS]: ledgers });
 
     return {
@@ -549,72 +566,369 @@ export const localDb = {
     };
   },
 
-  // --- 微信/本地一键备份与恢复 ---
-  exportBackupData() {
-    const backup = {
-      version: '2.0',
-      exportedAt: nowISO(),
-      appName: '梦飞空间会员管家',
-      data: {
-        members: load(STORAGE_KEYS.MEMBERS),
-        ledgers: load(STORAGE_KEYS.LEDGERS),
-        services: load(STORAGE_KEYS.SERVICES),
-        rechargePlans: load(STORAGE_KEYS.RECHARGE_PLANS)
+  // --- 备份解析与格式校验内部工具 ---
+  parseAndValidateBackup(jsonString) {
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch {
+      throw new Error('备份文件不是合法的JSON文本');
+    }
+    if (!parsed || !parsed.data || !Array.isArray(parsed.data.members)) {
+      throw new Error('备份文件格式不正确，缺少会员名册数据');
+    }
+    const { members } = parsed.data;
+    const ledgers = parsed.data.ledgers ?? [];
+    const services = parsed.data.services ?? DEFAULT_SERVICES;
+    const rechargePlans = parsed.data.rechargePlans ?? DEFAULT_RECHARGE_PLANS;
+    if (!Array.isArray(ledgers) || !Array.isArray(services) || !Array.isArray(rechargePlans)) {
+      throw new Error('备份文件中的流水、服务项目或充值档位格式不正确');
+    }
+    const memberIds = new Set();
+    for (const member of members) {
+      if (!member || typeof member.id !== 'string' || !member.id || memberIds.has(member.id) ||
+          typeof member.name !== 'string' || !member.name.trim() || typeof member.phone !== 'string' ||
+          !Number.isSafeInteger(member.balance) || member.balance < 0 ||
+          !Number.isSafeInteger(member.total_recharge) || member.total_recharge < 0 ||
+          !Number.isSafeInteger(member.total_consume) || member.total_consume < 0) {
+        throw new Error('备份文件包含无效或重复的会员数据');
       }
+      memberIds.add(member.id);
+    }
+    for (const ledger of ledgers) {
+      if (!ledger || typeof ledger.id !== 'string' || !memberIds.has(ledger.memberId) ||
+          !['RECHARGE', 'CONSUME', 'REFUND'].includes(ledger.type) ||
+          !Number.isSafeInteger(ledger.changeAmount) || !Number.isSafeInteger(ledger.balanceBefore) ||
+          !Number.isSafeInteger(ledger.balanceAfter) || typeof ledger.created_at !== 'string' ||
+          Number.isNaN(Date.parse(ledger.created_at))) {
+        throw new Error('备份文件包含无效的流水数据');
+      }
+    }
+    if (services.some(item => !item || typeof item.id !== 'string' || typeof item.name !== 'string' ||
+        !item.name.trim() || !Number.isFinite(item.price) || item.price < 0)) {
+      throw new Error('备份文件包含无效的服务项目');
+    }
+    if (rechargePlans.some(plan => !plan || !Number.isFinite(plan.pay) || plan.pay <= 0 ||
+        !Number.isFinite(plan.gift) || plan.gift < 0)) {
+      throw new Error('备份文件包含无效的充值档位');
+    }
+
+    return {
+      version: parsed.version || '2.0',
+      exportedAt: parsed.exportedAt || null,
+      appName: parsed.appName || '梦飞空间会员管家',
+      data: { members, ledgers, services, rechargePlans }
     };
-    return JSON.stringify(backup, null, 2);
   },
 
-  importBackupData(jsonString) {
+  // --- 智能对账与备份预览 (对比现有数据与备份数据，防止覆盖新数据) ---
+  previewBackup(jsonString) {
+    const validated = this.parseAndValidateBackup(jsonString);
+    const { members: backupMembers, ledgers: backupLedgers } = validated.data;
+
+    const currentMembers = load(STORAGE_KEYS.MEMBERS, []);
+    const currentLedgers = load(STORAGE_KEYS.LEDGERS, []);
+
+    const currentPhoneMap = new Map();
+    for (const m of currentMembers) {
+      if (m.phone) currentPhoneMap.set(m.phone.trim(), m);
+    }
+
+    const currentLedgerIdSet = new Set(currentLedgers.map(l => l.id));
+
+    let newMembersCount = 0;
+    let existingMembersCount = 0;
+    for (const bm of backupMembers) {
+      const cleanPhone = (bm.phone || '').trim();
+      if (currentPhoneMap.has(cleanPhone)) {
+        existingMembersCount++;
+      } else {
+        newMembersCount++;
+      }
+    }
+
+    let newLedgersCount = 0;
+    let duplicateLedgersCount = 0;
+    for (const bl of backupLedgers) {
+      if (currentLedgerIdSet.has(bl.id)) {
+        duplicateLedgersCount++;
+      } else {
+        newLedgersCount++;
+      }
+    }
+
+    // 检查当前系统是否包含比备份更新的开单或充值
+    const backupExportTime = validated.exportedAt ? Date.parse(validated.exportedAt) : 0;
+    let currentNewerTransactionsCount = 0;
+    if (backupExportTime > 0) {
+      for (const l of currentLedgers) {
+        if (Date.parse(l.created_at) > backupExportTime) {
+          currentNewerTransactionsCount++;
+        }
+      }
+    }
+
+    const backupTotalBalance = backupMembers.reduce((sum, m) => sum + (m.balance || 0), 0);
+    const currentTotalBalance = currentMembers.reduce((sum, m) => sum + (m.balance || 0), 0);
+
+    return {
+      isValid: true,
+      exportedAt: validated.exportedAt,
+      appName: validated.appName,
+      backupStats: {
+        memberCount: backupMembers.length,
+        ledgerCount: backupLedgers.length,
+        totalBalance: backupTotalBalance
+      },
+      currentStats: {
+        memberCount: currentMembers.length,
+        ledgerCount: currentLedgers.length,
+        totalBalance: currentTotalBalance
+      },
+      diff: {
+        newMembersCount,
+        existingMembersCount,
+        newLedgersCount,
+        duplicateLedgersCount,
+        currentNewerTransactionsCount,
+        hasNewerLocalData: currentNewerTransactionsCount > 0
+      }
+    };
+  },
+
+  // --- 本地快照与备份历史管理 ---
+  getLocalSnapshots() {
     try {
-      const parsed = JSON.parse(jsonString);
-      if (!parsed.data || !Array.isArray(parsed.data.members)) {
-        throw new Error('备份文件格式不正确，缺少会员名册数据');
-      }
-      const { members } = parsed.data;
-      const ledgers = parsed.data.ledgers ?? [];
-      const services = parsed.data.services ?? DEFAULT_SERVICES;
-      const rechargePlans = parsed.data.rechargePlans ?? DEFAULT_RECHARGE_PLANS;
-      if (!Array.isArray(ledgers) || !Array.isArray(services) || !Array.isArray(rechargePlans)) {
-        throw new Error('备份文件中的流水、服务项目或充值档位格式不正确');
-      }
-      const memberIds = new Set();
-      for (const member of members) {
-        if (!member || typeof member.id !== 'string' || !member.id || memberIds.has(member.id) ||
-            typeof member.name !== 'string' || !member.name.trim() || typeof member.phone !== 'string' ||
-            !Number.isSafeInteger(member.balance) || member.balance < 0 ||
-            !Number.isSafeInteger(member.total_recharge) || member.total_recharge < 0 ||
-            !Number.isSafeInteger(member.total_consume) || member.total_consume < 0) {
-          throw new Error('备份文件包含无效或重复的会员数据');
-        }
-        memberIds.add(member.id);
-      }
-      for (const ledger of ledgers) {
-        if (!ledger || typeof ledger.id !== 'string' || !memberIds.has(ledger.memberId) ||
-            !['RECHARGE', 'CONSUME', 'REFUND'].includes(ledger.type) ||
-            !Number.isSafeInteger(ledger.changeAmount) || !Number.isSafeInteger(ledger.balanceBefore) ||
-            !Number.isSafeInteger(ledger.balanceAfter) || typeof ledger.created_at !== 'string' ||
-            Number.isNaN(Date.parse(ledger.created_at))) {
-          throw new Error('备份文件包含无效的流水数据');
-        }
-      }
-      if (services.some(item => !item || typeof item.id !== 'string' || typeof item.name !== 'string' ||
-          !item.name.trim() || !Number.isFinite(item.price) || item.price < 0)) {
-        throw new Error('备份文件包含无效的服务项目');
-      }
-      if (rechargePlans.some(plan => !plan || !Number.isFinite(plan.pay) || plan.pay <= 0 ||
-          !Number.isFinite(plan.gift) || plan.gift < 0)) {
-        throw new Error('备份文件包含无效的充值档位');
-      }
-      saveBatch({
-        [STORAGE_KEYS.MEMBERS]: members,
-        [STORAGE_KEYS.LEDGERS]: ledgers,
-        [STORAGE_KEYS.SERVICES]: services,
-        [STORAGE_KEYS.RECHARGE_PLANS]: rechargePlans
-      });
-      return { success: true, count: parsed.data.members.length };
+      const raw = localStorage.getItem(STORAGE_KEYS.SNAPSHOTS);
+      if (!raw) return [];
+      const list = JSON.parse(raw);
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  },
+
+  saveLocalSnapshot(tag = '手动备份', reason = '', explicitData = null) {
+    try {
+      const snapshots = this.getLocalSnapshots();
+      const members = explicitData?.members || load(STORAGE_KEYS.MEMBERS, []);
+      const ledgers = explicitData?.ledgers || load(STORAGE_KEYS.LEDGERS, []);
+      const services = explicitData?.services || load(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
+      const rechargePlans = explicitData?.rechargePlans || load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
+
+      const now = nowISO();
+      const datePart = now.split('T')[0];
+      const timePart = now.substring(11, 16).replace(':', '');
+      const fileName = `梦飞空间会员账本备份_${datePart}_${timePart}.json`;
+
+      const totalBalance = members.reduce((sum, m) => sum + (m.balance || 0), 0);
+
+      const snapshot = {
+        id: generateId('SNP'),
+        createdAt: now,
+        fileName,
+        tag,
+        reason,
+        memberCount: members.length,
+        ledgerCount: ledgers.length,
+        totalBalance,
+        content: JSON.stringify({
+          version: '2.0',
+          exportedAt: now,
+          appName: '梦飞空间会员管家',
+          data: { members, ledgers, services, rechargePlans }
+        }, null, 2)
+      };
+
+      snapshots.unshift(snapshot);
+      // 保留最近 10 份历史快照
+      if (snapshots.length > 10) snapshots.length = 10;
+      localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(snapshots));
+      return snapshot;
     } catch (e) {
-      throw new Error('导入失败：' + e.message);
+      console.warn('保存本地快照失败 (不影响正常运行):', e);
+      return null;
+    }
+  },
+
+  deleteLocalSnapshot(id) {
+    try {
+      let snapshots = this.getLocalSnapshots();
+      snapshots = snapshots.filter(s => s.id !== id);
+      localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(snapshots));
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  // 获取标准导出保存目录说明
+  getExportDirectoryInfo() {
+    return {
+      downloadPath: '内部存储 / Download (手机下载文件夹)',
+      wechatPath: '微信 > 文件传输助手 (永不过期)',
+      hint: '已导出备份文件默认存放于手机「Download」下载目录中；若使用微信分享，可随时在微信聊天记录中点击发送回手机还原。'
+    };
+  },
+
+  // --- 微信/本地一键备份导出 ---
+  exportBackupData() {
+    const members = load(STORAGE_KEYS.MEMBERS);
+    const ledgers = load(STORAGE_KEYS.LEDGERS);
+    const services = load(STORAGE_KEYS.SERVICES);
+    const rechargePlans = load(STORAGE_KEYS.RECHARGE_PLANS);
+
+    const now = nowISO();
+    const backup = {
+      version: '2.0',
+      exportedAt: now,
+      appName: '梦飞空间会员管家',
+      data: { members, ledgers, services, rechargePlans }
+    };
+    const content = JSON.stringify(backup, null, 2);
+
+    // 导出时自动在应用内生成一份备份快照，方便在App界面即时看到检测到的备份文件
+    this.saveLocalSnapshot('导出生成快照', '用户执行一键备份导出', { members, ledgers, services, rechargePlans });
+
+    return content;
+  },
+
+  // --- 备份恢复 (支持智能安全合并模式与全量覆盖模式) ---
+  importBackupData(jsonString, options = {}) {
+    const mode = options.mode || 'replace'; // 'replace' | 'merge'
+    const validated = this.parseAndValidateBackup(jsonString);
+    const { members: backupMembers, ledgers: backupLedgers, services: backupServices, rechargePlans: backupPlans } = validated.data;
+
+    // 核心安全保障：在恢复任何数据前，自动保存当前数据的安全回滚快照
+    try {
+      const currentMembers = load(STORAGE_KEYS.MEMBERS, []);
+      const currentLedgers = load(STORAGE_KEYS.LEDGERS, []);
+      if (currentMembers.length > 0 || currentLedgers.length > 0) {
+        localStorage.setItem(STORAGE_KEYS.SAFETY_SNAPSHOT, JSON.stringify({
+          timestamp: nowISO(),
+          members: currentMembers,
+          ledgers: currentLedgers
+        }));
+      }
+    } catch (e) {
+      console.warn('记录恢复前安全回滚快照失败:', e);
+    }
+
+    if (mode === 'merge') {
+      // ==================== 智能增量安全合并模式 ====================
+      // 1. 绝对不覆盖现有会员最新的卡内余额与最新消费！
+      // 2. 自动去重，不重复添加已存在的流水单号！
+      // 3. 补充备份中存在但当前手机中缺失的会员和历史对账流水！
+      const currentMembers = load(STORAGE_KEYS.MEMBERS, []);
+      const currentLedgers = load(STORAGE_KEYS.LEDGERS, []);
+      const currentServices = load(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
+      const currentPlans = load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
+
+      const phoneToCurrentMember = new Map();
+      const idToCurrentMember = new Map();
+      for (const m of currentMembers) {
+        if (m.phone) phoneToCurrentMember.set(m.phone.trim(), m);
+        idToCurrentMember.set(m.id, m);
+      }
+
+      const currentLedgerIds = new Set(currentLedgers.map(l => l.id));
+      const memberIdMap = new Map(); // backupMemberId -> finalMemberId
+
+      let newMembersAdded = 0;
+      for (const bm of backupMembers) {
+        const cleanPhone = (bm.phone || '').trim();
+        if (phoneToCurrentMember.has(cleanPhone)) {
+          // 当前已存在该会员：保留当前最新余额、累计消费等，仅补全缺失备注
+          const cm = phoneToCurrentMember.get(cleanPhone);
+          memberIdMap.set(bm.id, cm.id);
+          if (!cm.notes && bm.notes) {
+            cm.notes = bm.notes;
+          }
+          // 保留最早开卡时间
+          if (Date.parse(bm.created_at) < Date.parse(cm.created_at)) {
+            cm.created_at = bm.created_at;
+          }
+        } else {
+          // 当前不存在该会员：作为新会员合并纳入
+          let finalId = bm.id;
+          if (idToCurrentMember.has(finalId)) {
+            finalId = generateId('M');
+          }
+          const restoredMember = { ...bm, id: finalId };
+          currentMembers.push(restoredMember);
+          phoneToCurrentMember.set(cleanPhone, restoredMember);
+          idToCurrentMember.set(finalId, restoredMember);
+          memberIdMap.set(bm.id, finalId);
+          newMembersAdded++;
+        }
+      }
+
+      // 智能合并流水 (按流水ID去重，无重复记录)
+      let newLedgersAdded = 0;
+      for (const bl of backupLedgers) {
+        if (!currentLedgerIds.has(bl.id)) {
+          const finalMemberId = memberIdMap.get(bl.memberId) || bl.memberId;
+          const mergedLedger = { ...bl, memberId: finalMemberId };
+          currentLedgers.push(mergedLedger);
+          currentLedgerIds.add(bl.id);
+          newLedgersAdded++;
+        }
+      }
+
+      // 按记录时间降序重排流水
+      currentLedgers.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+
+      // 合并服务定价项 (按服务名称去重)
+      const serviceNames = new Set(currentServices.map(s => s.name));
+      for (const bs of backupServices) {
+        if (!serviceNames.has(bs.name)) {
+          currentServices.push({ ...bs, id: generateId('S') });
+          serviceNames.add(bs.name);
+        }
+      }
+
+      // 合并充值档位 (按充值金额与赠送额度去重)
+      const planKeys = new Set(currentPlans.map(p => `${p.pay}_${p.gift}`));
+      for (const bp of backupPlans) {
+        const key = `${bp.pay}_${bp.gift}`;
+        if (!planKeys.has(key)) {
+          currentPlans.push(bp);
+          planKeys.add(key);
+        }
+      }
+
+      saveBatch({
+        [STORAGE_KEYS.MEMBERS]: currentMembers,
+        [STORAGE_KEYS.LEDGERS]: currentLedgers,
+        [STORAGE_KEYS.SERVICES]: currentServices,
+        [STORAGE_KEYS.RECHARGE_PLANS]: currentPlans
+      });
+
+      this.saveLocalSnapshot('增量合并后备份', `安全合并恢复 (新增会员 ${newMembersAdded} 人, 新增流水 ${newLedgersAdded} 条)`);
+
+      return {
+        success: true,
+        mode: 'merge',
+        count: currentMembers.length,
+        newMembersAdded,
+        newLedgersAdded
+      };
+    } else {
+      // ==================== 全量完全覆盖模式 ====================
+      saveBatch({
+        [STORAGE_KEYS.MEMBERS]: backupMembers,
+        [STORAGE_KEYS.LEDGERS]: backupLedgers,
+        [STORAGE_KEYS.SERVICES]: backupServices,
+        [STORAGE_KEYS.RECHARGE_PLANS]: backupPlans
+      });
+
+      this.saveLocalSnapshot('完全覆盖后备份', '全量恢复备份覆盖');
+
+      return {
+        success: true,
+        mode: 'replace',
+        count: backupMembers.length
+      };
     }
   },
 
