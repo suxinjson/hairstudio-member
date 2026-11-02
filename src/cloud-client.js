@@ -15,8 +15,11 @@ export async function sha256(data) {
 
 export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...args),
   vault = { load: async () => null, save: async () => {}, clear: async () => {} },
-  isOnline = () => globalThis.navigator?.onLine !== false, onData = () => {}, clock = () => new Date().toISOString() } = {}) {
+  isOnline = () => globalThis.navigator?.onLine !== false, allowOffline = false,
+  onData = () => {}, clock = () => new Date().toISOString() } = {}) {
   let accessToken = '', refreshToken = '', busy = false, lastError = '', refreshPromise = null;
+  let restorePromise = null, networkUnavailable = false;
+  const offlineEnabled = () => typeof allowOffline === 'function' ? allowOffline() : allowOffline;
   const listeners = new Set();
   const emit = () => { for (const listener of listeners) listener(client.snapshot()); };
   const setState = state => { saveCloudState(state); emit(); };
@@ -31,10 +34,11 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: controller.signal, credentials: 'omit', cache: 'no-store', redirect: 'error'
       });
       const result = await response.json();
+      networkUnavailable = false;
       if (!response.ok) { const error = new Error(result.error || '云端请求失败'); error.status = response.status; error.code = result.code; throw error; }
       return result;
     } catch (error) {
-      if (!error.status) { const network = new Error('暂时无法连接服务器，本机账本和待同步记录已保留'); network.network = true; throw network; }
+      if (!error.status) { networkUnavailable = true; const network = new Error('暂时无法连接服务器，仍可离线使用；本机账本和待同步记录已保留'); network.network = true; throw network; }
       throw error;
     } finally { clearTimeout(timer); }
   }
@@ -53,12 +57,15 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       if (conflictReason === 'permissions') conflictReason = null;
       status = conflictReason ? 'conflict' : current.bootstrap || current.outbox.length ? 'pending' : current.binding ? 'synced' : 'local';
     }
-    setState({ ...current, user: session.user, status, conflictReason });
+    setState({ ...current, user: session.user, syncLoginRequired: false, status, conflictReason });
   }
   async function invalidateSession() {
     accessToken = ''; refreshToken = '';
-    // 先锁定本机账本；安全存储清理失败也不能保留已失效的登录状态。
-    setState({ ...getCloudState(), user: null, status: 'login-required' });
+    const state = getCloudState();
+    // App 的缓存身份用于离线记账；失效的云端令牌不能再用于同步。
+    // 网页仍必须重新登录，主动退出登录也会清除身份。
+    setState({ ...state, user: offlineEnabled() ? state.user : null, syncLoginRequired: true,
+      status: offlineEnabled() && state.status === 'conflict' ? 'conflict' : 'login-required' });
     await vault.clear();
   }
   async function refreshSession() {
@@ -74,6 +81,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     return refreshPromise;
   }
   async function request(path, body, method) {
+    if (offlineEnabled() && !accessToken && !refreshToken) await client.restoreSession();
     if (!accessToken) await refreshSession();
     try { return await raw(path, body, accessToken, method); }
     catch (error) { if (error.status !== 401) throw error; await refreshSession(); return raw(path, body, accessToken, method); }
@@ -140,7 +148,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
   }
 
   const client = {
-    snapshot() { try { return { ...getCloudState(), busy, online: isOnline(), error: lastError }; } catch (error) { return { status: 'error', outbox: [], activity: [], busy, error: error.message }; } },
+    snapshot() { try { return { ...getCloudState(), busy, online: isOnline() && !networkUnavailable, error: lastError }; } catch (error) { return { status: 'error', outbox: [], activity: [], busy, error: error.message }; } },
     subscribe(listener) { listeners.add(listener); listener(this.snapshot()); return () => listeners.delete(listener); },
     async login(serverUrl, username, password, { autoBootstrap = false } = {}) {
       return run(async () => {
@@ -174,13 +182,28 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       });
     },
     async restoreSession() {
-      const state = getCloudState();
-      if (!state.serverUrl) return;
-      const saved = await vault.load();
-      if (saved && saved.serverUrl === state.serverUrl && (!state.binding || saved.storeId === state.binding.storeId) &&
-          typeof saved.refreshToken === 'string' && saved.refreshToken) refreshToken = saved.refreshToken;
-      if (!accessToken && !refreshToken && getCloudState().user) { await invalidateSession(); return; }
-      emit();
+      if (restorePromise) return restorePromise;
+      restorePromise = (async () => {
+        const state = getCloudState();
+        if (!state.serverUrl || !state.user) return;
+        let saved;
+        try { saved = await vault.load(); }
+        catch (error) { if (!offlineEnabled()) throw error; }
+        // 读取期间可能主动退出或更换账号，不能恢复旧会话。
+        const current = getCloudState();
+        if (current.user?.id !== state.user.id || current.serverUrl !== state.serverUrl) return;
+        if (saved && saved.serverUrl === state.serverUrl && (!state.binding || saved.storeId === state.binding.storeId) &&
+            (!saved.userId || saved.userId === state.user.id) && typeof saved.refreshToken === 'string' && saved.refreshToken) {
+          refreshToken = saved.refreshToken;
+          if (current.syncLoginRequired) setState({ ...current, syncLoginRequired: false });
+        }
+        if (!accessToken && !refreshToken) {
+          if (!offlineEnabled()) { await invalidateSession(); return; }
+          setState({ ...current, syncLoginRequired: true });
+        }
+        emit();
+      })().finally(() => { restorePromise = null; });
+      return restorePromise;
     },
     async bootstrap() {
       return run(async () => {
@@ -192,6 +215,10 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       });
     },
     async sync() {
+      if (offlineEnabled() && !accessToken && !refreshToken) {
+        await this.restoreSession();
+        if (!accessToken && !refreshToken) return;
+      }
       const state = getCloudState();
       if (!state.binding || !state.user || !state.serverUrl || !isOnline() || state.status === 'conflict' || busy) return;
       return run(async () => {
@@ -250,7 +277,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       if (busy || refreshPromise) throw new Error('请等待当前同步完成');
       return run(async () => {
         const previousAccess = accessToken, previousRefresh = refreshToken;
-        setState({ ...getCloudState(), user: null, status: 'login-required' });
+        setState({ ...getCloudState(), user: null, syncLoginRequired: true, status: 'login-required' });
         accessToken = ''; refreshToken = '';
         await vault.clear();
         // 撤销过期会话时也不能通过 keepSession 恢复本机登录状态。

@@ -3,6 +3,7 @@ import { App } from '@capacitor/app';
 import { createCloudClient, normalizeServerUrl, sha256 } from './cloud-client.js';
 const device = registerPlugin('CloudDevice');
 export const cloudClient = createCloudClient({
+  allowOffline: () => Capacitor.isNativePlatform(),
   vault: {
     async load() { if (!Capacitor.isNativePlatform()) return null; const { session } = await device.loadSession(); return session ? JSON.parse(session) : null; },
     async save(session) { if (Capacitor.isNativePlatform()) await device.saveSession({ session: JSON.stringify(session) }); },
@@ -10,6 +11,12 @@ export const cloudClient = createCloudClient({
   },
   onData: () => { if (globalThis.window) window.dispatchEvent(new window.Event('cloud-data-updated')); }
 });
+
+export async function copyToClipboard(text) {
+  if (Capacitor.isNativePlatform()) return device.copyText({ text: String(text) });
+  if (!navigator.clipboard?.writeText) throw new Error('复制失败，请使用支持复制功能的浏览器');
+  await navigator.clipboard.writeText(String(text));
+}
 
 export function validateUpdate(manifest, serverUrl, currentVersion, appId = 'com.hairstudio.memberapp') {
   if (manifest.available === false) return null;

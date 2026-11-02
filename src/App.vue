@@ -1,5 +1,5 @@
 <template>
-  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none pb-28">
+  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none pb-28" @contextmenu="handleContextMenu" @pointerdown="resetExitSequence">
     
     <!-- 顶部状态栏与大搜索框 (适配水滴屏/挖孔屏，48px+ safe-area 防遮挡) -->
     <header class="app-header bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white pt-status-safe sticky top-0 z-30 shadow-lg border-b border-slate-800">
@@ -55,12 +55,12 @@
     <main class="app-content flex-1 p-3.5 space-y-4">
       <div v-if="cloudState.binding && !cloudLocked && (cloudState.outbox.length || cloudState.status === 'conflict' || !cloudState.online)" class="sync-banner rounded-2xl p-3 border bg-white text-sm flex items-center justify-between gap-2">
         <span>{{ cloudState.online ? '☁️ 已联网' : '📴 当前离线' }}<span v-if="cloudState.outbox.length"> · 待同步 {{ cloudState.outbox.length }} 笔</span><span v-if="cloudState.status === 'conflict'"> · 请核对冲突</span></span>
-        <button @click="activeTab = 'settings'" class="font-bold text-indigo-700">同步设置</button>
+        <button @click="openSettings('account')" class="font-bold text-indigo-700">同步设置</button>
       </div>
       <div v-if="storageError" class="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-900">
         <p class="font-black">当前账本无法读取，请从有效备份恢复。</p>
         <p class="text-sm mt-2">{{ storageError }}。恢复前会保留当前原始数据。</p>
-        <button @click="activeTab = 'settings'" class="mt-3 font-black underline">打开备份恢复</button>
+        <button @click="openSettings('backup-files')" class="mt-3 font-black underline">打开备份恢复</button>
       </div>
       
       <!-- ==================== TAB 1: 收银台 / 首页 ==================== -->
@@ -148,11 +148,11 @@
                 </div>
                 <div>
                   <div class="flex items-center space-x-2">
-                    <span class="font-black text-slate-900 text-xl tracking-tight">{{ m.name }}</span>
+                    <button class="copyable-text font-black text-slate-900 text-xl tracking-tight" @click.stop="copyMemberField(m.name, '姓名')" title="点击复制姓名" aria-label="复制会员姓名">{{ m.name }}</button>
                   </div>
-                  <div class="text-base text-slate-600 font-black tracking-wider font-mono mt-0.5">
+                  <button class="copyable-text block text-base text-slate-600 font-black tracking-wider font-mono mt-0.5" @click.stop="copyMemberField(m.phone, '手机号')" title="点击复制手机号" aria-label="复制会员手机号">
                     {{ formatPhoneSpaced(m.phone) }}
-                  </div>
+                  </button>
                   <!-- 发型偏好便签 (优雅暖琥珀色) -->
                   <div v-if="m.notes" class="mt-1.5 text-xs text-amber-900 bg-amber-50 border border-amber-200/90 px-2.5 py-1 rounded-xl inline-block font-bold">
                     💇 {{ m.notes }}
@@ -212,8 +212,8 @@
                 {{ m.name.charAt(0) }}
               </div>
               <div>
-                <div class="font-black text-slate-900 text-lg">{{ m.name }}</div>
-                <div class="text-base text-slate-600 font-bold font-mono">{{ formatPhoneSpaced(m.phone) }}</div>
+                <button class="copyable-text block font-black text-slate-900 text-lg" @click.stop="copyMemberField(m.name, '姓名')" title="点击复制姓名" aria-label="复制会员姓名">{{ m.name }}</button>
+                <button class="copyable-text block text-base text-slate-600 font-bold font-mono" @click.stop="copyMemberField(m.phone, '手机号')" title="点击复制手机号" aria-label="复制会员手机号">{{ formatPhoneSpaced(m.phone) }}</button>
                 <div v-if="m.notes" class="text-xs text-slate-500 font-medium truncate max-w-[180px] mt-0.5">
                   {{ m.notes }}
                 </div>
@@ -260,8 +260,8 @@
                 >
                   {{ getTypeText(item.type) }}
                 </span>
-                <span class="font-black text-slate-900 text-lg">{{ item.memberName }}</span>
-                <span class="text-slate-500 font-mono font-bold">{{ formatPhoneSpaced(item.memberPhone) }}</span>
+                <button class="copyable-text font-black text-slate-900 text-lg" @click.stop="copyMemberField(item.memberName, '姓名')" aria-label="复制会员姓名">{{ item.memberName }}</button>
+                <button class="copyable-text text-slate-500 font-mono font-bold" @click.stop="copyMemberField(item.memberPhone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(item.memberPhone) }}</button>
               </div>
               <div 
                 class="text-lg font-black tabular-nums"
@@ -302,11 +302,43 @@
 
       <!-- ==================== TAB 4: 服务定价与备份安全 ==================== -->
       <div v-if="activeTab === 'settings'" class="space-y-4">
-        <CloudSettings :recovery-required="Boolean(storageError)" />
+        <div v-if="!cloudLocked && settingsPath.length" class="settings-page-heading">
+          <button @click="backInSettings" class="settings-back" aria-label="返回上一级设置">‹ {{ settingsPath.length > 1 ? '返回数据备份' : '返回设置' }}</button>
+          <h2 class="font-black text-xl">{{ settingsTitles[settingsPage] }}</h2>
+        </div>
+        <CloudSettings v-if="cloudLocked || ['account', 'users', 'activity', 'update'].includes(settingsPage)"
+          :section="cloudLocked ? 'account' : settingsPage" :show-title="cloudLocked" :recovery-required="Boolean(storageError)" @navigate="openSettings" />
         <template v-if="!cloudLocked">
+        <template v-if="settingsPage === 'overview'">
+          <section class="settings-summary bg-white border border-slate-200 rounded-2xl p-5">
+            <div class="flex items-center justify-between gap-3">
+              <h2 class="font-black text-xl">设置</h2>
+              <span class="settings-status">{{ cloudState.user ? (cloudState.online && !cloudState.syncLoginRequired ? '云端已登录' : '离线可用') : '本机模式' }}</span>
+            </div>
+            <p class="text-sm text-slate-500 mt-2">{{ cloudState.user ? cloudState.user.displayName + ' · ' + (cloudState.binding ? '账本已保存在本机，联网自动同步' : '可继续使用本机账本') : '无需登录也能使用本机账本' }}</p>
+            <p v-if="cloudState.binding" class="text-sm text-slate-600 mt-2">待同步 {{ cloudState.outbox.length }} 笔<span v-if="cloudState.syncLoginRequired"> · 同步前需登录原账号</span></p>
+          </section>
+          <section v-for="group in settingsGroups" :key="group.title" class="settings-category">
+            <h3 class="text-sm font-bold text-slate-500 mb-2">{{ group.title }}</h3>
+            <div class="settings-menu bg-white border border-slate-200 rounded-2xl">
+              <button v-for="entry in group.items" :key="entry.page" @click="openSettings(entry.page)" class="settings-menu-item">
+                <span class="settings-entry-icon" aria-hidden="true">{{ entry.icon }}</span>
+                <span class="settings-entry-copy"><strong>{{ entry.title }}</strong><small>{{ entry.description }}</small></span>
+                <span class="settings-chevron" aria-hidden="true">›</span>
+              </button>
+            </div>
+          </section>
+        </template>
+        <section v-if="settingsPage === 'backup'" class="settings-menu bg-white border border-slate-200 rounded-2xl">
+          <button v-for="entry in backupEntries" :key="entry.page" @click="openSettingsPage(entry.page)" class="settings-menu-item">
+            <span class="settings-entry-icon" aria-hidden="true">{{ entry.icon }}</span>
+            <span class="settings-entry-copy"><strong>{{ entry.title }}</strong><small>{{ entry.description }}</small></span>
+            <span class="settings-chevron" aria-hidden="true">›</span>
+          </button>
+        </section>
         
         <!-- 理发项目与定价管理 -->
-        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
+        <div v-if="settingsPage === 'services'" class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
           <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
             <div>
               <h2 class="font-black text-slate-900 text-lg">💈 服务项目与定价设置</h2>
@@ -352,7 +384,7 @@
         </div>
 
         <!-- 微信安全备份中心 -->
-        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
+        <div v-if="settingsPage === 'backup-files'" class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
           <div class="flex items-center space-x-3 mb-2">
             <span class="text-3xl">🛡️</span>
             <div>
@@ -412,7 +444,7 @@
         </div>
 
         <!-- 仅 App 展示安卓文件说明，网页无需暴露设备路径信息 -->
-        <div v-if="isNativeApp" class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] space-y-3">
+        <div v-if="isNativeApp && settingsPage === 'file-guide'" class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] space-y-3">
           <div class="flex items-center space-x-2.5">
             <span class="text-2xl">📁</span>
             <div>
@@ -435,7 +467,7 @@
               <span class="text-base">💬</span>
               <div class="flex-1">
                 <div class="font-bold text-emerald-950">微信文件传输助手保存：</div>
-                <div class="font-mono text-emerald-800 font-bold select-all mt-0.5">微信聊天记录 > 文件传输助手</div>
+                <div class="font-mono text-emerald-800 font-bold mt-0.5">微信聊天记录 > 文件传输助手</div>
                 <div class="text-[11px] text-emerald-800 mt-0.5">请将接收到的文件另存，并定期确认可打开。换新手机时，选择保存的 JSON 文件恢复。</div>
               </div>
             </div>
@@ -443,7 +475,7 @@
         </div>
 
         <!-- App内检测到的备份文件与本地快照列表 -->
-        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
+        <div v-if="settingsPage === 'snapshots'" class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
           <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
             <div class="flex items-center space-x-2.5">
               <span class="text-2xl">📑</span>
@@ -503,13 +535,15 @@
         </div>
 
         <!-- 理发店省心锦囊 -->
-        <div class="bg-indigo-50 border border-indigo-100 p-4.5 rounded-3xl text-xs text-indigo-950 space-y-2 leading-relaxed">
+        <div v-if="settingsPage === 'help'" class="bg-indigo-50 border border-indigo-100 p-4.5 rounded-3xl text-xs text-indigo-950 space-y-2 leading-relaxed">
           <div class="font-black text-sm flex items-center space-x-1.5">
             <span>💡</span>
             <span>理发店安心记账小贴士：</span>
           </div>
           <p>1. 本机账本支持离线记账，登录并绑定云端后联网自动同步。卸载或清除应用数据前请先导出备份。</p>
           <p>2. 建议每天打烊时确认待同步记录为零，并另存一份 JSON 备份，定期核对文件可打开。</p>
+          <p>3. 点击会员姓名或手机号旁的复制标记即可复制；输入框可长按粘贴，普通页面文字不弹出选择菜单。</p>
+          <p>4. 返回键先关闭弹窗或返回上一层，在主页面连续按三次返回退出应用。</p>
         </div>
         </template>
       </div>
@@ -547,7 +581,7 @@
         </button>
 
         <button 
-          @click="activeTab = 'settings'"
+          @click="openSettings()"
           class="flex flex-col items-center justify-center transition btn-press"
           :class="activeTab === 'settings' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
         >
@@ -925,10 +959,10 @@
             </div>
             <div>
               <div class="flex flex-wrap items-center gap-1.5">
-                <h3 class="font-black text-xl text-slate-900">{{ selectedMember.name }}</h3>
+                <button class="copyable-text font-black text-xl text-slate-900" @click.stop="copyMemberField(selectedMember.name, '姓名')" aria-label="复制会员姓名">{{ selectedMember.name }}</button>
                 <span class="text-xs bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-black">储值会员</span>
               </div>
-              <div class="text-base text-slate-600 font-mono font-black">{{ formatPhoneSpaced(selectedMember.phone) }}</div>
+              <button class="copyable-text block text-base text-slate-600 font-mono font-black" @click.stop="copyMemberField(selectedMember.phone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(selectedMember.phone) }}</button>
             </div>
           </div>
           <div class="flex items-center space-x-2">
@@ -1193,7 +1227,7 @@
         <h3 class="font-black text-slate-900 text-2xl">充值入账成功</h3>
         <p class="text-sm text-slate-500 font-bold">已为会员 {{ receiptModal.name }} 存入额度</p>
 
-        <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-left text-xs text-slate-800 leading-relaxed font-mono select-all">
+        <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200 text-left text-xs text-slate-800 leading-relaxed font-mono">
           {{ receiptModal.messageText }}
         </div>
 
@@ -1216,7 +1250,7 @@
     <!-- 浮动 Toast 消息通知 -->
     <div 
       v-if="toastMessage" 
-      class="fixed top-24 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur-md text-white text-sm font-black px-6 py-3.5 rounded-full shadow-2xl z-50 animate-fade-in flex items-center space-x-2 border border-slate-700"
+      class="app-toast fixed top-24 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur-md text-white text-sm font-black px-6 py-3.5 rounded-full shadow-2xl z-50 animate-fade-in flex items-center space-x-2 border border-slate-700"
     >
       <span>ℹ️</span>
       <span>{{ toastMessage }}</span>
@@ -1267,12 +1301,48 @@ import { isValidMoney, moneyToCent } from './money.js';
 import { exportFile, isExportCancelled } from './file-export.js';
 import Keypad from './components/Keypad.vue';
 import CloudSettings from './components/CloudSettings.vue';
-import { cloudClient } from './cloud-device.js';
+import { cloudClient, copyToClipboard } from './cloud-device.js';
 import { canWrite } from './sync-protocol.js';
 
 // 页面标签：'home' | 'members' | 'ledgers' | 'settings'
 const activeTab = ref('home');
 const isNativeApp = Capacitor.isNativePlatform();
+const settingsPath = ref([]);
+const settingsPage = computed(() => settingsPath.value.at(-1) || 'overview');
+const settingsTitles = { account: '账号与同步', services: '服务与价格', backup: '数据备份', 'backup-files': '导出与恢复', snapshots: '本地快照', 'file-guide': '文件保存指南', users: '账号管理', activity: '使用记录', update: '应用更新', help: '使用帮助' };
+const backupEntries = [
+  { page: 'backup-files', title: '导出与恢复', description: '备份完整账本、导出 Excel、恢复备份', icon: '📤' },
+  { page: 'snapshots', title: '本地快照', description: '归档、查看与恢复手机内的账本快照', icon: '📁' },
+  ...(isNativeApp ? [{ page: 'file-guide', title: '文件保存指南', description: '保存到文件管理器或微信', icon: '📄' }] : [])
+];
+const settingsGroups = computed(() => [
+  { title: '日常经营', items: [{ page: 'services', title: '服务与价格', description: '管理理发项目与默认价格', icon: '💈' }] },
+  { title: '账号与云端', items: [
+    { page: 'account', title: '账号与同步', description: '登录、同步状态与离线待办', icon: '☁️' },
+    ...(cloudState.value.user?.role === 'owner' ? [
+      { page: 'users', title: '账号管理', description: '店员账号、权限与停用', icon: '👥' },
+      { page: 'activity', title: '使用记录', description: '查看门店最近操作', icon: '📋' }
+    ] : [])
+  ] },
+  { title: '数据安全', items: [{ page: 'backup', title: '数据备份', description: '导出恢复、本地快照与保存指南', icon: '🛡️' }] },
+  { title: '应用', items: [
+    { page: 'update', title: '应用更新', description: '检查并安装新版本', icon: '⬆️' },
+    { page: 'help', title: '使用帮助', description: '离线记账、同步与备份说明', icon: '💡' }
+  ] }
+]);
+function openSettings(page = 'overview') {
+  activeTab.value = 'settings';
+  settingsPath.value = page === 'overview' ? [] : backupEntries.some(entry => entry.page === page) ? ['backup', page] : [page];
+  window.scrollTo?.(0, 0);
+}
+function openSettingsPage(page) {
+  settingsPath.value = [...settingsPath.value, page];
+  window.scrollTo?.(0, 0);
+}
+function backInSettings() {
+  settingsPath.value = settingsPath.value.slice(0, -1);
+  window.scrollTo?.(0, 0);
+}
 
 // 全局响应式状态
 const dashboard = ref({});
@@ -1283,6 +1353,7 @@ const rechargePlans = ref([]);
 const searchQuery = ref('');
 const ledgerSearchQuery = ref('');
 const toastMessage = ref('');
+let toastTimer = null;
 const feedbackModal = ref(null);
 const storageError = ref('');
 const isExporting = ref(false);
@@ -1335,17 +1406,18 @@ const localSnapshots = ref([]);
 const restoreMode = ref('merge');
 const ledgerFilterType = ref('');
 const cloudState = ref(cloudClient.snapshot());
-const cloudLocked = computed(() => !cloudState.value.user && (!isNativeApp || Boolean(cloudState.value.binding)));
+const cloudLocked = computed(() => !isNativeApp && !cloudState.value.user);
 const connectionLabel = computed(() => {
   if (!cloudState.value.user) return isNativeApp ? '本机离线账本' : '请登录';
   if (!cloudState.value.online) return '离线记账';
+  if (cloudState.value.syncLoginRequired) return '本机使用 · 同步需登录';
   if (cloudState.value.status === 'conflict') return '联网 · 待核对';
   if (cloudState.value.outbox.length) return `联网 · 待同步 ${cloudState.value.outbox.length} 笔`;
   return '在线同步';
 });
 const stopCloudSubscription = cloudClient.subscribe(state => {
   cloudState.value = state;
-  if (!state.user && (!isNativeApp || state.binding)) {
+  if (!state.user && !isNativeApp) {
     activeTab.value = 'settings'; selectedMember.value = null; consumingMember.value = null; rechargingMember.value = null;
     showMemberModal.value = false; showServiceModal.value = false; receiptModal.value = null; backupRestoreRequest.value = null;
   }
@@ -1424,8 +1496,9 @@ function getBadgeClass(type) {
 }
 
 function showToast(msg) {
+  clearTimeout(toastTimer);
   toastMessage.value = msg;
-  setTimeout(() => {
+  toastTimer = setTimeout(() => {
     toastMessage.value = '';
   }, 2500);
 }
@@ -1461,7 +1534,7 @@ function refreshAll() {
     storageError.value = '';
   } catch (error) {
     storageError.value = error.message;
-    activeTab.value = 'settings';
+    if (activeTab.value !== 'settings' || settingsPage.value === 'overview') openSettings('backup-files');
     membersList.value = [];
     ledgersList.value = [];
     selectedMember.value = null;
@@ -1739,13 +1812,16 @@ function deleteServiceItem(id) {
   showToast('服务项目已删除');
 }
 
-function copyReceiptText(text) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text);
-    showToast('已复制到剪贴板，可粘贴发给顾客微信');
-  } else {
-    showToast('请长按选中文本复制');
-  }
+async function copyMemberField(text, label) {
+  try { await copyToClipboard(text); showToast(label + '已复制'); }
+  catch (error) { showToast(error.message || '复制失败，请重试'); }
+}
+async function copyReceiptText(text) {
+  try { await copyToClipboard(text); showToast('已复制到剪贴板，可粘贴发给顾客微信'); }
+  catch (error) { showToast(error.message || '复制失败，请重试'); }
+}
+function handleContextMenu(event) {
+  if (!event.target.closest('input:not([type="file"]), textarea')) event.preventDefault();
 }
 
 // 微信/手机一键备份导出
@@ -1919,6 +1995,25 @@ let appStateListener = null;
 let backButtonListener = null;
 let isUnmounted = false;
 let stopCloud = null;
+let exitPressCount = 0;
+let exitResetTimer = null;
+function resetExitSequence() {
+  exitPressCount = 0;
+  clearTimeout(exitResetTimer);
+}
+async function handleBackButton() {
+  if (closeTopLayer()) { resetExitSequence(); return; }
+  exitPressCount += 1;
+  clearTimeout(exitResetTimer);
+  if (exitPressCount >= 3) {
+    resetExitSequence();
+    try { await CapacitorApp.exitApp(); }
+    catch { showToast('暂时无法退出，请重试'); }
+    return;
+  }
+  showToast(exitPressCount === 1 ? '再按两次返回键退出应用' : '再按一次返回键退出应用');
+  exitResetTimer = setTimeout(resetExitSequence, 2000);
+}
 
 function scheduleDailyRefresh() {
   clearTimeout(dailyRefreshTimer);
@@ -1949,6 +2044,7 @@ function closeTopLayer() {
   if (rechargingMember.value) { rechargingMember.value = null; return true; }
   if (consumingMember.value) { consumingMember.value = null; return true; }
   if (selectedMember.value) { selectedMember.value = null; return true; }
+  if (activeTab.value === 'settings' && settingsPath.value.length && !cloudLocked.value) { backInSettings(); return true; }
   if (activeTab.value !== 'home' && !cloudLocked.value) { activeTab.value = 'home'; return true; }
   return false;
 }
@@ -1971,10 +2067,7 @@ onMounted(async () => {
       console.warn('应用状态监听未能启动:', error);
     }
     try {
-      const backListener = await CapacitorApp.addListener('backButton', () => {
-        // 优先关闭最上层窗口，其次回到首页，避免误触退出应用。
-        closeTopLayer();
-      });
+      const backListener = await CapacitorApp.addListener('backButton', handleBackButton);
       if (isUnmounted) await backListener.remove();
       else backButtonListener = backListener;
     } catch (error) {
@@ -1985,6 +2078,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true;
+  resetExitSequence();
+  clearTimeout(toastTimer);
   clearTimeout(dailyRefreshTimer);
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('focus', refreshOnResume);

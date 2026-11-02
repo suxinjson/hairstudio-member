@@ -306,6 +306,118 @@ test('a saved native session still permits offline recording after restarting', 
   assert.equal(localDb.getMemberById(account.member.id).balance, 6200);
   assert.equal(getCloudState().outbox.length, 1);
 });
+
+for (const storageMode of ['available', 'missing', 'temporarily-unreadable']) {
+  test(`native offline restart preserves identity and pending charges when secure storage is ${storageMode}`, async () => {
+    const account = await initialAccount();
+    let saved, online = false, fetchCount = 0;
+    const originalVault = { load: async () => saved, save: async value => { saved = value; }, clear: async () => { saved = null; } };
+    await connectedClient({ vault: originalVault, online: () => false });
+    stopClient(); stopClient = null;
+    const before = getCloudState();
+    const client = createCloudClient({ allowOffline: true, isOnline: () => online,
+      vault: { ...originalVault, load: async () => {
+        if (storageMode === 'temporarily-unreadable') throw new Error('Keystore unavailable');
+        return storageMode === 'missing' ? null : saved;
+      } },
+      fetch: (...args) => { fetchCount++; assert.equal(online, true); return fetch(...args); }
+    });
+    stopClient = await client.start();
+    assert.deepEqual(client.snapshot().user, before.user);
+    assert.deepEqual(client.snapshot().binding, before.binding);
+    assert.equal(Boolean(client.snapshot().syncLoginRequired), storageMode !== 'available');
+    localDb.consume({ memberId: account.member.id, amount: 38 });
+    assert.equal(localDb.getMemberById(account.member.id).balance, 6200);
+    assert.equal(getCloudState().outbox[0].actorId, before.user.id);
+    assert.equal(fetchCount, 0);
+    online = true;
+    if (storageMode !== 'available') {
+      await client.sync();
+      assert.equal(fetchCount, 0);
+      assert.equal(getCloudState().outbox.length, 1);
+      await client.login(url, 'owner', password);
+    }
+    await client.sync();
+    await client.sync();
+    assert.equal(getCloudState().outbox.length, 0);
+    assert.equal(client.snapshot().syncLoginRequired, false);
+    const remote = await service.account(owner.identity);
+    assert.equal(remote.data.members[0].balance, 6200);
+    assert.equal(remote.data.ledgers.filter(entry => entry.type === 'CONSUME').length, 1);
+  });
+}
+
+test('native concurrent startup and sync wait for secure storage instead of losing the cached login', async () => {
+  const account = await initialAccount();
+  let saved, finishRead;
+  await connectedClient({ online: () => false, vault: { load: async () => saved, save: async value => { saved = value; }, clear: async () => {} } });
+  stopClient(); stopClient = null;
+  let networkCalls = 0;
+  const client = createCloudClient({ allowOffline: true, isOnline: () => true,
+    vault: { load: () => new Promise(resolve => { finishRead = resolve; }), save: async value => { saved = value; }, clear: async () => {} },
+    fetch: (...args) => { networkCalls++; return fetch(...args); }
+  });
+  const starting = client.start();
+  const syncing = client.sync();
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  assert.equal(networkCalls, 0);
+  finishRead(saved);
+  stopClient = await starting;
+  await syncing;
+  for (let count = 0; client.snapshot().busy && count < 100; count++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(client.snapshot().user.id, owner.user.id);
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, 6200);
+});
+
+test('native network failures and revoked cloud credentials keep local identity and pending records', async () => {
+  const account = await initialAccount();
+  let saved, mode = 'network';
+  const vault = { load: async () => saved, save: async value => { saved = value; }, clear: async () => { saved = null; } };
+  await connectedClient({ vault, online: () => false });
+  stopClient(); stopClient = null;
+  const client = createCloudClient({ allowOffline: true, isOnline: () => true, vault,
+    fetch: (...args) => {
+      if (mode === 'network') throw new TypeError('network unreachable');
+      if (mode === 'revoked') return Promise.resolve(new Response(JSON.stringify({ error: 'session expired' }), { status: 401 }));
+      return fetch(...args);
+    }
+  });
+  await client.restoreSession();
+  // 保持自动记账钩子，但由测试显式触发同步，避免后台同步干扰失败阶段。
+  const { installCloudRecording } = await import('../../src/cloud-storage.js');
+  stopClient = installCloudRecording();
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  await assert.rejects(client.sync(), { network: true });
+  assert.equal(client.snapshot().online, false);
+  assert.equal(client.snapshot().user.id, owner.user.id);
+  assert.deepEqual(getCloudState().outbox, pending);
+  mode = 'revoked';
+  await assert.rejects(client.sync(), { status: 401 });
+  assert.equal(client.snapshot().syncLoginRequired, true);
+  assert.equal(client.snapshot().user.id, owner.user.id);
+  assert.deepEqual(getCloudState().outbox, pending);
+  localDb.recharge({ memberId: account.member.id, actualPay: 20 });
+  assert.equal(localDb.getMemberById(account.member.id).balance, 8200);
+  mode = 'online';
+  await client.login(url, 'owner', password);
+  await client.sync();
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, 8200);
+});
+
+test('native explicit logout cannot silently restore credentials left by a failed vault clear', async () => {
+  await initialAccount();
+  let saved;
+  const vault = { load: async () => saved, save: async value => { saved = value; }, clear: async () => { throw new Error('vault unavailable'); } };
+  const client = createCloudClient({ allowOffline: true, vault, fetch, isOnline: () => false });
+  await client.login(url, 'owner', password);
+  await assert.rejects(client.logout(), /vault unavailable/);
+  await client.restoreSession();
+  assert.equal(client.snapshot().user, null);
+  assert.equal(client.snapshot().syncLoginRequired, true);
+});
 test('sync recomputes monetary values and atomically writes balances, ledgers and audit records', async () => {
   const account = await initialAccount();
   const recharge = operation(account.data, owner, 'recharge', [{ memberId: account.member.id, actualPay: '20.01', giftAmount: '0.07', balanceAfter: 999999 }]);

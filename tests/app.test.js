@@ -19,7 +19,7 @@ const directory = await mkdtemp(join(tmpdir(), 'member-ui-test-'));
 const keypadPath = join(directory, 'keypad.mjs');
 const cloudSettingsPath = join(directory, 'cloud-settings.mjs');
 const nativeAppPath = join(directory, 'native-app.mjs');
-await writeFile(nativeAppPath, 'export const App = { addListener() { throw new Error("Unexpected native subscription"); } };');
+await writeFile(nativeAppPath, 'export const App = { addListener() { throw new Error("Unexpected native subscription"); }, async exitApp() {} };');
 const nativeAppUrl = pathToFileURL(nativeAppPath).href;
 const { App: nativeApp } = await import(nativeAppUrl);
 const { Capacitor } = await import('@capacitor/core');
@@ -64,6 +64,7 @@ beforeEach(() => {
   Capacitor.isNativePlatform = () => true;
   globalThis.localStorage = new MemoryStorage();
   document.body.innerHTML = '<div id="app"></div>';
+  window.scrollTo = () => {};
   localDb.init();
 });
 afterEach(() => app?.unmount());
@@ -83,11 +84,15 @@ function button(text) {
   assert.ok(match, `Missing button: ${text}`);
   return match;
 }
-async function settings() {
+async function settings(page = 'overview') {
   [...document.querySelectorAll('nav button')].find(element => element.textContent.includes('设置')).click();
   await nextTick();
+  const titles = { account: '账号与同步', services: '服务与价格', 'backup-files': '导出与恢复', snapshots: '本地快照' };
+  if (['backup-files', 'snapshots'].includes(page)) { button('数据备份').click(); await nextTick(); }
+  if (page !== 'overview') { button(titles[page] || page).click(); await nextTick(); }
 }
 async function selectBackup(content) {
+  if (!document.querySelector('input[type="file"]')) await settings('backup-files');
   const input = document.querySelector('input[type="file"]');
   assert.ok(input);
   Object.defineProperty(input, 'files', { value: [new dom.window.File([content], 'backup.json', { type: 'application/json' })] });
@@ -119,7 +124,7 @@ test('damaged storage keeps the backup restore screen available and permits vali
 test('a failed manual snapshot displays failure instead of success', async t => {
   t.mock.method(console, 'warn', () => {});
   await mount();
-  await settings();
+  await settings('snapshots');
   localStorage.failKey = 'hairstudio_local_snapshots_v1';
   button('立即归档').click();
   await nextTick();
@@ -138,7 +143,7 @@ test('external export succeeds with an explicit warning when its optional local 
   t.after(() => { delete navigator.canShare; delete navigator.share; });
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
-  await settings();
+  await settings('backup-files');
   localStorage.failKey = 'hairstudio_local_snapshots_v1';
   button('一键备份所有账本').click();
   await new Promise(resolve => setTimeout(resolve, 10));
@@ -192,7 +197,7 @@ test('whitespace-only phone edits cannot be saved through the member form', asyn
   await mount();
   document.querySelector('.member-card > div').click();
   await nextTick();
-  document.querySelector('[class*="z-40"] button').click();
+  button('修改档案').click();
   await nextTick();
   const phone = document.querySelector('input[type="tel"]');
   phone.value = '   ';
@@ -341,14 +346,15 @@ function cloudProfile(role, t) {
     user: role ? { id: 'test-user', storeId: 'test-store', role, displayName: '店主', username: 'owner' } : null,
     revision: 1, outbox: [], activity: [], status: role ? 'synced' : 'login-required' });
 }
-test('a logged-out cloud account shows login without exposing members or backup snapshots', async () => {
+test('a native app can read its local ledger after logout while cloud writes require the original account', async () => {
   localDb.createMember({ name: '私密会员', phone: '13800001111', initialBalance: 100 });
   cloudProfile(null);
   await mount();
+  assert.ok(document.body.textContent.includes('私密会员'));
+  assert.ok(document.querySelector('nav'));
+  assert.equal(button('剪发扣款').disabled, true);
+  await settings('account');
   assert.ok(document.body.textContent.includes('安全登录'));
-  assert.equal(document.body.textContent.includes('私密会员'), false);
-  assert.equal(document.querySelector('nav'), null);
-  assert.equal(document.body.textContent.includes('一键备份所有账本'), false);
 });
 test('read-only cloud accounts cannot initiate a charge or change service prices', async t => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
@@ -356,7 +362,7 @@ test('read-only cloud accounts cannot initiate a charge or change service prices
   await mount();
   assert.equal(button('剪发扣款').disabled, true);
   assert.equal(button('会员充值').disabled, true);
-  await settings(); assert.equal(button('新增项目').disabled, true);
+  await settings('services'); assert.equal(button('新增项目').disabled, true);
   assert.throws(() => localDb.consume({ memberId: member.id, amount: 38 }), /权限/);
   assert.equal(localDb.getMemberById(member.id).balance, 10000);
 });
@@ -375,19 +381,20 @@ test('downgraded accounts see export and cloud replacement controls without gain
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   cloudProfile('viewer', t);
   saveCloudState({ ...getCloudState(), status: 'conflict', conflictReason: 'permissions', outbox: [{ id: 'queued-charge' }] });
-  await mount(); await settings();
+  await mount(); await settings('account');
   assert.ok(document.body.textContent.includes('账号权限已变化'));
   assert.equal(button('导出本机账本与待同步记录').disabled, false);
   assert.equal(button('采用云端账本').disabled, false);
   assert.equal(button('解除云端绑定').disabled, true);
   assert.equal([...document.querySelectorAll('button')].some(element => element.textContent.includes('确认上传恢复后的本机账本')), false);
+  await settings('services');
   assert.equal(button('新增项目').disabled, true);
 });
 
 test('an initialization conflict shows reconciliation and disables unlink until the initial request is resolved', async t => {
   cloudProfile('owner', t);
   saveCloudState({ ...getCloudState(), status: 'conflict', conflictReason: 'bootstrap', bootstrap: { id: 'pending-bootstrap' } });
-  await mount(); await settings();
+  await mount(); await settings('account');
   assert.ok(document.body.textContent.includes('其他设备已初始化云端'));
   assert.equal(button('采用云端账本').disabled, false);
   assert.equal(button('解除云端绑定').disabled, true);
@@ -404,6 +411,7 @@ test('the cloud-bound recovery screen restores a backup and requires explicit ow
   localStorage.setItem('hairstudio_members_v2', '{broken');
   window.dispatchEvent(new window.Event('cloud-data-updated'));
   await new Promise(resolve => setTimeout(resolve, 20)); await nextTick();
+  await settings('account');
   assert.ok(document.body.textContent.includes('本机账本无法读取'));
   assert.equal(button('采用云端账本').disabled, false);
   await selectBackup(backup);
@@ -412,6 +420,7 @@ test('the cloud-bound recovery screen restores a backup and requires explicit ow
   assert.equal(localDb.getMemberById(member.id).balance, 10000);
   assert.deepEqual(getCloudState().outbox, pending);
   assert.ok(document.body.textContent.includes('原待办已保留'));
+  await settings('account');
   assert.equal(button('确认上传恢复后的本机账本').disabled, false);
   assert.equal(button('采用云端账本').disabled, false);
 });
@@ -428,6 +437,7 @@ test('a corrupt cloud ledger can export its original storage and pending records
   t.mock.method(URL, 'createObjectURL', blob => { exported = blob.text(); return 'blob:review-export'; });
   t.mock.method(dom.window.HTMLAnchorElement.prototype, 'click', () => { clicks++; });
   await mount();
+  await settings('account');
   button('导出本机账本与待同步记录').click();
   await new Promise(resolve => setTimeout(resolve, 20)); await nextTick();
   assert.equal(clicks, 1);
@@ -452,4 +462,122 @@ test('a browser restart exposes login and hides the stale signed-in ledger while
   assert.ok(document.body.textContent.includes('安全登录'));
   assert.equal(document.body.textContent.includes('私密会员'), false);
   assert.equal(document.body.textContent.includes('同步完成'), false);
+});
+
+async function nativeBackListener(t) {
+  let back;
+  t.mock.method(nativeApp, 'addListener', async (name, callback) => {
+    if (name === 'backButton') back = callback;
+    return { remove: async () => {} };
+  });
+  await mount();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(back);
+  return back;
+}
+
+test('native root exits on the third consecutive back press and resets after two seconds', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const exit = t.mock.method(nativeApp, 'exitApp', async () => {});
+  const back = await nativeBackListener(t);
+  await back(); await nextTick();
+  assert.ok(document.body.textContent.includes('再按两次返回键退出应用'));
+  await back(); await nextTick();
+  assert.ok(document.body.textContent.includes('再按一次返回键退出应用'));
+  assert.equal(exit.mock.callCount(), 0);
+  t.mock.timers.tick(2001);
+  await back(); await nextTick();
+  assert.ok(document.body.textContent.includes('再按两次返回键退出应用'));
+  await back();
+  await back();
+  assert.equal(exit.mock.callCount(), 1);
+});
+
+test('native back closes forms and traverses settings levels before counting exit presses', async t => {
+  const exit = t.mock.method(nativeApp, 'exitApp', async () => {});
+  localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  const before = localDb.readBackupState();
+  const back = await nativeBackListener(t);
+  button('会员充值').click(); await nextTick();
+  await back(); await nextTick();
+  assert.equal(document.querySelector('.recharge-plans'), null);
+  assert.deepEqual(localDb.readBackupState(), before);
+  await settings('backup-files');
+  await back(); await nextTick();
+  assert.ok(document.body.textContent.includes('本地快照'));
+  assert.equal(document.querySelector('input[type="file"]'), null);
+  await back(); await nextTick();
+  assert.ok(document.body.textContent.includes('日常经营'));
+  await back(); await nextTick();
+  assert.ok(document.querySelector('.dashboard-card'));
+  assert.equal(exit.mock.callCount(), 0);
+  await back(); await back();
+  document.querySelector('.app-shell').dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
+  await back();
+  assert.equal(exit.mock.callCount(), 0);
+  await back(); await back();
+  assert.equal(exit.mock.callCount(), 1);
+});
+
+test('settings groups hide detailed forms until entering their category', async () => {
+  await mount(); await settings();
+  assert.ok(document.body.textContent.includes('日常经营'));
+  assert.ok(document.body.textContent.includes('账号与云端'));
+  assert.equal(document.querySelector('input'), null);
+  assert.equal(document.body.textContent.includes('精致洗剪吹'), false);
+  button('数据备份').click(); await nextTick();
+  assert.ok(document.body.textContent.includes('本地快照'));
+  assert.equal(document.querySelector('input[type="file"]'), null);
+  button('导出与恢复').click(); await nextTick();
+  assert.ok(document.querySelector('input[type="file"]'));
+  assert.equal(document.body.textContent.includes('加载账号列表'), false);
+  document.querySelector('[aria-label="返回上一级设置"]').click(); await nextTick();
+  assert.equal(document.querySelector('input[type="file"]'), null);
+  await settings('account');
+  assert.ok(document.body.textContent.includes('安全登录'));
+  assert.equal(document.body.textContent.includes('一键备份所有账本'), false);
+});
+
+test('native cached account remains usable when secure credentials cannot be read at startup', async t => {
+  t.mock.method(console, 'warn', () => {});
+  t.mock.method(cloudClient, 'sync', async () => {});
+  const member = localDb.createMember({ name: '离线会员', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('owner');
+  await mount();
+  await new Promise(resolve => setImmediate(resolve)); await nextTick();
+  assert.equal(getCloudState().user.id, 'test-user');
+  assert.equal(getCloudState().syncLoginRequired, true);
+  assert.ok(document.querySelector('.dashboard-card'));
+  assert.equal(button('剪发扣款').disabled, false);
+  button('剪发扣款').click(); await nextTick();
+  button('精致洗剪吹 (').click(); await nextTick();
+  button('确认扣除').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 6200);
+  assert.equal(getCloudState().outbox[0].actorId, 'test-user');
+  button('知道了').click(); await nextTick();
+  await settings('account');
+  assert.ok(document.body.textContent.includes('可继续离线使用'));
+  assert.ok(document.body.textContent.includes('安全登录'));
+});
+
+test('ordinary long-press menus are suppressed while input menus remain available and phone copying is explicit', async t => {
+  t.mock.method(console, 'warn', () => {});
+  localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  await mount();
+  const label = document.querySelector('.dashboard-card');
+  const context = new dom.window.Event('contextmenu', { bubbles: true, cancelable: true });
+  label.dispatchEvent(context);
+  assert.equal(context.defaultPrevented, true);
+  const inputContext = new dom.window.Event('contextmenu', { bubbles: true, cancelable: true });
+  document.querySelector('header input').dispatchEvent(inputContext);
+  assert.equal(inputContext.defaultPrevented, false);
+  const copied = [];
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => copied.push(text) }, configurable: true });
+  t.after(() => { delete navigator.clipboard; });
+  Capacitor.isNativePlatform = () => false;
+  document.querySelector('[aria-label="复制会员手机号"]').click();
+  await new Promise(resolve => setImmediate(resolve)); await nextTick();
+  assert.deepEqual(copied, ['13800001111']);
+  assert.equal(document.querySelector('[class*="z-40"]'), null);
+  assert.ok(document.body.textContent.includes('手机号已复制'));
 });

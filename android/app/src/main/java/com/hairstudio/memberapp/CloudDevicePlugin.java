@@ -1,6 +1,9 @@
 package com.hairstudio.memberapp;
 
 import android.content.Intent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -70,9 +73,20 @@ public class CloudDevicePlugin extends Plugin {
             String session = new String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), StandardCharsets.UTF_8);
             call.resolve(new JSObject().put("session", session));
         } catch (Exception error) {
-            preferences().edit().clear().commit();
-            call.resolve(new JSObject().put("session", null));
+            // Keystore 暂时不可用时保留密文，前端继续离线使用，后续可以重试。
+            call.reject("暂时无法读取安全会话，可继续离线使用");
         }
+    }
+    @PluginMethod public void copyText(PluginCall call) {
+        String text = call.getString("text");
+        if (text == null || text.length() > 10000) { call.reject("复制内容无效"); return; }
+        getActivity().runOnUiThread(() -> {
+            try {
+                ClipboardManager clipboard = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+                clipboard.setPrimaryClip(ClipData.newPlainText("会员信息", text));
+                call.resolve();
+            } catch (Exception error) { call.reject("复制失败，请重试"); }
+        });
     }
     @PluginMethod public void clearSession(PluginCall call) {
         if (preferences().edit().clear().commit()) call.resolve();

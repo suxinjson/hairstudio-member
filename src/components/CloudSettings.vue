@@ -1,11 +1,13 @@
 <template>
   <section class="bg-white rounded-3xl p-5 border border-slate-200 space-y-4">
-    <div>
-      <h2 class="font-black text-lg">☁️ 云端账号与同步</h2>
-      <p class="text-sm text-slate-600 mt-1">{{ loginHint }}</p>
+    <div v-if="props.showTitle || props.section === 'account'">
+      <h2 v-if="props.showTitle" class="font-black text-lg">{{ sectionTitles[props.section] }}</h2>
+      <p v-if="props.section === 'account'" class="text-sm text-slate-600 mt-1">{{ loginHint }}</p>
     </div>
     <p v-if="message || state.error" class="rounded-xl bg-amber-50 text-amber-900 p-3" role="status">{{ message || state.error }}</p>
-    <form v-if="!state.user" @submit.prevent="login" class="space-y-3">
+    <template v-if="props.section === 'account'">
+    <p v-if="state.user && state.syncLoginRequired" class="rounded-xl bg-emerald-50 text-emerald-900 p-3 text-sm">已保留本机账号与账本，可继续离线使用。联网后登录原账号即可同步待办。</p>
+    <form v-if="!state.user || state.syncLoginRequired" @submit.prevent="login" class="space-y-3">
       <label class="block">账号
         <input v-model.trim="form.username" autocomplete="username" required class="w-full border rounded-xl p-3 mt-1" :disabled="state.busy" />
       </label>
@@ -14,40 +16,44 @@
       </label>
       <button type="submit" :disabled="state.busy" class="w-full rounded-xl p-3 bg-indigo-700 text-white font-bold disabled:opacity-50">{{ state.busy ? '正在连接…' : '安全登录' }}</button>
     </form>
-    <template v-else>
+    <template v-if="state.user">
       <div class="rounded-xl bg-slate-50 p-3">
-        <p class="font-bold">{{ state.user.displayName }} · {{ roles[state.user.role] }}</p>
-        <p class="text-sm mt-1">{{ state.online ? '设备已联网' : '设备离线' }} · {{ statuses[state.status] || state.status }}</p>
+        <p class="font-bold"><button class="copyable-text" @click="copyIdentity(state.user.displayName, '姓名')" aria-label="复制账号姓名">{{ state.user.displayName }}</button> · {{ roles[state.user.role] }}</p>
+        <p v-if="state.user.username" class="text-sm mt-1">账号：<button class="copyable-text" @click="copyIdentity(state.user.username, '账号')" aria-label="复制用户名">{{ state.user.username }}</button></p>
+        <p class="text-sm mt-1">{{ state.syncLoginRequired ? '本机账本可用 · 云端同步需登录' : !state.online ? '离线使用 · 联网后自动同步' : '设备已联网 · ' + (statuses[state.status] || state.status) }}</p>
         <p v-if="state.binding" class="text-sm mt-1">待同步 {{ state.outbox.length }} 笔<span v-if="state.lastSync"> · 上次成功 {{ new Date(state.lastSync).toLocaleString() }}</span></p>
       </div>
       <div v-if="state.status === 'needs-bootstrap'" class="rounded-xl p-3 bg-blue-50 space-y-2">
         <p>云端尚无账本，可以将本机会员、流水、服务定价和充值档位迁移为初始云端账本。</p>
-        <button @click="bootstrap" :disabled="state.busy" class="rounded-xl p-3 bg-indigo-700 text-white font-bold">上传本机初始账本</button>
+        <button @click="bootstrap" :disabled="state.busy || !canRequest" class="rounded-xl p-3 bg-indigo-700 text-white font-bold">上传本机初始账本</button>
       </div>
       <div v-if="state.status === 'needs-choice' || state.status === 'conflict' || recoveryRequired" class="rounded-xl p-3 bg-amber-50 space-y-3">
         <p>{{ resolutionMessage }}</p>
         <button @click="exportPending" :disabled="state.busy" class="rounded-xl p-3 bg-white border font-bold">导出本机账本与待同步记录</button>
-        <button @click="useCloud" :disabled="state.busy || !state.online" class="rounded-xl p-3 border border-rose-300 text-rose-800 font-bold">采用云端账本，放弃本机待同步变更</button>
+        <button @click="useCloud" :disabled="state.busy || !canRequest" class="rounded-xl p-3 border border-rose-300 text-rose-800 font-bold">采用云端账本，放弃本机待同步变更</button>
         <button v-if="state.status === 'conflict' && state.conflictReason === 'recovery' && state.user.role === 'owner'" @click="uploadRecovered" :disabled="state.busy || !state.online || recoveryRequired" class="rounded-xl p-3 border border-indigo-300 text-indigo-800 font-bold">确认上传恢复后的本机账本</button>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button @click="perform(() => cloudClient.sync())" :disabled="state.busy || !state.binding || state.status === 'conflict'" class="rounded-xl p-3 bg-emerald-700 text-white font-bold disabled:opacity-50">立即同步</button>
+        <button @click="perform(() => cloudClient.sync())" :disabled="state.busy || !state.binding || state.status === 'conflict' || !canRequest" class="rounded-xl p-3 bg-emerald-700 text-white font-bold disabled:opacity-50">立即同步</button>
         <button @click="perform(() => cloudClient.logout())" :disabled="state.busy" class="rounded-xl p-3 border font-bold">退出登录</button>
         <button @click="unlink" :disabled="state.busy || state.outbox.length || Boolean(state.bootstrap)" class="rounded-xl p-3 border font-bold">解除云端绑定</button>
       </div>
       <p v-if="state.user.role === 'viewer'" class="text-sm text-slate-600">此账号可查看账本，不能进行充值、扣款或修改资料。</p>
-      <div v-if="state.user.role === 'owner'" class="pt-4 border-t space-y-3">
-        <h3 class="font-black">账号与使用记录</h3>
-        <div class="flex gap-2">
-          <button @click="loadUsers" class="border rounded-xl p-3">管理账号</button>
-          <button @click="loadAudit" class="border rounded-xl p-3">查看最近使用记录</button>
-        </div>
+    </template>
+    </template>
+    <template v-else>
+      <div v-if="!canRequest" class="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+        <p>{{ state.user && !state.syncLoginRequired ? '此页面需要联网，离线账本仍可继续使用。' : '请登录云端账号后使用此功能，本机账本不受影响。' }}</p>
+        <button v-if="!state.user || state.syncLoginRequired" @click="emit('navigate', 'account')" class="mt-2 font-bold text-indigo-700">前往账号与同步</button>
+      </div>
+      <div v-if="props.section === 'users' && state.user?.role === 'owner'" class="space-y-3">
+        <button @click="loadUsers" :disabled="state.busy || !canRequest" class="border rounded-xl p-3 disabled:opacity-50">加载账号列表</button>
         <div v-if="users" class="space-y-3">
           <div v-for="user in users" :key="user.id" class="p-3 border rounded-xl space-y-2">
-            <p class="font-bold">{{ user.displayName }}（{{ user.username }}）· {{ user.active ? '在用' : '停用' }}</p>
+            <p class="font-bold"><button class="copyable-text" @click="copyIdentity(user.displayName, '姓名')" aria-label="复制账号姓名">{{ user.displayName }}</button>（<button class="copyable-text" @click="copyIdentity(user.username, '账号')" aria-label="复制用户名">{{ user.username }}</button>）· {{ user.active ? '在用' : '停用' }}</p>
             <select v-model="user.role" class="p-2 border rounded-lg" aria-label="账号权限"><option value="owner">店主</option><option value="clerk">店员</option><option value="viewer">只读</option></select>
-            <button @click="updateUser(user, user.active)" class="p-2 border rounded-lg ml-2">保存权限</button>
-            <button @click="updateUser(user, !user.active)" class="p-2 border rounded-lg ml-2">{{ user.active ? '停用' : '启用' }}</button>
+            <button @click="updateUser(user, user.active)" :disabled="state.busy || !canRequest" class="p-2 border rounded-lg ml-2">保存权限</button>
+            <button @click="updateUser(user, !user.active)" :disabled="state.busy || !canRequest" class="p-2 border rounded-lg ml-2">{{ user.active ? '停用' : '启用' }}</button>
           </div>
           <form @submit.prevent="createUser" class="space-y-2 border rounded-xl p-3">
             <h4 class="font-bold">新增账号</h4>
@@ -55,16 +61,18 @@
             <input v-model.trim="newUser.username" required placeholder="账号（至少 3 位英文或数字）" class="w-full border rounded-xl p-3" aria-label="新账号" />
             <input v-model="newUser.password" type="password" required minlength="12" autocomplete="new-password" placeholder="密码（至少 12 位）" class="w-full border rounded-xl p-3" aria-label="新账号密码" />
             <select v-model="newUser.role" class="border rounded-lg p-2" aria-label="新账号权限"><option value="clerk">店员</option><option value="viewer">只读</option><option value="owner">店主</option></select>
-            <button type="submit" class="rounded-xl p-3 bg-indigo-700 text-white font-bold ml-2">创建账号</button>
+            <button type="submit" :disabled="state.busy || !canRequest" class="rounded-xl p-3 bg-indigo-700 text-white font-bold ml-2">创建账号</button>
           </form>
         </div>
-        <div v-if="audit" class="max-h-80 overflow-y-auto space-y-2">
+      </div>
+      <div v-if="props.section === 'activity' && state.user?.role === 'owner'" class="space-y-3">
+        <button @click="loadAudit" :disabled="state.busy || !canRequest" class="border rounded-xl p-3 disabled:opacity-50">查看最近使用记录</button>
+        <div v-if="audit" class="space-y-2">
           <p v-for="event in audit" :key="event.id" class="text-sm border rounded-xl p-3">{{ event.display_name || '系统' }} · {{ eventNames[event.event] || event.event }} · {{ new Date(event.received_at).toLocaleString() }}</p>
         </div>
       </div>
-      <div class="pt-4 border-t space-y-3">
-        <h3 class="font-black">应用更新</h3>
-        <button @click="checkUpdate" :disabled="state.busy || downloading" class="border rounded-xl p-3">检查更新</button>
+      <div v-if="props.section === 'update'" class="space-y-3">
+        <button @click="checkUpdate" :disabled="state.busy || downloading || !canRequest" class="border rounded-xl p-3 disabled:opacity-50">检查更新</button>
         <div v-if="update" class="space-y-2 rounded-xl bg-slate-50 p-3">
           <p class="font-bold">新版本 {{ update.versionName }}</p><p class="text-sm whitespace-pre-wrap">{{ update.notes }}</p>
           <p v-if="downloading" role="status">下载中 {{ progress }}%</p>
@@ -79,21 +87,24 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue';
 import { Capacitor } from '@capacitor/core';
-import { cloudClient, checkForUpdate, downloadUpdate, installUpdate } from '../cloud-device.js';
+import { cloudClient, checkForUpdate, downloadUpdate, installUpdate, copyToClipboard } from '../cloud-device.js';
 import { DEFAULT_CLOUD_SERVER_URL } from '../cloud-config.js';
 import { localDb } from '../storage.js';
 import { exportFile } from '../file-export.js';
-const props = defineProps({ recoveryRequired: { type: Boolean, default: false } });
+const props = defineProps({ recoveryRequired: { type: Boolean, default: false }, section: { type: String, default: 'account' }, showTitle: { type: Boolean, default: true } });
+const emit = defineEmits(['navigate']);
+const sectionTitles = { account: '☁️ 账号与同步', users: '账号管理', activity: '使用记录', update: '应用更新' };
 const isNativeApp = Capacitor.isNativePlatform();
 const roles = { owner: '店主', clerk: '店员', viewer: '只读' };
 const statuses = { local: '仅本机账本', pending: '等待同步', synced: '同步完成', conflict: '需要核对', 'login-required': '需要登录', 'needs-bootstrap': '等待初始迁移', 'needs-choice': '等待选择账本' };
 const eventNames = { login: '登录', online: '联网', offline: '断网', bootstrap: '初始迁移', createMember: '新增会员', updateMember: '修改会员', deleteMember: '注销会员', recharge: '充值', consume: '消费', refundLedger: '撤销', saveService: '修改服务', deleteService: '删除服务', importBackupData: '恢复备份', user_created: '创建账号', user_permissions_changed: '修改权限', sync_conflict_resolved: '处理同步冲突' };
 const state = ref(cloudClient.snapshot());
+const canRequest = computed(() => Boolean(state.value.user && !state.value.syncLoginRequired && state.value.online));
 const unsubscribe = cloudClient.subscribe(value => { state.value = value; });
 onUnmounted(unsubscribe);
 const browserOrigin = /^https?:$/.test(globalThis.location?.protocol || '') ? globalThis.location.origin : '';
 const fixedServerUrl = isNativeApp ? DEFAULT_CLOUD_SERVER_URL : browserOrigin || DEFAULT_CLOUD_SERVER_URL;
-const form = ref({ username: '', password: '' });
+const form = ref({ username: isNativeApp ? state.value.user?.username || '' : '', password: '' });
 const loginHint = computed(() => isNativeApp
   ? 'App 可不登录离线记账；登录后会检测本机数据并安全同步到云端。'
   : '网页版需要登录后使用，服务器已自动配置。');
@@ -107,6 +118,7 @@ const resolutionMessage = computed(() => {
   return state.value.status === 'conflict' ? '两台设备修改了同一会员或设置，本机记录已保留。请先导出本机账本并核对，再决定如何处理。' : '本机账本或设置与云端不同。请先备份本机，再选择是否采用云端账本。';
 });
 async function perform(action) { message.value = ''; try { await action(); } catch (error) { message.value = error.message; } }
+async function copyIdentity(text, label) { await perform(async () => { await copyToClipboard(text); message.value = label + '已复制'; }); }
 async function login() {
   await perform(async () => {
     await cloudClient.login(fixedServerUrl, form.value.username, form.value.password, { autoBootstrap: isNativeApp });
