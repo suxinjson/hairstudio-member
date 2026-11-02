@@ -344,3 +344,69 @@ test('a cached signed-in cloud account records a charge and its pending operatio
   assert.equal(getCloudState().outbox.length, 1);
   assert.equal(getCloudState().outbox[0].method, 'consume');
 });
+
+test('downgraded accounts see export and cloud replacement controls without gaining write access', async () => {
+  localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('viewer');
+  saveCloudState({ ...getCloudState(), status: 'conflict', conflictReason: 'permissions', outbox: [{ id: 'queued-charge' }] });
+  await mount(); await settings();
+  assert.ok(document.body.textContent.includes('账号权限已变化'));
+  assert.equal(button('导出本机账本与待同步记录').disabled, false);
+  assert.equal(button('采用云端账本').disabled, false);
+  assert.equal(button('解除云端绑定').disabled, true);
+  assert.equal([...document.querySelectorAll('button')].some(element => element.textContent.includes('确认上传恢复后的本机账本')), false);
+  assert.equal(button('新增项目').disabled, true);
+});
+
+test('an initialization conflict shows reconciliation and disables unlink until the initial request is resolved', async () => {
+  cloudProfile('owner');
+  saveCloudState({ ...getCloudState(), status: 'conflict', conflictReason: 'bootstrap', bootstrap: { id: 'pending-bootstrap' } });
+  await mount(); await settings();
+  assert.ok(document.body.textContent.includes('其他设备已初始化云端'));
+  assert.equal(button('采用云端账本').disabled, false);
+  assert.equal(button('解除云端绑定').disabled, true);
+});
+
+test('the cloud-bound recovery screen restores a backup and requires explicit owner reconciliation', async t => {
+  t.mock.method(console, 'error', () => {});
+  const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  cloudProfile('owner');
+  await mount();
+  localDb.consume({ memberId: member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  localStorage.setItem('hairstudio_members_v2', '{broken');
+  window.dispatchEvent(new window.Event('cloud-data-updated'));
+  await new Promise(resolve => setTimeout(resolve, 20)); await nextTick();
+  assert.ok(document.body.textContent.includes('本机账本无法读取'));
+  assert.equal(button('采用云端账本').disabled, false);
+  await selectBackup(backup);
+  assert.equal(button('确认完全覆盖').disabled, false);
+  button('确认完全覆盖').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+  assert.deepEqual(getCloudState().outbox, pending);
+  assert.ok(document.body.textContent.includes('原待办已保留'));
+  assert.equal(button('确认上传恢复后的本机账本').disabled, false);
+  assert.equal(button('采用云端账本').disabled, false);
+});
+
+test('a corrupt cloud ledger can export its original storage and pending records through the UI', async t => {
+  t.mock.method(console, 'error', () => {});
+  localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('owner');
+  const pending = [{ id: 'queued-charge' }];
+  saveCloudState({ ...getCloudState(), outbox: pending });
+  localStorage.setItem('hairstudio_members_v2', '{broken');
+  let exported, clicks = 0;
+  t.mock.method(URL, 'createObjectURL', blob => { exported = blob.text(); return 'blob:review-export'; });
+  t.mock.method(dom.window.HTMLAnchorElement.prototype, 'click', () => { clicks++; });
+  await mount();
+  button('导出本机账本与待同步记录').click();
+  await new Promise(resolve => setTimeout(resolve, 20)); await nextTick();
+  assert.equal(clicks, 1);
+  const content = JSON.parse(await exported);
+  assert.equal(content.data, null);
+  assert.equal(content.storage.hairstudio_members_v2, '{broken');
+  assert.deepEqual(content.cloud.outbox, pending);
+  assert.ok(document.body.textContent.includes('已发起备份导出'));
+});

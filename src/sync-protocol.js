@@ -1,3 +1,5 @@
+import { DEFAULT_SERVICES } from './storage.js';
+
 export const CLOUD_STATE_KEY = 'hairstudio_cloud_state_v1';
 export const WRITE_METHODS = ['createMember', 'updateMember', 'deleteMember', 'recharge', 'consume',
   'refundLedger', 'saveService', 'deleteService', 'importBackupData'];
@@ -41,12 +43,21 @@ export function mutationPrecondition(data, method, args) {
 export function validateOperation(operation) {
   if (!operation || typeof operation.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(operation.id) ||
       !WRITE_METHODS.includes(operation.method) || !Array.isArray(operation.args) || operation.args.length > 2 ||
-      !operation.generated || !Array.isArray(operation.generated.ids) || operation.generated.ids.length > 3 ||
+      !operation.generated || !Array.isArray(operation.generated.ids) ||
       operation.generated.ids.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(id)) ||
       !Array.isArray(operation.generated.times) || operation.generated.times.length > 8 ||
       operation.generated.times.some(time => typeof time !== 'string' || !Number.isFinite(Date.parse(time))) ||
       !operation.precondition || typeof operation.precondition !== 'object') {
     throw new Error('同步操作格式无效');
   }
-  if (operation.method === 'importBackupData' && typeof operation.args[0] !== 'string') throw new Error('恢复操作格式无效');
+  let maxIds = 3;
+  if (operation.method === 'importBackupData') {
+    if (typeof operation.args[0] !== 'string') throw new Error('恢复操作格式无效');
+    let backup;
+    try { backup = JSON.parse(operation.args[0]); } catch { throw new Error('恢复操作格式无效'); }
+    const services = backup?.data?.services ?? DEFAULT_SERVICES;
+    if (!Array.isArray(services)) throw new Error('恢复操作格式无效');
+    maxIds = operation.args[1]?.mode === 'merge' ? services.length : 0;
+  }
+  if (operation.generated.ids.length > maxIds) throw new Error('同步操作业务单号数量无效');
 }

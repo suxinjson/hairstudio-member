@@ -20,11 +20,21 @@ export function installCloudRecording(onChange = () => {}) {
     const state = getCloudState();
     if (!state.binding) return entries;
     if (!state.user) throw new Error('请先登录已绑定的云端账号');
-    if (state.status === 'conflict') throw new Error('账本存在同步冲突，请先在云端设置中处理');
     if (!canWrite(state.user.role, mutation.method)) throw new Error('当前账号没有此操作权限');
+    let current;
+    try { current = localDb.readBackupState(); }
+    catch (error) {
+      if (mutation.method !== 'importBackupData' || (mutation.args[1]?.mode || 'replace') !== 'replace') throw error;
+      // 损坏数据不能作为服务端恢复的前置条件。先恢复本机，保留原待办供店主联网后核对。
+      return { ...entries,
+        [STORAGE_KEYS.SAFETY_SNAPSHOT]: { timestamp: new Date().toISOString(), ...localDb.readRecoveryState(), cloud: state },
+        [CLOUD_STATE_KEY]: { ...state, status: 'conflict', conflictReason: 'recovery' }
+      };
+    }
+    if (state.status === 'conflict') throw new Error('账本存在同步冲突，请先在云端设置中处理');
     const operation = {
       ...mutation, id: newId(), actorId: state.user.id, deviceId: state.deviceId,
-      precondition: mutationPrecondition(localDb.readBackupState(), mutation.method, mutation.args)
+      precondition: mutationPrecondition(current, mutation.method, mutation.args)
     };
     validateOperation(operation);
     const next = { ...state, outbox: [...state.outbox, operation], status: 'pending' };

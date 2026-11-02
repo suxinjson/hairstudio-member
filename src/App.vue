@@ -302,7 +302,7 @@
 
       <!-- ==================== TAB 4: 服务定价与备份安全 ==================== -->
       <div v-if="activeTab === 'settings'" class="space-y-4">
-        <CloudSettings />
+        <CloudSettings :recovery-required="Boolean(storageError)" />
         <template v-if="!cloudLocked">
         
         <!-- 理发项目与定价管理 -->
@@ -1887,7 +1887,8 @@ function confirmBackupRestore() {
     selectedMember.value = null;
     consumingMember.value = null;
     rechargingMember.value = null;
-    const snapshotMessage = result.snapshotSaved ? '已生成恢复后的本地快照。' : '恢复后的快照未能保存，请立即导出备份。';
+    const recoveryMessage = cloudClient.snapshot().conflictReason === 'recovery' ? '本机账本已恢复，原待办已保留；请在云端设置中导出核对，再选择采用云端账本或确认上传恢复结果。' : '';
+    const snapshotMessage = (result.snapshotSaved ? '已生成恢复后的本地快照。' : '恢复后的快照未能保存，请立即导出备份。') + recoveryMessage;
     refreshAll();
     if (result.mode === 'merge') {
       showFeedback(

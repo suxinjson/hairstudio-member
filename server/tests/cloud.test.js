@@ -2,6 +2,7 @@ import test, { before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
+import pg from 'pg';
 import { migrate } from '../database.js';
 import { createService } from '../service.js';
 import { createApi } from '../http.js';
@@ -25,25 +26,38 @@ class MemoryStorage {
   }
   removeItem(key) { this.values.delete(key); }
 }
-let db, pool, service, server, url, owner, stopClient;
+let db, pool, service, server, url, owner, stopClient, cleanupDatabase;
 const password = 'Correct-Horse-Cloud-2026!';
 before(async () => {
-  db = new PGlite();
-  let tail = Promise.resolve();
-  pool = {
-    async connect() {
-      const previous = tail; let release;
-      tail = new Promise(resolve => { release = resolve; }); await previous;
-      return { query: (sql, parameters) => parameters ? db.query(sql, parameters) : sql.includes(';') ? db.exec(sql) : db.query(sql), release };
-    },
-    async query(sql, parameters) { const client = await this.connect(); try { return await client.query(sql, parameters); } finally { client.release(); } }
-  };
+  if (process.env.MEMBER_TEST_DATABASE_URL) {
+    const schema = 'member_test_' + randomUUID().replaceAll('-', '');
+    const admin = new pg.Pool({ connectionString: process.env.MEMBER_TEST_DATABASE_URL });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    pool = new pg.Pool({ connectionString: process.env.MEMBER_TEST_DATABASE_URL, max: 10,
+      options: '-c search_path=' + schema, statement_timeout: 10000 });
+    cleanupDatabase = async () => {
+      await pool.end();
+      try { await admin.query(`DROP SCHEMA ${schema} CASCADE`); } finally { await admin.end(); }
+    };
+  } else {
+    db = new PGlite();
+    let tail = Promise.resolve();
+    pool = {
+      async connect() {
+        const previous = tail; let release;
+        tail = new Promise(resolve => { release = resolve; }); await previous;
+        return { query: (sql, parameters) => parameters ? db.query(sql, parameters) : sql.includes(';') ? db.exec(sql) : db.query(sql), release };
+      },
+      async query(sql, parameters) { const client = await this.connect(); try { return await client.query(sql, parameters); } finally { client.release(); } }
+    };
+    cleanupDatabase = () => db.close();
+  }
   await migrate(pool); service = createService(pool);
   server = createApi({ service, pool });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   url = 'http://127.0.0.1:' + server.address().port;
 });
-after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); });
+after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await cleanupDatabase(); });
 beforeEach(async () => {
   await pool.query('TRUNCATE stores,login_limits,releases RESTART IDENTITY CASCADE');
   await service.createOwner({ username: 'owner', password });
@@ -81,11 +95,11 @@ async function initialAccount() {
 async function api(path, body, accessToken = owner.accessToken, method = body === undefined ? 'GET' : 'POST') {
   return fetch(url + '/api/v1' + path, { method, headers: { ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
-async function connectedClient({ requestFetch, online = () => true, vault } = {}) {
+async function connectedClient({ requestFetch, online = () => true, vault, username = 'owner' } = {}) {
   let saved = null;
   const client = createCloudClient({ fetch: requestFetch || fetch, isOnline: online,
     vault: vault || { load: async () => saved, save: async value => { saved = value; }, clear: async () => { saved = null; } } });
-  await client.login(url, 'owner', password);
+  await client.login(url, username, password);
   stopClient = await client.start();
   // 初次启动的后台同步可能尚在查询账本版本，等待其完成再进行测试操作。
   for (let count = 0; client.snapshot().busy && count < 100; count++) await new Promise(resolve => setTimeout(resolve, 5));
@@ -409,4 +423,316 @@ test('invalid operation, bootstrap and account inputs return client errors witho
     assert.equal((await response.json()).code, 'REQUEST_FAILED');
   }
   assert.deepEqual(await service.account(owner.identity), original);
+});
+
+test('a downgraded clerk can preserve and resolve offline charges after signing in again', async () => {
+  const account = await initialAccount();
+  const cashier = await service.createUser(owner.identity, { username: 'cashier', password, displayName: '店员', role: 'clerk' });
+  let online = false;
+  const client = await connectedClient({ username: 'cashier', online: () => online });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  await service.updateUser(owner.identity, cashier.id, { role: 'viewer', active: true });
+  online = true;
+  await assert.rejects(client.sync(), { status: 401 });
+  await client.login(url, 'cashier', password);
+  assert.equal(getCloudState().status, 'conflict');
+  assert.equal(getCloudState().conflictReason, 'permissions');
+  assert.deepEqual(getCloudState().outbox, pending);
+  await client.sync();
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, 10000);
+  await client.useCloudLedger();
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.deepEqual(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).cloud.outbox, pending);
+  assert.throws(() => localDb.consume({ memberId: account.member.id, amount: 1 }), /权限/);
+  await client.unlink();
+  assert.equal(getCloudState().binding, null);
+});
+
+test('a forbidden upload still exposes resolution when the subsequent account request is offline', async () => {
+  const account = await initialAccount();
+  let online = false, rejected = false;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (input.endsWith('/sync')) { rejected = true; return new Response(JSON.stringify({ error: '权限已变化', code: 'FORBIDDEN' }), { status: 403 }); }
+    if (rejected && input.endsWith('/account')) throw new TypeError('offline');
+    return fetch(input, options);
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  online = true;
+  await assert.rejects(client.sync(), { status: 403 });
+  assert.equal(getCloudState().status, 'conflict');
+  assert.equal(getCloudState().conflictReason, 'permissions');
+  assert.deepEqual(getCloudState().outbox, pending);
+  assert.equal(localDb.getMemberById(account.member.id).balance, 6200);
+});
+
+test('restoring the original role allows retained operations to synchronize without recreating them', async () => {
+  const account = await initialAccount();
+  const cashier = await service.createUser(owner.identity, { username: 'cashier', password, displayName: '店员', role: 'clerk' });
+  let online = false;
+  const client = await connectedClient({ username: 'cashier', online: () => online });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const operationId = getCloudState().outbox[0].id;
+  await service.updateUser(owner.identity, cashier.id, { role: 'viewer', active: true });
+  await client.login(url, 'cashier', password);
+  assert.equal(getCloudState().status, 'conflict');
+  await service.updateUser(owner.identity, cashier.id, { role: 'clerk', active: true });
+  await client.login(url, 'cashier', password);
+  assert.equal(getCloudState().status, 'pending');
+  assert.equal(getCloudState().outbox[0].id, operationId);
+  online = true; await client.sync();
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, 6200);
+});
+
+for (const retry of [false, true]) test(`bootstrap competition is resolvable during ${retry ? 'a queued retry' : 'initial migration'}`, async () => {
+  localDb.createMember({ name: '本机会员', phone: '13800001111', initialBalance: 100 });
+  let online = false, loseRequest = retry;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (loseRequest && input.endsWith('/account/bootstrap')) { loseRequest = false; throw new TypeError('offline'); }
+    return fetch(input, options);
+  } });
+  if (retry) await assert.rejects(client.bootstrap(), { network: true });
+  const other = await login('owner');
+  await service.bootstrap(other.identity, { id: randomUUID(), data: localDb.readBackupState() });
+  online = true;
+  await assert.rejects(retry ? client.sync() : client.bootstrap(), { status: 409 });
+  const pendingBootstrap = getCloudState().bootstrap;
+  assert.ok(pendingBootstrap);
+  assert.equal(getCloudState().status, 'conflict');
+  assert.equal(getCloudState().conflictReason, 'bootstrap');
+  await client.useCloudLedger();
+  assert.equal(getCloudState().bootstrap, null);
+  assert.deepEqual(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).cloud.bootstrap, pendingBootstrap);
+  await client.sync();
+  assert.equal(getCloudState().status, 'synced');
+});
+
+test('a lost bootstrap acknowledgment retries the original request without creating a conflict', async () => {
+  localDb.createMember({ name: '本机会员', phone: '13800001111', initialBalance: 100 });
+  let online = false, loseResponse = true;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    const response = await fetch(input, options);
+    if (loseResponse && input.endsWith('/account/bootstrap')) { loseResponse = false; await response.arrayBuffer(); throw new TypeError('offline'); }
+    return response;
+  } });
+  await assert.rejects(client.bootstrap(), { network: true });
+  assert.equal(getCloudState().status, 'pending');
+  online = true; await client.sync();
+  assert.equal(getCloudState().status, 'synced');
+  assert.equal(getCloudState().bootstrap, null);
+  assert.equal((await service.account(owner.identity)).revision, 1);
+});
+
+test('a cloud-bound owner can restore a corrupt ledger offline while preserving raw bytes and all pending operations', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount();
+  const client = await connectedClient({ online: () => false });
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+  const original = localDb.readRecoveryState().storage;
+  assert.equal(localDb.previewBackup(backup).isValid, true);
+  localDb.importBackupData(backup, { mode: 'replace' });
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  assert.deepEqual(getCloudState().outbox, pending);
+  assert.equal(getCloudState().status, 'conflict');
+  assert.equal(getCloudState().conflictReason, 'recovery');
+  const safety = JSON.parse(localStorage.getItem(STORAGE_KEYS.SAFETY_SNAPSHOT));
+  assert.deepEqual(safety.storage, original);
+  assert.deepEqual(safety.cloud.outbox, pending);
+  await client.sync();
+  await assert.rejects(client.uploadRecoveredLedger(), /联网/);
+  assert.throws(() => localDb.consume({ memberId: account.member.id, amount: 1 }), /同步冲突/);
+});
+
+test('adopting a cloud ledger preserves corrupt local bytes and pending charges before replacement', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount();
+  const client = await connectedClient({ online: () => false });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+  const original = localDb.readRecoveryState().storage;
+  await client.useCloudLedger();
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  assert.equal(getCloudState().outbox.length, 0);
+  const safety = JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1'));
+  assert.deepEqual(safety.storage, original);
+  assert.deepEqual(safety.cloud.outbox, pending);
+  assert.equal(safety.data, null);
+});
+
+test('a failure to save the corrupt cloud recovery point leaves both raw data and the outbox untouched', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount();
+  const client = await connectedClient({ online: () => false });
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+  const original = localDb.readRecoveryState().storage, cloud = getCloudState();
+  localStorage.failKey = STORAGE_KEYS.SAFETY_SNAPSHOT; localStorage.failOnce = true;
+  assert.throws(() => localDb.importBackupData(backup, { mode: 'replace' }));
+  assert.deepEqual(localDb.readRecoveryState().storage, original);
+  assert.deepEqual(getCloudState(), cloud);
+  localStorage.failKey = 'hairstudio_cloud_pre_replace_v1'; localStorage.failOnce = true;
+  await assert.rejects(client.useCloudLedger());
+  assert.deepEqual(localDb.readRecoveryState().storage, original);
+  assert.deepEqual(getCloudState(), cloud);
+  localStorage.failKey = CLOUD_STATE_KEY; localStorage.failOnce = true;
+  assert.throws(() => localDb.importBackupData(backup, { mode: 'replace' }));
+  assert.deepEqual(localDb.readRecoveryState().storage, original);
+  assert.deepEqual(getCloudState(), cloud);
+});
+
+test('an explicitly confirmed recovered ledger uploads atomically and retries a lost response without duplication', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount();
+  let online = false, loseResponse = true;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    const response = await fetch(input, options);
+    if (loseResponse && input.endsWith('/sync')) { loseResponse = false; await response.arrayBuffer(); throw new TypeError('offline'); }
+    return response;
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+  localDb.importBackupData(backup, { mode: 'replace' });
+  const recovered = localDb.readBackupState();
+  online = true;
+  await assert.rejects(client.uploadRecoveredLedger(), { network: true });
+  assert.deepEqual(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).cloud.outbox, pending);
+  assert.equal(getCloudState().outbox.length, 1);
+  assert.equal(getCloudState().outbox[0].method, 'importBackupData');
+  assert.deepEqual((await service.account(owner.identity)).data, recovered);
+  await assert.rejects(client.uploadRecoveredLedger(), /同步重试/);
+  await client.sync();
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal(getCloudState().conflictReason, null);
+  assert.equal((await service.account(owner.identity)).revision, 2);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='importBackupData'")).rows[0].count, 1);
+});
+
+test('concurrent remote changes reject a recovered snapshot without clearing the recovery operation', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount();
+  let online = false, race = false;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (race && input.endsWith('/sync')) {
+      race = false;
+      const other = await login('owner');
+      const remote = await service.account(other.identity);
+      const charge = operation(remote.data, other, 'consume', [{ memberId: account.member.id, amount: 20 }]);
+      await service.sync(other.identity, [charge.operation]);
+    }
+    return fetch(input, options);
+  } });
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+  localDb.importBackupData(backup, { mode: 'replace' });
+  online = true; race = true;
+  await assert.rejects(client.uploadRecoveredLedger(), { status: 409 });
+  assert.equal(getCloudState().status, 'conflict');
+  assert.equal(getCloudState().conflictReason, 'recovery');
+  assert.equal(getCloudState().outbox.length, 1);
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, 8000);
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+});
+
+test('permission changes during a recovery upload cannot replace the retained operations', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount();
+  await service.createUser(owner.identity, { username: 'manager', password, displayName: '第二店主', role: 'owner' });
+  const manager = await login('manager');
+  let online = false, revoke = false;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (revoke && input.endsWith('/account')) {
+      revoke = false;
+      await service.updateUser(manager.identity, owner.identity.id, { role: 'viewer', active: true });
+    }
+    return fetch(input, options);
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  const pending = getCloudState().outbox;
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+  localDb.importBackupData(backup, { mode: 'replace' });
+  online = true; revoke = true;
+  await assert.rejects(client.uploadRecoveredLedger(), { status: 401 });
+  assert.deepEqual(getCloudState().outbox, pending);
+  assert.equal(localDb.getMemberById(account.member.id).balance, 6200);
+  assert.equal((await service.account(manager.identity)).data.members[0].balance, 10000);
+  await client.login(url, 'owner', password);
+  assert.equal(getCloudState().conflictReason, 'recovery');
+  await assert.rejects(client.uploadRecoveredLedger(), /仅店主/);
+  const viewer = await login('owner', getCloudState().deviceId);
+  await assert.rejects(service.sync(viewer.identity, pending), { status: 403 });
+});
+
+test('merging many service definitions synchronizes their generated IDs and preserves both ledgers', async () => {
+  const account = await initialAccount(); let online = false;
+  const client = await connectedClient({ online: () => online });
+  const backup = JSON.parse(localDb.exportBackupData({ archiveSnapshot: false }));
+  for (let index = 0; index < 12; index++) backup.data.services.push({ id: 'extra' + index, name: '服务' + index, price: 10.01 });
+  const content = JSON.stringify(backup);
+  assert.equal(localDb.previewBackup(content).mergeError, '');
+  localDb.importBackupData(content, { mode: 'merge' });
+  assert.equal(getCloudState().outbox[0].generated.ids.length, 12);
+  const expected = localDb.readBackupState();
+  online = true; await client.sync();
+  assert.deepEqual((await service.account(owner.identity)).data, expected);
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  assert.equal(getCloudState().outbox.length, 0);
+});
+
+test('excess generated IDs in a restore request are rejected without any server writes', async () => {
+  const account = await initialAccount();
+  const restore = operation(account.data, owner, 'importBackupData', [JSON.stringify({ data: account.data }), { mode: 'replace' }]).operation;
+  restore.generated.ids.push('unexpected');
+  await assert.rejects(service.sync(owner.identity, [restore]), { status: 400 });
+  assert.equal((await service.account(owner.identity)).revision, account.revision);
+});
+
+test('PostgreSQL concurrent charges on one observed member commit only one batch', { skip: !process.env.MEMBER_TEST_DATABASE_URL }, async () => {
+  const account = await initialAccount(), other = await login('owner');
+  const first = operation(account.data, owner, 'consume', [{ memberId: account.member.id, amount: 80 }]);
+  const second = operation(account.data, other, 'consume', [{ memberId: account.member.id, amount: 38 }]);
+  const results = await Promise.allSettled([service.sync(owner.identity, [first.operation]), service.sync(other.identity, [second.operation])]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.find(result => result.status === 'rejected').reason.status, 409);
+  const committed = await service.account(owner.identity);
+  assert.ok([2000, 6200].includes(committed.data.members[0].balance));
+  assert.equal(committed.revision, 2);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM audit_events WHERE event='consume'")).rows[0].count, 1);
+});
+
+test('PostgreSQL concurrent changes to independent members both commit', { skip: !process.env.MEMBER_TEST_DATABASE_URL }, async () => {
+  const account = await initialAccount(), other = await login('owner');
+  const created = operation(account.data, owner, 'createMember', [{ name: '李哥', phone: '13900002222', initialBalance: 100 }]);
+  const base = await service.sync(owner.identity, [created.operation]);
+  const secondMember = base.data.members.find(member => member.id !== account.member.id);
+  const first = operation(base.data, owner, 'consume', [{ memberId: account.member.id, amount: 10 }]);
+  const second = operation(base.data, other, 'consume', [{ memberId: secondMember.id, amount: 20 }]);
+  await Promise.all([service.sync(owner.identity, [first.operation]), service.sync(other.identity, [second.operation])]);
+  const committed = await service.account(owner.identity);
+  assert.equal(committed.data.members.find(member => member.id === account.member.id).balance, 9000);
+  assert.equal(committed.data.members.find(member => member.id === secondMember.id).balance, 8000);
+  assert.equal(committed.revision, 4);
+});
+
+test('PostgreSQL a recovered snapshot and a competing charge cannot overwrite each other', { skip: !process.env.MEMBER_TEST_DATABASE_URL }, async () => {
+  const account = await initialAccount(), other = await login('owner');
+  const recovered = operation(account.data, owner, 'consume', [{ memberId: account.member.id, amount: 10 }]).data;
+  const restore = operation(account.data, owner, 'importBackupData', [JSON.stringify({ data: recovered }), { mode: 'replace' }]);
+  const charge = operation(account.data, other, 'consume', [{ memberId: account.member.id, amount: 20 }]);
+  const results = await Promise.allSettled([service.sync(owner.identity, [restore.operation]), service.sync(other.identity, [charge.operation])]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.find(result => result.status === 'rejected').reason.status, 409);
+  const committed = await service.account(owner.identity);
+  assert.ok([8000, 9000].includes(committed.data.members[0].balance));
+  assert.equal(committed.revision, 2);
 });

@@ -700,6 +700,15 @@ const db = {
     } })).data;
   },
 
+  readRecoveryState() {
+    recoverPendingWrite();
+    const storage = Object.fromEntries([
+      STORAGE_KEYS.MEMBERS, STORAGE_KEYS.LEDGERS, STORAGE_KEYS.SERVICES, STORAGE_KEYS.RECHARGE_PLANS
+    ].map(key => [key, localStorage.getItem(key)]));
+    try { return { storage, data: this.readBackupState(), dataError: '' }; }
+    catch (error) { return { storage, data: null, dataError: error.message }; }
+  },
+
   applyCloudSnapshot(data, metadataKey, metadata) {
     if (mutation) throw new Error('不能在记账过程中替换云端账本');
     const validated = this.parseAndValidateBackup(JSON.stringify({ data })).data;
