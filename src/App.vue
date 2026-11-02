@@ -670,7 +670,7 @@
           <!-- 快捷充值档位 (放大卡片) -->
           <div>
             <div class="text-xs font-black text-slate-500 mb-2.5">快捷充值套餐</div>
-            <div class="grid grid-cols-3 gap-3">
+            <div class="recharge-plans grid grid-cols-3 gap-3">
               <button 
                 v-for="plan in rechargePlans" 
                 :key="plan.pay"
@@ -919,7 +919,7 @@
         <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
 
         <div class="modal-header px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div class="flex items-center space-x-3.5">
+          <div class="member-detail-header-copy flex items-center space-x-3.5">
             <div class="w-13 h-13 rounded-2xl bg-gradient-to-tr from-indigo-700 to-slate-900 text-white flex items-center justify-center font-black text-2xl shadow-sm">
               {{ selectedMember.name.charAt(0) }}
             </div>

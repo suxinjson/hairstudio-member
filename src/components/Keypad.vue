@@ -53,7 +53,7 @@
       <button 
         @click="$emit('confirm')"
         :disabled="disabled || !isValidAmount"
-        class="row-span-2 rounded-2xl font-black text-white flex flex-col items-center justify-center transition-all btn-press shadow-md tracking-wider"
+        class="keypad-confirm row-span-2 rounded-2xl font-black text-white flex flex-col items-center justify-center transition-all btn-press shadow-md tracking-wider"
         :class="disabled || !isValidAmount ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none' : confirmColorClass"
       >
         <span class="text-xl font-black">{{ confirmText }}</span>
