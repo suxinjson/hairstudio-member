@@ -2,7 +2,7 @@ import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { resolve, join } from 'node:path';
-import { createPool, migrate, transaction } from './database.js';
+import { createPool, transaction } from './database.js';
 import { digest } from './security.js';
 import capacitorConfig from '../capacitor.config.json' with { type: 'json' };
 
@@ -34,7 +34,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (!manifestPath || !apkPath) throw new Error('用法：npm run server:publish -- 更新清单.json 安装包.apk');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     const bytes = await readFile(apkPath);
-    await migrate(pool);
     console.log(await publishRelease(pool, manifest, bytes, process.env.RELEASE_DIRECTORY || './releases', process.env.RELEASE_CERT_SHA256));
   } finally { await pool.end(); }
 }

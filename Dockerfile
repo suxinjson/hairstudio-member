@@ -4,6 +4,7 @@ COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
 RUN npm ci
 COPY . .
+ARG VITE_CLOUD_SERVER_URL=https://124.70.184.136
 RUN npm run build
 
 FROM node:22-alpine AS api
@@ -13,7 +14,7 @@ COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
 RUN npm ci --workspace=server --omit=dev --ignore-scripts
 COPY server ./server
-COPY src/storage.js src/accounting.js src/money.js src/sync-protocol.js src/cloud-storage.js ./src/
+COPY src/storage.js src/accounting.js src/money.js src/sync-protocol.js src/cloud-storage.js src/data-limits.js ./src/
 COPY capacitor.config.json ./
 RUN mkdir -p /app/releases && chown -R node:node /app
 USER node

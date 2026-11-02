@@ -24,7 +24,7 @@
         <p v-if="state.binding" class="text-sm mt-1">待同步 {{ state.outbox.length }} 笔<span v-if="state.lastSync"> · 上次成功 {{ new Date(state.lastSync).toLocaleString() }}</span></p>
       </div>
       <div v-if="state.status === 'needs-bootstrap'" class="rounded-xl p-3 bg-blue-50 space-y-2">
-        <p>云端尚无账本，可以将本机会员和流水迁移为初始云端账本。</p>
+        <p>云端尚无账本，可以将本机会员、流水、服务定价和充值档位迁移为初始云端账本。</p>
         <button @click="bootstrap" :disabled="state.busy" class="rounded-xl p-3 bg-indigo-700 text-white font-bold">上传本机初始账本</button>
       </div>
       <div v-if="state.status === 'needs-choice' || state.status === 'conflict' || recoveryRequired" class="rounded-xl p-3 bg-amber-50 space-y-3">
@@ -82,6 +82,7 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue';
 import { cloudClient, checkForUpdate, downloadUpdate, installUpdate } from '../cloud-device.js';
+import { DEFAULT_CLOUD_SERVER_URL } from '../cloud-config.js';
 import { localDb } from '../storage.js';
 import { exportFile } from '../file-export.js';
 const props = defineProps({ recoveryRequired: { type: Boolean, default: false } });
@@ -91,7 +92,7 @@ const eventNames = { login: '登录', online: '联网', offline: '断网', boots
 const state = ref(cloudClient.snapshot());
 const unsubscribe = cloudClient.subscribe(value => { state.value = value; });
 onUnmounted(unsubscribe);
-const form = ref({ serverUrl: state.value.serverUrl || '', username: '', password: '' });
+const form = ref({ serverUrl: state.value.serverUrl || DEFAULT_CLOUD_SERVER_URL, username: '', password: '' });
 const newUser = ref({ username: '', displayName: '', password: '', role: 'clerk' });
 const message = ref(''), users = ref(null), audit = ref(null), update = ref(null), downloaded = ref(null), downloading = ref(false), progress = ref(0);
 const resolutionMessage = computed(() => {
@@ -99,7 +100,7 @@ const resolutionMessage = computed(() => {
   if (state.value.conflictReason === 'recovery') return '已恢复本机账本，原始数据和待办已保存。请先导出核对；联网后可采用云端账本，或由店主确认用恢复结果覆盖云端。';
   if (state.value.conflictReason === 'permissions') return '账号权限已变化，部分待办不能上传。记录仍在本机，请先导出并交由店主核对，再决定是否采用云端账本。';
   if (state.value.conflictReason === 'bootstrap') return '其他设备已初始化云端，本机初始账本和待办已保留。请先导出并核对，再决定是否采用云端账本。';
-  return state.value.status === 'conflict' ? '两台设备修改了同一会员或设置，本机记录已保留。请先导出本机账本并核对，再决定如何处理。' : '本机与云端均有账本。请先备份本机，再选择是否采用云端账本。';
+  return state.value.status === 'conflict' ? '两台设备修改了同一会员或设置，本机记录已保留。请先导出本机账本并核对，再决定如何处理。' : '本机账本或设置与云端不同。请先备份本机，再选择是否采用云端账本。';
 });
 async function perform(action) { message.value = ''; try { await action(); } catch (error) { message.value = error.message; } }
 async function login() { await perform(async () => { await cloudClient.login(form.value.serverUrl, form.value.username, form.value.password); form.value.password = ''; await cloudClient.sync(); }); }

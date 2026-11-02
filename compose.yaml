@@ -14,6 +14,34 @@ services:
       timeout: 3s
       retries: 20
     networks: [private]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+  migrate:
+    build:
+      context: .
+      target: api
+    command: ["node", "server/migrate.js"]
+    restart: "no"
+    environment:
+      PGHOST: db
+      PGDATABASE: member
+      PGUSER: member
+      PGPASSWORD: ${POSTGRES_PASSWORD:?请保留数据库管理员密码}
+      APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?请设置独立的应用数据库随机密码}
+      RELEASE_DIRECTORY: /app/releases
+      RELEASE_CERT_SHA256: ${RELEASE_CERT_SHA256:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes: ["packages:/app/releases"]
+    networks: [private]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64
   api:
     build:
       context: .
@@ -22,27 +50,44 @@ services:
     environment:
       PGHOST: db
       PGDATABASE: member
-      PGUSER: member
-      PGPASSWORD: ${POSTGRES_PASSWORD:?请设置数据库密码}
+      PGUSER: member_app
+      PGPASSWORD: ${APP_DATABASE_PASSWORD:?请设置独立的应用数据库随机密码}
+      TRUSTED_PROXY_IPS: ${MEMBER_PROXY_IP:-172.30.184.10}
       ALLOWED_ORIGINS: https://localhost,https://${PUBLIC_DOMAIN:?请设置公网域名}
       RELEASE_DIRECTORY: /app/releases
       RELEASE_CERT_SHA256: ${RELEASE_CERT_SHA256:-}
     depends_on:
-      db:
-        condition: service_healthy
-    volumes: ["packages:/app/releases"]
+      migrate:
+        condition: service_completed_successfully
+    volumes: ["packages:/app/releases:ro"]
     networks: [private]
+    read_only: true
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 64
   web:
     build:
       context: .
       target: web
+      args:
+        VITE_CLOUD_SERVER_URL: ${VITE_CLOUD_SERVER_URL:-https://124.70.184.136}
     restart: unless-stopped
     environment:
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?请设置公网域名}
     ports: ["80:80", "443:443", "443:443/udp"]
     volumes: ["caddy_data:/data", "caddy_config:/config"]
     depends_on: [api]
-    networks: [private, public]
+    networks:
+      private:
+        ipv4_address: ${MEMBER_PROXY_IP:-172.30.184.10}
+      public: {}
+    mem_limit: 256m
+    cpus: 1.0
+    pids_limit: 128
+    security_opt: ["no-new-privileges:true"]
 volumes:
   database:
   packages:
@@ -51,4 +96,7 @@ volumes:
 networks:
   private:
     internal: true
+    ipam:
+      config:
+        - subnet: ${MEMBER_PRIVATE_SUBNET:-172.30.184.0/24}
   public:

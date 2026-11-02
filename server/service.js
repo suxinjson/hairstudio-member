@@ -4,8 +4,10 @@ import { token, digest, integrity, hashPassword, verifyPassword, normalizeUserna
 import { createLocalDb, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from '../src/storage.js';
 import { replayOperation } from '../src/cloud-storage.js';
 import { canWrite, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
+import { DATA_LIMITS, assertAccountLimits, assertJsonBudget, boundedText } from '../src/data-limits.js';
 
 export function validateSnapshot(data) {
+  assertAccountLimits(data && { ...data, ledgers: data.ledgers ?? [], services: data.services ?? DEFAULT_SERVICES, rechargePlans: data.rechargePlans ?? DEFAULT_RECHARGE_PLANS });
   const validated = createLocalDb(null).parseAndValidateBackup(JSON.stringify({ data })).data;
   for (const [items, label] of [[validated.services, '服务项目'], [validated.members, '会员']]) {
     if (new Set(items.map(item => item.id)).size !== items.length) throw new Error(label + '单号重复');
@@ -25,10 +27,36 @@ export function createService(pool) {
     if (!user?.active || user.id !== identity.id) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
     return user;
   }
+  async function authorize(identity, permission) {
+    return transaction(pool, async client => {
+      const user = await lockedUser(client, identity);
+      if (permission === 'owner' && user.role !== 'owner' || permission === 'write' && user.role === 'viewer') throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
+      return user;
+    });
+  }
+  async function reserveLogin(username, ip) {
+    const failureBuckets = [digest('user:' + username), digest('ip:' + ip)];
+    const quotas = [...failureBuckets.map(bucket => [bucket, 10]), [digest('attempt-user:' + username), 60], [digest('attempt-ip:' + ip), 120]].sort(([a], [b]) => a.localeCompare(b));
+    return transaction(pool, async client => {
+      const reserved = [];
+      for (const [bucket, maximum] of quotas) {
+        const { rows: [row] } = await client.query("INSERT INTO login_limits(bucket,failures) VALUES($1,1) ON CONFLICT(bucket) DO UPDATE SET failures=CASE WHEN login_limits.window_start<=now()-interval '15 minutes' THEN 1 ELSE login_limits.failures+1 END, window_start=CASE WHEN login_limits.window_start<=now()-interval '15 minutes' THEN now() ELSE login_limits.window_start END RETURNING failures,window_start::text AS window_start", [bucket]);
+        if (row.failures > maximum) throw new ApiError(429, '尝试次数过多，请 15 分钟后再试', 'RATE_LIMITED');
+        if (failureBuckets.includes(bucket)) reserved.push({ bucket, start: row.window_start });
+      }
+      return reserved;
+    });
+  }
+  async function releaseLogin(reserved) {
+    // Compare the window so a late success cannot refund a newer window's quota.
+    for (const { bucket, start } of reserved) await pool.query('UPDATE login_limits SET failures=GREATEST(0,failures-1) WHERE bucket=$1 AND window_start=$2', [bucket, start]);
+  }
   return {
+    authorize,
     async createOwner({ username, password, displayName = '店主', storeName = '梦飞空间' }) {
-      const passwordHash = await hashPassword(password);
       username = normalizeUsername(username);
+      boundedText(displayName, 128, '显示名', true); boundedText(storeName, 128, '门店名', true);
+      const passwordHash = await hashPassword(password);
       return transaction(pool, async client => {
         const storeId = randomUUID(), userId = randomUUID(), data = emptyData();
         await client.query('INSERT INTO stores(id,name) VALUES($1,$2)', [storeId, storeName]);
@@ -41,24 +69,27 @@ export function createService(pool) {
     async login({ username, password, deviceId }, ip) {
       if (typeof deviceId !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(deviceId)) throw new ApiError(400, '设备标识无效');
       try { username = normalizeUsername(username); } catch { throw new ApiError(401, '账号或密码错误'); }
-      const buckets = [digest('user:' + username), digest('ip:' + ip)];
-      const limits = await pool.query("SELECT failures FROM login_limits WHERE bucket=ANY($1::text[]) AND window_start>now()-interval '15 minutes'", [buckets]);
-      if (limits.rows.some(row => row.failures >= 10)) throw new ApiError(429, '尝试次数过多，请 15 分钟后再试', 'RATE_LIMITED');
+      const reserved = await reserveLogin(username, ip);
       const { rows: [user] } = await pool.query('SELECT * FROM users WHERE username=$1', [username]);
-      if (!(await verifyPassword(password, user?.password_hash)) || !user?.active) {
-        for (const bucket of buckets) await pool.query("INSERT INTO login_limits(bucket,failures) VALUES($1,1) ON CONFLICT(bucket) DO UPDATE SET failures=CASE WHEN login_limits.window_start<now()-interval '15 minutes' THEN 1 ELSE login_limits.failures+1 END, window_start=CASE WHEN login_limits.window_start<now()-interval '15 minutes' THEN now() ELSE login_limits.window_start END", [bucket]);
+      let valid;
+      try { valid = await verifyPassword(password, user?.password_hash); }
+      catch (error) { await releaseLogin(reserved); throw error; }
+      if (!valid || !user?.active) {
         throw new ApiError(401, '账号或密码错误', 'AUTH_REQUIRED');
       }
       const accessToken = token(), refreshToken = token(), sessionId = randomUUID();
       const [accessExpires, expires] = sessionTimes();
       const currentUser = await transaction(pool, async client => {
-        const { rows: [current] } = await client.query('SELECT * FROM users WHERE id=$1 FOR SHARE', [user.id]);
+        const { rows: [current] } = await client.query('SELECT * FROM users WHERE id=$1 FOR UPDATE', [user.id]);
         if (!current?.active || current.password_hash !== user.password_hash) throw new ApiError(401, '账号或密码错误');
+        await client.query("DELETE FROM sessions WHERE user_id=$1 AND expires_at<now()", [user.id]);
+        await client.query('UPDATE sessions SET revoked=true WHERE id IN (SELECT id FROM sessions WHERE user_id=$1 AND revoked=false ORDER BY created_at DESC OFFSET 19)', [user.id]);
         await client.query('INSERT INTO sessions(id,user_id,device_id,access_hash,refresh_hash,access_expires_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)',
           [sessionId, user.id, deviceId, digest(accessToken), digest(refreshToken), accessExpires, expires]);
         await audit(client, { ...current, device_id: deviceId }, 'login');
         return current;
       });
+      await releaseLogin(reserved);
       return { accessToken, refreshToken, user: publicUser(currentUser), expiresAt: accessExpires.toISOString() };
     },
     async authenticate(accessToken) {
@@ -100,9 +131,10 @@ export function createService(pool) {
       });
     },
     async bootstrap(identity, request) {
+      await authorize(identity, 'owner');
       let data;
       try { data = validateSnapshot(request.data); }
-      catch (error) { throw new ApiError(400, error.message); }
+      catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
       if (typeof request.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(request.id)) throw new ApiError(400, '同步单号无效');
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
@@ -124,10 +156,13 @@ export function createService(pool) {
     },
     async sync(identity, operations) {
       if (!Array.isArray(operations) || operations.length > 100 || new Set(operations.map(op => op?.id)).size !== operations.length) throw new ApiError(400, '同步批次格式无效');
-      try { operations.forEach(validateOperation); }
-      catch (error) { throw new ApiError(400, error.message); }
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
+        for (const operation of operations) if (!canWrite(user.role, operation?.method)) throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
+        try {
+          assertJsonBudget(operations, operations.some(op => op?.method === 'importBackupData') ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes, DATA_LIMITS.backupBytes);
+          operations.forEach(validateOperation);
+        } catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
         const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
         if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败', 'INTEGRITY_FAILED');
         let data = account.data, revision = account.revision;
@@ -142,10 +177,10 @@ export function createService(pool) {
           }
           let applied;
           try { applied = replayOperation(data, operation); data = validateSnapshot(applied.data); }
-          catch (error) { throw new ApiError(409, error.message, 'SYNC_CONFLICT'); }
+          catch (error) { throw new ApiError(error.status || 409, error.message, error.code || 'SYNC_CONFLICT'); }
           revision++;
           await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-            [user.store_id, operation.id, user.id, user.device_id, operation.method, hash, applied.result, revision]);
+            [user.store_id, operation.id, user.id, user.device_id, operation.method, hash, JSON.stringify(applied.result), revision]);
           await audit(client, user, operation.method, { operationId: operation.id }, operation.generated.times.at(-1) || null);
         }
         const checksum = integrity(data);
@@ -162,11 +197,17 @@ export function createService(pool) {
       });
     },
     async createUser(identity, input) {
-      const username = normalizeUsername(input.username), passwordHash = await hashPassword(input.password);
+      await authorize(identity, 'owner');
+      const username = normalizeUsername(input.username);
+      boundedText(input.displayName, 128, '显示名', true);
       if (!['owner', 'clerk', 'viewer'].includes(input.role) || typeof input.displayName !== 'string' || !input.displayName.trim()) throw new ApiError(400, '账号资料无效');
+      const passwordHash = await hashPassword(input.password);
       return transaction(pool, async client => {
+        await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
         const user = await lockedUser(client, identity);
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以管理账号');
+        const { rows: [count] } = await client.query('SELECT count(*)::int AS count FROM users WHERE store_id=$1', [user.store_id]);
+        if (count.count >= 100) throw new ApiError(413, '账号数量已达到 100 个上限', 'DATA_LIMIT');
         const id = randomUUID();
         await client.query('INSERT INTO users(id,store_id,username,display_name,password_hash,role) VALUES($1,$2,$3,$4,$5,$6)', [id, user.store_id, username, input.displayName.trim(), passwordHash, input.role]);
         await audit(client, user, 'user_created', { targetUserId: id, role: input.role });
@@ -192,10 +233,11 @@ export function createService(pool) {
     },
     async activity(identity, events) {
       if (!Array.isArray(events) || events.length > 100) throw new ApiError(400, '使用记录格式无效');
+      try { assertJsonBudget(events, 64 * 1024); } catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
         for (const event of events) {
-          if (!/^[a-zA-Z0-9-]{16,80}$/.test(event.id || '') || !['online', 'offline', 'sync_conflict_resolved'].includes(event.type) || !Number.isFinite(Date.parse(event.at))) throw new ApiError(400, '使用记录格式无效');
+          if (!event || typeof event.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(event.id) || !['online', 'offline', 'sync_conflict_resolved'].includes(event.type) || typeof event.at !== 'string' || event.at.length > 64 || !Number.isFinite(Date.parse(event.at))) throw new ApiError(400, '使用记录格式无效');
           if (event.actorId !== user.id || event.deviceId !== user.device_id) throw new ApiError(403, '使用记录账号或设备不匹配', 'FORBIDDEN');
           await client.query('INSERT INTO audit_events(store_id,user_id,device_id,event,occurred_at,client_event_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(store_id,client_event_id) DO NOTHING',
             [user.store_id, user.id, user.device_id, event.type, event.at, event.id]);

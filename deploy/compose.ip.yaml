@@ -1,0 +1,19 @@
+services:
+  web:
+    volumes:
+      - type: bind
+        source: ./deploy/Caddyfile.ip
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - type: bind
+        source: /etc/letsencrypt
+        target: /etc/letsencrypt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/lib/member-acme
+        target: /var/lib/member-acme
+        read_only: true
+        bind:
+          create_host_path: false

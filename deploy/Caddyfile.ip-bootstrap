@@ -1,0 +1,9 @@
+http://{$PUBLIC_DOMAIN} {
+    handle /.well-known/acme-challenge/* {
+        root * /var/lib/member-acme
+        file_server
+    }
+    handle {
+        respond "HTTPS certificate setup is in progress." 503
+    }
+}

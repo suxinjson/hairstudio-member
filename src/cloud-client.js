@@ -1,6 +1,6 @@
-import { localDb } from './storage.js';
+import { localDb, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from './storage.js';
 import { getCloudState, saveCloudState, installCloudRecording, replayOperation } from './cloud-storage.js';
-import { CLOUD_STATE_KEY, canonicalJSON, newId, canWrite, mutationPrecondition, validateOperation } from './sync-protocol.js';
+import { CLOUD_STATE_KEY, canonicalJSON, newId, canWrite, mutationPrecondition, validateOperation, selectSyncBatch } from './sync-protocol.js';
 
 export function normalizeServerUrl(value) {
   const url = new URL(value);
@@ -55,12 +55,19 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     }
     setState({ ...current, user: session.user, status, conflictReason });
   }
+  async function invalidateSession() {
+    accessToken = ''; refreshToken = '';
+    // 先锁定本机账本；安全存储清理失败也不能保留已失效的登录状态。
+    setState({ ...getCloudState(), user: null, status: 'login-required' });
+    await vault.clear();
+  }
   async function refreshSession() {
     if (!refreshPromise) refreshPromise = (async () => {
-      if (!refreshToken) throw Object.assign(new Error('请重新登录后同步，离线记账可继续使用'), { status: 401 });
-      try { await keepSession(await raw('/auth/refresh', { refreshToken }, '')); }
-      catch (error) {
-        if (error.status === 401) { accessToken = ''; refreshToken = ''; await vault.clear(); setState({ ...getCloudState(), user: null, status: 'login-required' }); }
+      try {
+        if (!refreshToken) throw Object.assign(new Error('请重新登录后同步，本机账本和待同步记录已保留'), { status: 401 });
+        await keepSession(await raw('/auth/refresh', { refreshToken }, ''));
+      } catch (error) {
+        if (error.status === 401) await invalidateSession();
         throw error;
       }
     })().finally(() => { refreshPromise = null; });
@@ -151,7 +158,9 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         if (old.binding) return;
         const local = localDb.readRecoveryState().data;
         if (!local) { setState({ ...getCloudState(), status: 'needs-choice' }); return; }
-        if (!local.members.length && !local.ledgers.length) {
+        const hasCustomSettings = canonicalJSON(local.services) !== canonicalJSON(DEFAULT_SERVICES) ||
+          canonicalJSON(local.rechargePlans) !== canonicalJSON(DEFAULT_RECHARGE_PLANS);
+        if (!local.members.length && !local.ledgers.length && !hasCustomSettings) {
           setState({ ...getCloudState(), binding: { storeId: session.user.storeId }, status: 'synced' });
           await accept(remote);
         } else {
@@ -163,7 +172,9 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       const state = getCloudState();
       if (!state.serverUrl) return;
       const saved = await vault.load();
-      if (saved && saved.serverUrl === state.serverUrl && (!state.binding || saved.storeId === state.binding.storeId)) refreshToken = saved.refreshToken;
+      if (saved && saved.serverUrl === state.serverUrl && (!state.binding || saved.storeId === state.binding.storeId) &&
+          typeof saved.refreshToken === 'string' && saved.refreshToken) refreshToken = saved.refreshToken;
+      if (!accessToken && !refreshToken && getCloudState().user) { await invalidateSession(); return; }
       emit();
     },
     async bootstrap() {
@@ -181,7 +192,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       return run(async () => {
         if (getCloudState().bootstrap) await accept(await sendOperations('/account/bootstrap', getCloudState().bootstrap));
         for (let count = 0; count < 10; count++) {
-          const operations = getCloudState().outbox.slice(0, 100);
+          const operations = selectSyncBatch(getCloudState().outbox);
           if (!operations.length) break;
           const response = await sendOperations('/sync', { operations });
           if (canonicalJSON(response.acknowledged) !== canonicalJSON(operations.map(operation => operation.id))) throw new Error('云端确认单号不匹配，待同步记录已保留');

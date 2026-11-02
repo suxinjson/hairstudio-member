@@ -46,6 +46,7 @@ const { default: App } = await import(pathToFileURL(appPath).href);
 const { createApp, nextTick } = await import(vueUrl);
 const { localDb } = await import('../src/storage.js');
 const { saveCloudState, getCloudState } = await import('../src/cloud-storage.js');
+const { cloudClient } = await import('../src/cloud-device.js');
 
 class MemoryStorage {
   values = new Map();
@@ -310,7 +311,12 @@ test('a native listener that finishes registering after unmount is removed immed
   assert.equal(remove.mock.callCount(), 1);
 });
 
-function cloudProfile(role) {
+function cloudProfile(role, t) {
+  // 权限与收银 UI 测试模拟已登录的离线原生设备；浏览器重启测试使用真实恢复流程。
+  if (role && t) {
+    t.mock.method(cloudClient, 'restoreSession', async () => {});
+    t.mock.method(cloudClient, 'sync', async () => {});
+  }
   saveCloudState({ serverUrl: 'https://member.example.com', binding: { storeId: 'test-store' }, deviceId: crypto.randomUUID(),
     user: role ? { id: 'test-user', storeId: 'test-store', role, displayName: '店主', username: 'owner' } : null,
     revision: 1, outbox: [], activity: [], status: role ? 'synced' : 'login-required' });
@@ -324,9 +330,9 @@ test('a logged-out cloud account shows login without exposing members or backup 
   assert.equal(document.querySelector('nav'), null);
   assert.equal(document.body.textContent.includes('一键备份所有账本'), false);
 });
-test('read-only cloud accounts cannot initiate a charge or change service prices', async () => {
+test('read-only cloud accounts cannot initiate a charge or change service prices', async t => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
-  cloudProfile('viewer');
+  cloudProfile('viewer', t);
   await mount();
   assert.equal(button('剪发扣款').disabled, true);
   assert.equal(button('会员充值').disabled, true);
@@ -334,9 +340,9 @@ test('read-only cloud accounts cannot initiate a charge or change service prices
   assert.throws(() => localDb.consume({ memberId: member.id, amount: 38 }), /权限/);
   assert.equal(localDb.getMemberById(member.id).balance, 10000);
 });
-test('a cached signed-in cloud account records a charge and its pending operation through the UI', async () => {
+test('a cached signed-in cloud account records a charge and its pending operation through the UI', async t => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
-  cloudProfile('owner'); await mount();
+  cloudProfile('owner', t); await mount();
   button('剪发扣款').click(); await nextTick();
   button('精致洗剪吹 (').click(); await nextTick();
   button('确认扣除').click(); await nextTick();
@@ -345,9 +351,9 @@ test('a cached signed-in cloud account records a charge and its pending operatio
   assert.equal(getCloudState().outbox[0].method, 'consume');
 });
 
-test('downgraded accounts see export and cloud replacement controls without gaining write access', async () => {
+test('downgraded accounts see export and cloud replacement controls without gaining write access', async t => {
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
-  cloudProfile('viewer');
+  cloudProfile('viewer', t);
   saveCloudState({ ...getCloudState(), status: 'conflict', conflictReason: 'permissions', outbox: [{ id: 'queued-charge' }] });
   await mount(); await settings();
   assert.ok(document.body.textContent.includes('账号权限已变化'));
@@ -358,8 +364,8 @@ test('downgraded accounts see export and cloud replacement controls without gain
   assert.equal(button('新增项目').disabled, true);
 });
 
-test('an initialization conflict shows reconciliation and disables unlink until the initial request is resolved', async () => {
-  cloudProfile('owner');
+test('an initialization conflict shows reconciliation and disables unlink until the initial request is resolved', async t => {
+  cloudProfile('owner', t);
   saveCloudState({ ...getCloudState(), status: 'conflict', conflictReason: 'bootstrap', bootstrap: { id: 'pending-bootstrap' } });
   await mount(); await settings();
   assert.ok(document.body.textContent.includes('其他设备已初始化云端'));
@@ -371,7 +377,7 @@ test('the cloud-bound recovery screen restores a backup and requires explicit ow
   t.mock.method(console, 'error', () => {});
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   const backup = localDb.exportBackupData({ archiveSnapshot: false });
-  cloudProfile('owner');
+  cloudProfile('owner', t);
   await mount();
   localDb.consume({ memberId: member.id, amount: 38 });
   const pending = getCloudState().outbox;
@@ -393,7 +399,7 @@ test('the cloud-bound recovery screen restores a backup and requires explicit ow
 test('a corrupt cloud ledger can export its original storage and pending records through the UI', async t => {
   t.mock.method(console, 'error', () => {});
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
-  cloudProfile('owner');
+  cloudProfile('owner', t);
   const pending = [{ id: 'queued-charge' }];
   saveCloudState({ ...getCloudState(), outbox: pending });
   localStorage.setItem('hairstudio_members_v2', '{broken');
@@ -409,4 +415,19 @@ test('a corrupt cloud ledger can export its original storage and pending records
   assert.equal(content.storage.hairstudio_members_v2, '{broken');
   assert.deepEqual(content.cloud.outbox, pending);
   assert.ok(document.body.textContent.includes('已发起备份导出'));
+});
+
+test('a browser restart exposes login and hides the stale signed-in ledger while retaining pending operations', async () => {
+  localDb.createMember({ name: '私密会员', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('owner');
+  const pending = [{ id: 'queued-charge', actorId: 'test-user' }];
+  saveCloudState({ ...getCloudState(), status: 'conflict', conflictReason: 'data', outbox: pending });
+  await mount();
+  await new Promise(resolve => setTimeout(resolve, 20)); await nextTick();
+  assert.equal(getCloudState().user, null);
+  assert.equal(getCloudState().status, 'login-required');
+  assert.deepEqual(getCloudState().outbox, pending);
+  assert.ok(document.body.textContent.includes('安全登录'));
+  assert.equal(document.body.textContent.includes('私密会员'), false);
+  assert.equal(document.body.textContent.includes('同步完成'), false);
 });

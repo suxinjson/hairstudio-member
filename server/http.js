@@ -2,30 +2,49 @@ import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { isIP } from 'node:net';
 import { ApiError } from './security.js';
+import { DATA_LIMITS, assertJsonBudget } from '../src/data-limits.js';
+import { normalizeIP, proxyIdentity, createRequestGuard } from './request-guard.js';
 
-async function body(request) {
+async function body(request, maximum = 16 * 1024) {
   if (!String(request.headers['content-type'] || '').startsWith('application/json')) throw new ApiError(415, '请求必须使用 JSON');
   const chunks = []; let length = 0;
+  if (Number(request.headers['content-length']) > maximum) throw new ApiError(413, '请求数据过大', 'DATA_LIMIT');
   for await (const chunk of request) {
     length += chunk.length;
-    if (length > 20 * 1024 * 1024) throw new ApiError(413, '同步数据过大，请联系管理员分批迁移');
+    if (length > maximum) throw new ApiError(413, '请求数据过大', 'DATA_LIMIT');
     chunks.push(chunk);
   }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  let parsed;
+  try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { throw new ApiError(400, '请求 JSON 无效'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ApiError(400, '请求必须是 JSON 对象');
+  try { assertJsonBudget(parsed, maximum, maximum); }
+  catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
+  return parsed;
 }
 
-export function createApi({ service, pool, allowedOrigins = ['https://localhost'], releaseDirectory = './releases', production = false }) {
+export function createApi({ service, pool, allowedOrigins = ['https://localhost'], releaseDirectory = './releases', production = false, trustedProxyIPs = [], rateLimits = production }) {
   const origins = new Set(allowedOrigins);
+  const trustedProxies = new Set(trustedProxyIPs.map(value => {
+    const ip = normalizeIP(value); if (!ip) throw new Error('可信代理必须配置为明确的 IP 地址'); return ip;
+  }));
+  const guard = createRequestGuard({ enabled: rateLimits });
   const server = createServer(async (request, response) => {
     const send = (status, value) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(value)); };
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Vary', 'Origin');
+    let release = () => {}, workDone = false, responseDone = false;
+    const finish = () => { responseDone = true; if (workDone) release(); };
+    response.once('close', finish); response.once('finish', finish);
     try {
-      if (production && request.headers['x-forwarded-proto'] !== 'https') throw new ApiError(400, '请使用 HTTPS');
+      const ip = proxyIdentity(request, production, trustedProxies);
+      const path = new URL(request.url, 'http://internal').pathname;
+      const route = request.method + ' ' + path;
+      const heavy = /^(GET|POST) \/api\/v1\/(account(?:\/head|\/bootstrap)?|sync)$/.test(route);
+      release = guard.enter(heavy ? 'account' : null, 2);
+      guard.take('ip:' + ip, 180);
       const origin = request.headers.origin;
       if (origin && !origins.has(origin)) throw new ApiError(403, '此客户端来源未获允许');
       if (origin) response.setHeader('Access-Control-Allow-Origin', origin);
@@ -34,29 +53,45 @@ export function createApi({ service, pool, allowedOrigins = ['https://localhost'
         response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
         response.writeHead(204); return response.end();
       }
-      const path = new URL(request.url, 'http://internal').pathname;
-      const route = request.method + ' ' + path;
       if (route === 'GET /api/health') return send(200, { status: 'ok' });
       if (route === 'POST /api/v1/auth/login') {
-        const forwarded = String(request.headers['x-forwarded-for'] || '').split(',').at(-1).trim();
-        const ip = production && isIP(forwarded) ? forwarded : request.socket.remoteAddress || 'unknown';
+        guard.take('auth:' + ip, 30);
         return send(200, await service.login(await body(request), ip));
       }
-      if (route === 'POST /api/v1/auth/refresh') return send(200, await service.refresh((await body(request)).refreshToken));
+      if (route === 'POST /api/v1/auth/refresh') {
+        guard.take('auth:' + ip, 30);
+        return send(200, await service.refresh((await body(request)).refreshToken));
+      }
       const accessToken = /^Bearer ([a-zA-Z0-9_-]+)$/.exec(request.headers.authorization || '')?.[1];
       const identity = await service.authenticate(accessToken);
+      guard.take('session:' + identity.sessionId, 120);
+      if (request.method !== 'GET') guard.take('write:' + identity.id, 30);
       if (route === 'POST /api/v1/auth/logout') { await service.logout(identity); return send(200, { success: true }); }
       if (route === 'GET /api/v1/account') return send(200, await service.account(identity));
       if (route === 'GET /api/v1/account/head') {
         const { revision, integrity } = await service.account(identity);
         return send(200, { revision, integrity });
       }
-      if (route === 'POST /api/v1/account/bootstrap') return send(200, await service.bootstrap(identity, await body(request)));
-      if (route === 'POST /api/v1/sync') return send(200, await service.sync(identity, (await body(request)).operations));
+      if (route === 'POST /api/v1/account/bootstrap') {
+        await service.authorize(identity, 'owner'); guard.take('restore:' + identity.id, 3);
+        return send(200, await service.bootstrap(identity, await body(request, DATA_LIMITS.restoreBytes)));
+      }
+      if (route === 'POST /api/v1/sync') {
+        const current = await service.authorize(identity, 'write');
+        const input = await body(request, current.role === 'owner' ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes);
+        if (input.operations?.some?.(op => op?.method === 'importBackupData')) guard.take('restore:' + identity.id, 3);
+        return send(200, await service.sync(identity, input.operations));
+      }
       if (route === 'GET /api/v1/users') return send(200, await service.users(identity));
-      if (route === 'POST /api/v1/users') return send(201, await service.createUser(identity, await body(request)));
-      if (request.method === 'PATCH' && /^\/api\/v1\/users\/[a-f0-9-]{36}$/.test(path)) return send(200, await service.updateUser(identity, path.split('/').at(-1), await body(request)));
-      if (route === 'POST /api/v1/activity') return send(200, await service.activity(identity, (await body(request)).events));
+      if (route === 'POST /api/v1/users') {
+        await service.authorize(identity, 'owner'); guard.take('admin:' + identity.id, 10);
+        return send(201, await service.createUser(identity, await body(request)));
+      }
+      if (request.method === 'PATCH' && /^\/api\/v1\/users\/[a-f0-9-]{36}$/.test(path)) {
+        await service.authorize(identity, 'owner');
+        return send(200, await service.updateUser(identity, path.split('/').at(-1), await body(request)));
+      }
+      if (route === 'POST /api/v1/activity') return send(200, await service.activity(identity, (await body(request, 64 * 1024)).events));
       if (route === 'GET /api/v1/activity') return send(200, await service.auditLog(identity));
       if (route === 'GET /api/v1/updates/latest') {
         const { rows: [release] } = await pool.query('SELECT * FROM releases ORDER BY version_code DESC LIMIT 1');
@@ -83,10 +118,18 @@ export function createApi({ service, pool, allowedOrigins = ['https://localhost'
       if (response.headersSent) return response.destroy();
       const status = error.status || (error.code === '23505' ? 409 : error instanceof TypeError || error instanceof SyntaxError ? 400 : 500);
       if (status === 500) console.error('API 请求失败:', error.message);
+      if (status === 429 || status === 503) response.setHeader('Retry-After', status === 429 ? '60' : '5');
+      if (!request.complete) response.setHeader('Connection', 'close');
       send(status, { error: status === 500 ? '服务暂时不可用，请稍后重试' : error.message, code: error.status ? error.code : 'REQUEST_FAILED' });
+    } finally {
+      workDone = true;
+      if (responseDone) release();
     }
   });
   server.requestTimeout = 30000;
   server.headersTimeout = 15000;
+  server.keepAliveTimeout = 5000;
+  server.maxRequestsPerSocket = 100;
+  server.maxConnections = 256;
   return server;
 }

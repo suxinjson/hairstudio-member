@@ -1,0 +1,7 @@
+services:
+  web:
+    volumes:
+      - type: bind
+        source: ./deploy/Caddyfile.ip-bootstrap
+        target: /etc/caddy/Caddyfile
+        read_only: true

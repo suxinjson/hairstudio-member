@@ -1,5 +1,6 @@
 // 手机本地单机存储引擎 (企业级强一致性 + 离线容灾 + 误操作冲正撤销)
 import { moneyToCent } from './money.js';
+import { DATA_LIMITS, byteLength, assertJsonBudget, assertAccountLimits, validateMutationArgs, DataLimitError } from './data-limits.js';
 import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones } from './accounting.js';
 
 export const STORAGE_KEYS = {
@@ -50,9 +51,7 @@ function load(key, defaultVal = []) {
 }
 
 function save(key, data) {
-  if (mutation && options.beforeWrite && Object.values(STORAGE_KEYS).slice(0, 4).includes(key)) {
-    return saveBatch({ [key]: data });
-  }
+  if (mutation && Object.values(STORAGE_KEYS).slice(0, 4).includes(key)) return saveBatch({ [key]: data });
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch (e) {
@@ -63,6 +62,10 @@ function save(key, data) {
 
 function saveBatch(entries) {
   recoverPendingWrite();
+  if (mutation) assertAccountLimits(Object.fromEntries([
+    ['members', STORAGE_KEYS.MEMBERS], ['ledgers', STORAGE_KEYS.LEDGERS],
+    ['services', STORAGE_KEYS.SERVICES], ['rechargePlans', STORAGE_KEYS.RECHARGE_PLANS]
+  ].map(([field, key]) => [field, entries[key] ?? load(key)])));
   if (mutation && options.beforeWrite) entries = options.beforeWrite(entries, JSON.parse(JSON.stringify(mutation)));
   const writes = Object.entries(entries).map(([key, value]) => ({
     key,
@@ -461,8 +464,10 @@ const db = {
 
     target.isRefunded = true;
     if (m.isArchived && after > 0) {
+      if (!m.phone.trim()) throw new Error('该注销会员缺少手机号，无法重新启用；请先核对并恢复完整会员档案后再撤销');
       m.isArchived = false;
       delete m.deleted_at;
+      validateActiveMemberPhones(members);
     }
     m.updated_at = nowISO();
     // 记录冲正流水
@@ -608,12 +613,15 @@ const db = {
 
   // --- 备份解析与格式校验内部工具 ---
   parseAndValidateBackup(jsonString) {
+    if (typeof jsonString !== 'string') throw new Error('备份必须是 JSON 文本');
+    if (byteLength(jsonString) > DATA_LIMITS.backupBytes) throw new DataLimitError('备份文件过大');
     let parsed;
     try {
       parsed = JSON.parse(jsonString);
     } catch {
       throw new Error('备份文件不是合法的JSON文本');
     }
+    assertJsonBudget(parsed, DATA_LIMITS.backupBytes);
     if (!parsed || !parsed.data || !Array.isArray(parsed.data.members)) {
       throw new Error('备份文件格式不正确，缺少会员名册数据');
     }
@@ -624,6 +632,7 @@ const db = {
     if (!Array.isArray(ledgers) || !Array.isArray(services) || !Array.isArray(rechargePlans)) {
       throw new Error('备份文件中的流水、服务项目或充值档位格式不正确');
     }
+    assertAccountLimits({ members, ledgers, services, rechargePlans });
     const memberIds = new Set();
     for (const member of members) {
       if (!member || typeof member.id !== 'string' || !member.id || memberIds.has(member.id) ||
@@ -684,6 +693,7 @@ const db = {
       moneyToCent(plan.gift, '赠送金额');
     }
 
+    assertAccountLimits({ members, ledgers, services, rechargePlans });
     return {
       version: parsed.version || '2.0',
       exportedAt: parsed.exportedAt || null,
@@ -982,6 +992,7 @@ for (const method of ['createMember', 'updateMember', 'deleteMember', 'recharge'
   const implementation = db[method];
   db[method] = function (...args) {
     if (mutation) throw new Error('不能嵌套执行账本变更');
+    validateMutationArgs(method, args);
     mutation = { method, args: JSON.parse(JSON.stringify(args)), generated: { ids: [], times: [] } };
     try { return implementation.apply(this, args); } finally { mutation = null; }
   };

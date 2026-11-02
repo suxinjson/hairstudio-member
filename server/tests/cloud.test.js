@@ -16,6 +16,7 @@ import { createLocalDb, localDb, STORAGE_KEYS, configureCloudWrites } from '../.
 import { canonicalJSON, mutationPrecondition, CLOUD_STATE_KEY } from '../../src/sync-protocol.js';
 import { createCloudClient } from '../../src/cloud-client.js';
 import { getCloudState, saveCloudState } from '../../src/cloud-storage.js';
+import { DATA_LIMITS } from '../../src/data-limits.js';
 
 class MemoryStorage {
   values = new Map(); failKey = null; failOnce = false;
@@ -112,6 +113,110 @@ test('passwords are salted hashes and login failures are rate limited', async ()
   for (let count = 0; count < 10; count++) await assert.rejects(service.login({ username: 'owner', password: 'wrong', deviceId: randomUUID() }, 'attacker'), { status: 401 });
   await assert.rejects(service.login({ username: 'owner', password, deviceId: randomUUID() }, 'attacker'), { status: 429 });
 });
+test('concurrent wrong logins reserve shared user and IP quotas before password work', async () => {
+  const results = await Promise.allSettled(Array.from({ length: 24 }, () => service.login({ username: 'owner', password: 'wrong', deviceId: randomUUID() }, 'attacker')));
+  assert.equal(results.filter(item => item.reason?.status === 401).length, 10);
+  assert.equal(results.filter(item => item.reason?.status === 429).length, 14);
+  assert.equal(results.some(item => item.status === 'fulfilled'), false);
+  const count = await pool.query('SELECT failures FROM login_limits WHERE bucket=$1', [digest('user:owner')]);
+  assert.equal(count.rows[0].failures, 10);
+});
+test('a shared IP quota also bounds concurrent guesses against different usernames', async () => {
+  const results = await Promise.allSettled(Array.from({ length: 24 }, (_, index) => service.login({ username: 'missing-' + index, password: 'wrong', deviceId: randomUUID() }, 'shared-attacker')));
+  assert.equal(results.filter(item => item.reason?.status === 401).length, 10);
+  assert.equal(results.filter(item => item.reason?.status === 429).length, 14);
+});
+test('successful login refunds only its failure reservation and keeps its total attempt budget', async () => {
+  await login('owner');
+  const limits = (await pool.query('SELECT bucket,failures FROM login_limits')).rows;
+  assert.equal(limits.find(item => item.bucket === digest('user:owner')).failures, 0);
+  assert.equal(limits.find(item => item.bucket === digest('attempt-user:owner')).failures, 2);
+  await pool.query('UPDATE login_limits SET failures=60 WHERE bucket=$1', [digest('attempt-user:owner')]);
+  await assert.rejects(login('owner'), { status: 429 });
+  await pool.query("UPDATE login_limits SET window_start=now()-interval '16 minutes'");
+  await login('owner');
+});
+test('forbidden owner actions check the actual role before inspecting expensive input', async () => {
+  await service.createUser(owner.identity, { username: 'viewer', password, displayName: '只读', role: 'viewer' });
+  const viewer = await login('viewer');
+  const hostile = new Proxy({}, { get() { throw new Error('payload inspected before permission'); } });
+  await assert.rejects(service.createUser({ ...viewer.identity, role: 'owner' }, hostile), { status: 403 });
+  await assert.rejects(service.bootstrap({ ...viewer.identity, role: 'owner' }, hostile), { status: 403 });
+  for (const path of ['/users', '/account/bootstrap', '/sync']) {
+    const response = await fetch(url + '/api/v1' + path, { method: 'POST', headers: { Authorization: 'Bearer ' + viewer.accessToken, 'Content-Type': 'text/plain' }, body: 'not JSON' });
+    assert.equal(response.status, 403);
+  }
+});
+test('owner authorization is rechecked if the role changes while a password is being prepared', async () => {
+  let connections = 0;
+  const guarded = { query: (...args) => pool.query(...args), async connect() {
+    if (++connections === 2) await pool.query("UPDATE users SET role='viewer' WHERE id=$1", [owner.identity.id]);
+    return pool.connect();
+  } };
+  await assert.rejects(createService(guarded).createUser(owner.identity, { username: 'new-user', password, displayName: '新账号', role: 'clerk' }), { status: 403 });
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM users WHERE username='new-user'")).rows[0].count, 0);
+});
+test('oversized fields, nested preconditions and wrong argument types cannot change an account', async () => {
+  const account = await initialAccount();
+  const valid = operation(account.data, owner, 'createMember', [{ name: '新会员', phone: '13900003333' }]).operation;
+  for (const mutate of [
+    op => { op.args[0].name = 'x'.repeat(512 * 1024); },
+    op => { op.args[0].phone = '1'.repeat(DATA_LIMITS.phone + 1); },
+    op => { op.args[0].notes = 'x'.repeat(DATA_LIMITS.notes + 1); },
+    op => { let node = op.precondition; for (let i = 0; i < 50; i++) node = node.child = {}; }
+  ]) {
+    const op = structuredClone(valid); mutate(op);
+    assert.equal((await api('/sync', { operations: [op] })).status, 413);
+  }
+  const malformed = structuredClone(valid); malformed.args[0].notes = {};
+  assert.equal((await api('/sync', { operations: [malformed] })).status, 400);
+  for (const name of ['bad\u0000name', '\ud800']) {
+    const invalidText = structuredClone(valid); invalidText.args[0].name = name;
+    assert.equal((await api('/sync', { operations: [invalidText] })).status, 400);
+  }
+  assert.deepEqual(await service.account(owner.identity), { data: account.data, revision: account.revision, integrity: account.integrity });
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='createMember'")).rows[0].count, 0);
+});
+test('final account growth is rejected atomically instead of truncating saved records', async () => {
+  const data = (await service.account(owner.identity)).data;
+  data.services = Array.from({ length: DATA_LIMITS.services }, (_, i) => ({ id: 'service-' + i, name: '项目' + i, price: 1 }));
+  const account = await service.bootstrap(owner.identity, { id: randomUUID(), data });
+  // Build a valid request without running the local writer that also enforces this limit.
+  const op = { id: randomUUID(), actorId: owner.identity.id, deviceId: owner.deviceId, method: 'saveService', args: [{ name: '超额项目', price: 1 }], generated: { ids: ['new-service'], times: [new Date().toISOString()] }, precondition: { services: data.services } };
+  await assert.rejects(service.sync(owner.identity, [op]), { status: 413 });
+  assert.deepEqual(await service.account(owner.identity), { data: account.data, revision: account.revision, integrity: account.integrity });
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='saveService'")).rows[0].count, 0);
+});
+test('concurrent account creation cannot exceed the per-store account limit', async () => {
+  const hash = (await pool.query('SELECT password_hash FROM users WHERE id=$1', [owner.identity.id])).rows[0].password_hash;
+  await pool.query("INSERT INTO users(id,store_id,username,display_name,password_hash,role) SELECT gen_random_uuid(),$1,'fixture-'||n,'店员',$2,'clerk' FROM generate_series(1,98) n", [owner.identity.store_id, hash]);
+  const results = await Promise.allSettled(['last-one', 'last-two'].map(username => service.createUser(owner.identity, { username, password, displayName: '最后账号', role: 'clerk' })));
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.filter(result => result.reason?.status === 413).length, 1);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM users')).rows[0].count, 100);
+});
+test('small authentication and administration routes reject large bodies before any writes', async () => {
+  const response = await api('/auth/login', { username: 'owner', password, deviceId: randomUUID(), padding: 'x'.repeat(17000) }, null);
+  assert.equal(response.status, 413);
+  assert.equal((await api('/users', { username: 'new-user', password, displayName: 'x'.repeat(129), role: 'clerk' })).status, 413);
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM users')).rows[0].count, 1);
+});
+test('large valid service preconditions synchronize in size-limited batches without losing pending operations', async () => {
+  const data = (await service.account(owner.identity)).data;
+  data.services = Array.from({ length: DATA_LIMITS.services }, (_, i) => ({ id: 'service-' + i, name: '长服务名称'.repeat(20), price: 1 }));
+  await service.bootstrap(owner.identity, { id: randomUUID(), data });
+  let online = false; const sizes = [];
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (input.endsWith('/sync')) sizes.push(Buffer.byteLength(options.body));
+    return fetch(input, options);
+  } });
+  for (let i = 0; i < 20; i++) localDb.saveService({ ...data.services[0], price: i + 2 });
+  assert.equal(getCloudState().outbox.length, 20);
+  online = true; await client.sync();
+  assert.ok(sizes.length > 1); assert.ok(sizes.every(size => size <= DATA_LIMITS.syncBytes));
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal((await service.account(owner.identity)).data.services[0].price, 21);
+});
 test('refresh tokens rotate and replay revokes the associated session', async () => {
   const refreshed = await service.refresh(owner.refreshToken);
   assert.notEqual(refreshed.refreshToken, owner.refreshToken);
@@ -129,6 +234,77 @@ test('initial migration is owner-only, idempotent and cannot replace an existing
   const first = await service.bootstrap(second.identity, request);
   const retry = await service.bootstrap(second.identity, request);
   assert.equal(first.revision, 1); assert.deepEqual(retry.data, first.data);
+});
+
+for (const field of ['services', 'rechargePlans']) {
+  for (const initialized of [false, true]) {
+    test(`first login preserves customized ${field} until explicitly choosing a ledger (cloud initialized: ${initialized})`, async () => {
+      if (initialized) await initialAccount();
+      if (field === 'services') localDb.saveService({ id: 's1', name: '自定义剪发', price: 66 });
+      else localStorage.setItem(STORAGE_KEYS.RECHARGE_PLANS, JSON.stringify([{ pay: 100, gift: 15 }]));
+      const local = localDb.readBackupState();
+      const client = await connectedClient({ online: () => false });
+      assert.equal(getCloudState().status, initialized ? 'needs-choice' : 'needs-bootstrap');
+      assert.equal(getCloudState().binding, null);
+      assert.deepEqual(localDb.readBackupState(), local);
+      if (initialized) {
+        await client.useCloudLedger();
+        assert.deepEqual(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).data, local);
+      } else {
+        await client.bootstrap();
+        assert.deepEqual((await service.account(owner.identity)).data, local);
+      }
+      assert.equal(getCloudState().status, 'synced');
+    });
+  }
+}
+
+for (const status of ['pending', 'conflict']) {
+  test(`a browser restart requires login without losing its ${status} ledger or operations`, async () => {
+    const account = await initialAccount();
+    await connectedClient({ online: () => false });
+    localDb.consume({ memberId: account.member.id, amount: 38 });
+    if (status === 'conflict') saveCloudState({ ...getCloudState(), status, conflictReason: 'data' });
+    const before = getCloudState(), local = localDb.readBackupState();
+    stopClient(); stopClient = null;
+    const client = createCloudClient({ fetch, isOnline: () => false });
+    await client.restoreSession();
+    assert.equal(client.snapshot().user, null);
+    assert.equal(client.snapshot().status, 'login-required');
+    for (const key of ['binding', 'outbox', 'activity', 'revision', 'conflictReason']) {
+      assert.deepEqual(getCloudState()[key], before[key]);
+    }
+    assert.deepEqual(localDb.readBackupState(), local);
+    await client.login(url, 'owner', password);
+    assert.equal(getCloudState().status, status);
+    assert.deepEqual(getCloudState().outbox, before.outbox);
+  });
+}
+
+test('a missing refresh token locks the ledger even when secure storage clearing fails', async () => {
+  await initialAccount();
+  await connectedClient({ online: () => false });
+  const local = localDb.readBackupState(), before = getCloudState();
+  const client = createCloudClient({ fetch, vault: { clear: async () => { throw new Error('vault unavailable'); } } });
+  await assert.rejects(client.request('/account'));
+  assert.equal(client.snapshot().user, null);
+  assert.equal(client.snapshot().status, 'login-required');
+  assert.deepEqual(getCloudState().binding, before.binding);
+  assert.deepEqual(localDb.readBackupState(), local);
+});
+
+test('a saved native session still permits offline recording after restarting', async () => {
+  const account = await initialAccount();
+  let saved;
+  const vault = { load: async () => saved, save: async value => { saved = value; }, clear: async () => { saved = null; } };
+  await connectedClient({ vault, online: () => false });
+  stopClient(); stopClient = null;
+  const client = createCloudClient({ fetch, vault, isOnline: () => false });
+  stopClient = await client.start();
+  assert.equal(client.snapshot().user.id, owner.user.id);
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  assert.equal(localDb.getMemberById(account.member.id).balance, 6200);
+  assert.equal(getCloudState().outbox.length, 1);
 });
 test('sync recomputes monetary values and atomically writes balances, ledgers and audit records', async () => {
   const account = await initialAccount();
@@ -215,6 +391,61 @@ test('unapproved origins and unauthenticated accounting requests are rejected', 
   const response = await fetch(url + '/api/v1/account', { headers: { Origin: 'https://untrusted.example', Authorization: 'Bearer ' + owner.accessToken } });
   assert.equal(response.status, 403);
 });
+
+test('every protected HTTP route rejects a missing access token before processing its input', async () => {
+  const routes = [
+    ['GET', '/account'], ['GET', '/account/head'], ['POST', '/account/bootstrap'],
+    ['POST', '/sync'], ['GET', '/users'], ['POST', '/users'],
+    ['PATCH', '/users/' + randomUUID()], ['POST', '/auth/logout'],
+    ['GET', '/activity'], ['POST', '/activity'], ['GET', '/updates/latest'],
+    ['GET', '/updates/files/' + 'a'.repeat(64) + '.apk']
+  ];
+  for (const [method, path] of routes) {
+    const response = await api(path, method === 'GET' ? undefined : {}, '', method);
+    assert.equal(response.status, 401, `${method} ${path}`);
+    await response.text();
+  }
+});
+
+for (const role of ['owner', 'clerk', 'viewer']) {
+  test(`HTTP sync checks the session's ${role} permissions for every business write method`, async () => {
+    const initial = await initialAccount();
+    const extra = operation(initial.data, owner, 'createMember', [{ name: '零余额会员', phone: '13800003333' }]);
+    const prepared = await service.sync(owner.identity, [extra.operation]);
+    const zero = prepared.data.members.find(member => member.phone === '13800003333');
+    let actor = owner;
+    if (role !== 'owner') {
+      await service.createUser(owner.identity, { username: 'matrix-' + role, password, displayName: role, role });
+      actor = await login('matrix-' + role);
+    }
+    const cases = [
+      ['createMember', [{ name: '新会员', phone: '13800004444' }]],
+      ['updateMember', [initial.member.id, { notes: '核对后的备注' }]],
+      ['deleteMember', [zero.id]],
+      ['recharge', [{ memberId: initial.member.id, actualPay: 10 }]],
+      ['consume', [{ memberId: initial.member.id, amount: 10 }]],
+      ['refundLedger', [initial.data.ledgers[0].id]],
+      ['saveService', [{ name: '测试护理', price: 20 }]],
+      ['deleteService', ['s1']],
+      ['importBackupData', [JSON.stringify({ data: prepared.data }), { mode: 'replace' }]]
+    ];
+    for (const [method, args] of cases) {
+      const before = await service.account(owner.identity);
+      const recorded = operation(before.data, actor, method, args);
+      const allowed = role === 'owner' || (role === 'clerk' && ['createMember', 'updateMember', 'recharge', 'consume'].includes(method));
+      const response = await api('/sync', { role: 'owner', storeId: randomUUID(), operations: [recorded.operation] }, actor.accessToken);
+      assert.equal(response.status, allowed ? 200 : 403, `${role}: ${method}`);
+      await response.text();
+      const after = await service.account(owner.identity);
+      if (allowed) {
+        assert.equal(after.revision, before.revision + 1);
+        assert.deepEqual(after.data, recorded.data);
+      } else {
+        assert.deepEqual(after, before);
+      }
+    }
+  });
+}
 test('connection event retries are deduplicated', async () => {
   const events = [{ id: randomUUID(), type: 'offline', at: new Date().toISOString(), actorId: owner.identity.id, deviceId: owner.deviceId }];
   await service.activity(owner.identity, events); await service.activity(owner.identity, events);

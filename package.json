@@ -11,6 +11,7 @@
     "sync": "npx cap sync android",
     "open:android": "npx cap open android",
     "server": "node server/main.js",
+    "server:migrate": "node server/migrate.js",
     "server:create-owner": "node server/create-owner.js",
     "server:publish": "node server/publish-release.js"
   },

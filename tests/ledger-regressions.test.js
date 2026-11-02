@@ -494,3 +494,40 @@ test('CSV exports untrusted cells as text while keeping numeric amounts and ordi
   assert.equal(rows[1][6], '温水\n洗头,"剪短"');
   assert.equal(rows[1][5], '90.00');
 });
+
+test('reversing a legacy archive with no phone fails before writing and succeeds after restoring its profile', () => {
+  const member = newMember();
+  const consumed = localDb.consume({ memberId: member.id, amount: 100 });
+  localDb.deleteMember(member.id);
+  const legacy = JSON.parse(backup());
+  legacy.data.members = [];
+  for (const record of legacy.data.ledgers) delete record.memberPhone;
+  localDb.importBackupData(JSON.stringify(legacy));
+  assert.equal(localDb.readBackupState().members[0].phone, '');
+  const previous = new Map(localStorage.values);
+  assert.throws(() => localDb.refundLedger(consumed.ledgerId), /手机号/);
+  assert.deepEqual(localStorage.values, previous);
+  assert.doesNotThrow(() => localDb.init());
+  assert.equal(localDb.getLedgers().find(record => record.id === consumed.ledgerId).isRefunded, undefined);
+
+  const repaired = JSON.parse(backup());
+  repaired.data.members[0].phone = member.phone;
+  localDb.importBackupData(JSON.stringify(repaired));
+  localDb.refundLedger(consumed.ledgerId);
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+  assert.doesNotThrow(() => localDb.readBackupState());
+});
+
+test('reactivating an archive cannot introduce a duplicate phone hidden by surrounding whitespace', () => {
+  const member = newMember();
+  const consumed = localDb.consume({ memberId: member.id, amount: 100 });
+  localDb.deleteMember(member.id);
+  localDb.createMember({ name: '新会员', phone: member.phone });
+  const altered = JSON.parse(backup());
+  altered.data.members.find(item => item.id === member.id).phone = ' ' + member.phone + ' ';
+  localDb.importBackupData(JSON.stringify(altered));
+  const previous = new Map(localStorage.values);
+  assert.throws(() => localDb.refundLedger(consumed.ledgerId), /手机号/);
+  assert.deepEqual(localStorage.values, previous);
+  assert.doesNotThrow(() => localDb.readBackupState());
+});

@@ -1,0 +1,25 @@
+http://{$PUBLIC_DOMAIN} {
+    handle /.well-known/acme-challenge/* {
+        root * /var/lib/member-acme
+        file_server
+    }
+    handle {
+        redir https://{$PUBLIC_DOMAIN}{uri} 308
+    }
+}
+
+https://{$PUBLIC_DOMAIN} {
+    tls /etc/letsencrypt/live/member-ip/fullchain.pem /etc/letsencrypt/live/member-ip/privkey.pem
+    encode zstd gzip
+    header Strict-Transport-Security "max-age=31536000"
+    header X-Content-Type-Options "nosniff"
+    header Referrer-Policy "no-referrer"
+    handle /api/* {
+        reverse_proxy api:3000
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}
