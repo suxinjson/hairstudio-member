@@ -8,23 +8,23 @@ on:
 jobs:
   build:
     name: 编译安装包
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: 1.0.${{ github.run_number }}
 
     steps:
     - name: 1. 拉取项目源码
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
 
-    - name: 2. 安装 Node.js 20
-      uses: actions/setup-node@v4
+    - name: 2. 安装 Node.js 22
+      uses: actions/setup-node@v5
       with:
-        node-version: 20
+        node-version: 22
         cache: 'npm'
 
     - name: 3. 安装 Java 21 (Capacitor 7 官方要求)
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@v5
       with:
         distribution: 'temurin'
         java-version: '21'
@@ -45,12 +45,17 @@ jobs:
         RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
       run: |
         KEYSTORE_PATH="$RUNNER_TEMP/hairstudio-release.jks"
+        SIGNING_CONFIG_MISSING=0
         for SIGNING_VAR in SIGNING_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD RELEASE_CERT_SHA256; do
           if [ -z "${!SIGNING_VAR}" ]; then
             echo "::error::Missing $SIGNING_VAR; release builds require a fixed signing key and certificate fingerprint"
-            exit 1
+            SIGNING_CONFIG_MISSING=1
           fi
         done
+        if [ "$SIGNING_CONFIG_MISSING" -ne 0 ]; then
+          echo "::error::请在仓库 Settings → Secrets and variables → Actions 配置四个 Secrets 和 RELEASE_CERT_SHA256 Variable；详细步骤见 deploy/github-apk.md"
+          exit 1
+        fi
         EXPECTED_FINGERPRINT=$(printf '%s' "$RELEASE_CERT_SHA256" | tr -d ':[:space:]')
         [[ "$EXPECTED_FINGERPRINT" =~ ^[[:xdigit:]]{64}$ ]] || { echo "::error::Invalid RELEASE_CERT_SHA256"; exit 1; }
         printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
@@ -97,7 +102,7 @@ jobs:
         node tools/update-manifest.js "output_apk/hairstudio-member-v${VERSION_NAME}.apk" output_apk/update-manifest.json
 
     - name: 11. 上传安装包供直接下载
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: hairstudio-member-${{ env.VERSION_NAME }}
         path: output_apk/*

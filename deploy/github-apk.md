@@ -1,0 +1,83 @@
+# GitHub Actions 编译 APK：固定签名配置
+
+`Missing SIGNING_KEYSTORE_BASE64` 表示仓库未向构建任务提供 Android 发布签名文件。这会使 release 构建停止；更新 Actions 版本不能补上密钥。首次正式发布时配置一次，后续构建继续使用同一份签名。
+
+当前工作流固定使用 Ubuntu 24.04、Node.js 22 和 Java 21，采用运行在 Node.js 24 上的 checkout v5、setup-node v5、setup-java v5、upload-artifact v6。Actions 自身的 Node.js 版本与用于编译项目的 Node.js 版本分别配置。
+
+## 1. 确认是否已有签名文件
+
+如果以前使用固定发布签名生成过此应用的 APK，请找到原来的 `.jks` 或 `.keystore`、别名和密码，直接从第 3 步继续。覆盖升级必须使用同一签名；生成新密钥不能恢复原签名。
+
+仅在首次发布、没有固定发布签名时执行第 2 步。项目早期 CI 生成的是临时签名 debug APK；切换到固定 release 签名前，应在旧版导出 JSON 账本备份。
+
+## 2. 首次创建签名文件
+
+建议在可信电脑上生成并离线备份。需要 Java JDK 的 `keytool`；如果电脑没有 JDK，也可在当前 Ubuntu 24.04 服务器终端执行以下命令。密钥放在 `~/member-signing`，与项目目录分开：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y openjdk-21-jdk-headless
+mkdir -p ~/member-signing
+chmod 700 ~/member-signing
+cd ~/member-signing
+umask 077
+
+if [ -e hairstudio-release.jks ]; then
+  printf '签名文件已存在，请使用原文件，不要覆盖。\n'
+else
+  keytool -genkeypair -v -storetype PKCS12 \
+    -keystore hairstudio-release.jks -alias hairstudio-release \
+    -keyalg RSA -keysize 4096 -validity 10000
+fi
+```
+
+交互输入并记住至少 12 位的强密码，按提示填写证书资料并确认。这里的 `.jks` 文件采用 PKCS12 格式，密钥密码和文件密码相同；下面两个密码 Secret 填同一份密码。生成成功后，将文件和密码分别安全保存，至少保留两份独立备份。
+
+## 3. 获取 Base64 和证书指纹
+
+在 Ubuntu 中，进入原签名文件所在目录后执行：
+
+```bash
+base64 -w 0 hairstudio-release.jks
+printf '\n'
+keytool -list -v -keystore hairstudio-release.jks -alias hairstudio-release
+```
+
+第一条命令输出完整的一行 Base64，复制到 `SIGNING_KEYSTORE_BASE64`。它仍包含签名私钥，不要发到聊天、日志或提交 Git。第二条命令要求输入文件密码；找到 `SHA256:` 后的指纹，复制到 `RELEASE_CERT_SHA256`。已有文件的路径和别名按实际值替换。
+
+Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路径按实际值填写：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\你的密钥目录\hairstudio-release.jks")) | Set-Clipboard
+```
+
+## 4. 在 GitHub 仓库配置
+
+打开仓库 **Settings → Secrets and variables → Actions**。先在 **Secrets** 页签中点击 **New repository secret**，逐项创建：
+
+| Secret 名称 | 填入的内容 |
+| --- | --- |
+| `SIGNING_KEYSTORE_BASE64` | 完整的单行 keystore Base64 |
+| `RELEASE_STORE_PASSWORD` | 创建 keystore 时输入的文件密码 |
+| `RELEASE_KEY_ALIAS` | 新建示例使用 `hairstudio-release`；已有签名填原别名 |
+| `RELEASE_KEY_PASSWORD` | 对应别名的密钥密码；本指南新建 PKCS12 时与文件密码相同 |
+
+然后切换到 **Variables** 页签，点击 **New repository variable**：
+
+| Variable 名称 | 填入的内容 |
+| --- | --- |
+| `RELEASE_CERT_SHA256` | `keytool` 输出的 `SHA256:` 指纹，只复制指纹值，允许带冒号 |
+
+名称必须完全一致。当前工作流读取 repository Secrets 与 Variable；它没有配置 GitHub Environment，因此只放在某个 Environment 下的 Secrets 不会自动注入。`RELEASE_CERT_SHA256` 须设置在 Variables，其他四项须设置在 Secrets。
+
+这里配置的是 APK 的 Android 发布签名，与 HTTPS 的 Let’s Encrypt IP 证书分别使用。不要将 `/etc/letsencrypt/live/member-ip/privkey.pem` 或 HTTPS 证书指纹用于 APK 签名。
+
+## 5. 重新构建与下载
+
+将最新工作流和源码推送到仓库后，进入 **Actions → 自动编译安卓安装包(APK) → Run workflow**，选择 `main` 或 `master` 后运行。仅修改 GitHub Secrets 不会自动触发构建。
+
+正常流程为测试、前端构建、签名配置、Gradle release 构建、实际 APK 签名校验以及上传安装包。缺少配置时会列出所有缺项；密码、别名或指纹不匹配时仍会停止发布。
+
+成功后在该次运行页面 **Artifacts** 下载 `hairstudio-member-版本号`，解压获得 APK 和 `update-manifest.json`。安装包覆盖升级要求保持同一包名、签名密钥，并使用更高的 `versionCode`。
+
+仅使用网页版不需要 APK 签名；配置缺失不会影响已部署网站的账号登录和记账。需要向云服务器发布 APK 更新时，再按 [部署维护说明](README.md#发布-apk-更新)填写服务器 `.env` 中同一个 Android 签名指纹并发布安装包。

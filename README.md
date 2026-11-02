@@ -70,6 +70,9 @@ member/
 
 ### 方式 A：云端自动打包（最省电脑、推荐 ⭐⭐⭐⭐⭐）
 首次发布前需要创建一份长期使用的 Android release keystore，并将其配置为 GitHub 仓库 Actions secrets。此后 GitHub Actions 使用同一密钥构建 release APK：
+
+遇到 `Missing SIGNING_KEYSTORE_BASE64` 时，按 [GitHub APK 签名配置指南](deploy/github-apk.md)完成配置。工作流固定使用 Ubuntu 24.04、Node.js 22 和 Java 21，Actions 自身使用 Node.js 24，避免旧 Actions 的运行时弃用提示及 ubuntu-latest 迁移影响。
+
 1. 将当前项目推送至您自己的 GitHub 仓库；
 2. 在安全设备上只创建一次签名密钥，并至少离线保存两份 keystore 备份。密钥一旦丢失，后续 APK 将无法覆盖安装到当前版本；不要把 keystore 或密码提交到 Git；
 3. 在 GitHub 仓库 **Settings → Secrets and variables → Actions** 设置 secrets：`SIGNING_KEYSTORE_BASE64`、`RELEASE_STORE_PASSWORD`、`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD`；再设置变量 `RELEASE_CERT_SHA256` 为该别名证书的 SHA-256 指纹；`SIGNING_KEYSTORE_BASE64` 是 keystore 文件的 Base64 内容；
@@ -111,4 +114,4 @@ keytool -list -v -keystore hairstudio-release.jks -alias hairstudio-release
 
 ### 依赖维护
 
-`package.json` 仅对 Capacitor CLI → rimraf → glob 设置 `^14.0.3` 覆盖，修复 glob/minimatch 的已知资源耗尽漏洞，保持 Capacitor 7 和 Node.js 20 构建兼容。测试用 `csv-parse` 已升级到修复原型替换漏洞的 7.0.3。更新依赖时运行 `npm ci`、`npm test`、`npm run build` 和 `npm audit --registry=https://registry.npmjs.org`；上游采用安全版本后可以移除此覆盖。
+`package.json` 仅对 Capacitor CLI → rimraf → glob 设置 `^14.0.3` 覆盖，修复 glob/minimatch 的已知资源耗尽漏洞，保持 Capacitor 7 和 Node.js 22 构建兼容。测试用 `csv-parse` 已升级到修复原型替换漏洞的 7.0.3。更新依赖时运行 `npm ci`、`npm test`、`npm run build` 和 `npm audit --registry=https://registry.npmjs.org`；上游采用安全版本后可以移除此覆盖。
