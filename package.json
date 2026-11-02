@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@capacitor/android": "^7.0.1",
+    "@capacitor/app": "^7.1.2",
     "@capacitor/cli": "^7.0.1",
     "@capacitor/core": "^7.0.1",
     "@capacitor/filesystem": "^7.1.9",
@@ -21,8 +22,17 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@vitejs/plugin-vue": "^5.2.1",
+    "csv-parse": "^7.0.3",
+    "jsdom": "^26.1.0",
     "lucide-vue-next": "^0.469.0",
     "tailwindcss": "^4.0.0",
     "vite": "^6.0.7"
+  },
+  "overrides": {
+    "@capacitor/cli": {
+      "rimraf": {
+        "glob": "^14.0.3"
+      }
+    }
   }
 }

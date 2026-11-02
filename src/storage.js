@@ -1,4 +1,6 @@
 // 手机本地单机存储引擎 (企业级强一致性 + 离线容灾 + 误操作冲正撤销)
+import { moneyToCent } from './money.js';
+import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones } from './accounting.js';
 
 const STORAGE_KEYS = {
   MEMBERS: 'hairstudio_members_v2',
@@ -31,6 +33,7 @@ export const DEFAULT_RECHARGE_PLANS = [
 ];
 
 function load(key, defaultVal = []) {
+  recoverPendingWrite();
   const raw = localStorage.getItem(key);
   if (raw === null) return defaultVal;
   try {
@@ -102,14 +105,10 @@ function recoverPendingWrite() {
   }
 }
 
-function moneyToCent(value, label) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount) || amount < 0 || Math.round(amount * 100) !== amount * 100) {
-    throw new Error(`${label}必须是非负且最多两位小数的金额`);
-  }
-  const cents = Math.round(amount * 100);
-  if (!Number.isSafeInteger(cents)) throw new Error(`${label}超出可处理范围`);
-  return cents;
+function checkedSum(...values) {
+  const result = values.reduce((sum, value) => sum + value, 0);
+  if (!Number.isSafeInteger(result)) throw new Error('累计金额超出可处理范围');
+  return result;
 }
 
 function removeUntouchedDemoData() {
@@ -176,32 +175,42 @@ function nowISO() {
   return new Date().toISOString();
 }
 
+function csvText(value) {
+  const text = String(value ?? '');
+  // 引号只能转义 CSV 分隔符，文本前的公式符号还需单独处理。
+  return /^[\s\u0000-\u001f]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text) ? "'" + text : text;
+}
+
 export const localDb = {
   init() {
     recoverPendingWrite();
     // 初始化服务项目
-    if (!localStorage.getItem(STORAGE_KEYS.SERVICES)) {
+    if (localStorage.getItem(STORAGE_KEYS.SERVICES) === null) {
       save(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
     }
     // 初始化充值档位
-    if (!localStorage.getItem(STORAGE_KEYS.RECHARGE_PLANS)) {
+    if (localStorage.getItem(STORAGE_KEYS.RECHARGE_PLANS) === null) {
       save(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
     }
 
     // 初始化会员和流水
-    if (!localStorage.getItem(STORAGE_KEYS.MEMBERS)) {
+    if (localStorage.getItem(STORAGE_KEYS.MEMBERS) === null) {
       save(STORAGE_KEYS.MEMBERS, []);
     }
-    if (!localStorage.getItem(STORAGE_KEYS.LEDGERS)) {
+    if (localStorage.getItem(STORAGE_KEYS.LEDGERS) === null) {
       save(STORAGE_KEYS.LEDGERS, []);
     }
 
     removeUntouchedDemoData();
+    const members = load(STORAGE_KEYS.MEMBERS);
+    const restored = restoreArchivedMembers(members, normalizeRefunds(load(STORAGE_KEYS.LEDGERS)));
+    if (restored.length !== members.length) save(STORAGE_KEYS.MEMBERS, restored);
+    this.readBackupState();
   },
 
   // --- 会员管理 ---
   getMembers(query = '') {
-    const members = load(STORAGE_KEYS.MEMBERS);
+    const members = load(STORAGE_KEYS.MEMBERS).filter(member => !member.isArchived);
     if (!query || !query.trim()) {
       return [...members].sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
     }
@@ -217,7 +226,7 @@ export const localDb = {
 
   getMemberById(id) {
     const members = load(STORAGE_KEYS.MEMBERS);
-    return members.find(m => m.id === id) || null;
+    return members.find(m => m.id === id && !m.isArchived) || null;
   },
 
   createMember({ name, phone, initialBalance = 0, notes = '' }) {
@@ -226,7 +235,7 @@ export const localDb = {
 
     const cleanPhone = phone.trim();
     const members = load(STORAGE_KEYS.MEMBERS);
-    if (members.some(m => m.phone === cleanPhone)) {
+    if (members.some(m => !m.isArchived && m.phone === cleanPhone)) {
       throw new Error(`手机号 ${cleanPhone} 已存在`);
     }
 
@@ -269,18 +278,25 @@ export const localDb = {
   updateMember(id, { name, phone, notes }) {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === id);
-    if (!m) throw new Error('会员不存在');
+    if (!m || m.isArchived) throw new Error('会员不存在或已注销');
 
-    if (phone && phone.trim() !== m.phone) {
+    if (phone !== undefined) {
+      if (typeof phone !== 'string' || !phone.trim()) throw new Error('手机号码不能为空');
       const cleanPhone = phone.trim();
-      if (members.some(item => item.id !== id && item.phone === cleanPhone)) {
+      if (members.some(item => !item.isArchived && item.id !== id && item.phone === cleanPhone)) {
         throw new Error(`手机号 ${cleanPhone} 已被其他会员占用`);
       }
       m.phone = cleanPhone;
     }
 
-    if (name && name.trim()) m.name = name.trim();
-    if (notes !== undefined) m.notes = notes.trim();
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) throw new Error('会员姓名不能为空');
+      m.name = name.trim();
+    }
+    if (notes !== undefined) {
+      if (typeof notes !== 'string') throw new Error('会员备注必须是文本');
+      m.notes = notes.trim();
+    }
     m.updated_at = nowISO();
 
     save(STORAGE_KEYS.MEMBERS, members);
@@ -288,14 +304,16 @@ export const localDb = {
   },
 
   deleteMember(id) {
-    let members = load(STORAGE_KEYS.MEMBERS);
+    const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === id);
     if (!m) throw new Error('会员不存在');
     if (m.balance > 0) {
       throw new Error(`该会员卡内尚有 ¥${(m.balance/100).toFixed(2)} 余额，请先扣除或清零后再删除`);
     }
 
-    members = members.filter(item => item.id !== id);
+    m.isArchived = true;
+    m.deleted_at = nowISO();
+    m.updated_at = m.deleted_at;
     save(STORAGE_KEYS.MEMBERS, members);
     return true;
   },
@@ -304,18 +322,18 @@ export const localDb = {
   recharge({ memberId, actualPay, giftAmount = 0, payMethod = '微信支付', remark = '' }) {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === memberId);
-    if (!m) throw new Error('会员不存在');
+    if (!m || m.isArchived) throw new Error('会员不存在或已注销');
 
     const actualCent = moneyToCent(actualPay || 0, '实收充值金额');
     const giftCent = moneyToCent(giftAmount || 0, '额外赠送额度');
-    const totalCredit = actualCent + giftCent;
+    const totalCredit = checkedSum(actualCent, giftCent);
     if (totalCredit <= 0) throw new Error('充值总额必须大于0');
 
     const before = m.balance;
-    const after = before + totalCredit;
+    const after = checkedSum(before, totalCredit);
 
     m.balance = after;
-    m.total_recharge = (m.total_recharge || 0) + totalCredit;
+    m.total_recharge = checkedSum(m.total_recharge || 0, totalCredit);
     m.updated_at = nowISO();
 
     const remarkText = giftCent > 0 
@@ -347,7 +365,7 @@ export const localDb = {
   consume({ memberId, amount, itemsSummary = '洗剪吹理发', remark = '' }) {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === memberId);
-    if (!m) throw new Error('会员不存在');
+    if (!m || m.isArchived) throw new Error('会员不存在或已注销');
 
     const amountCent = moneyToCent(amount, '消费扣款金额');
     if (amountCent <= 0) throw new Error('消费扣款金额必须大于0');
@@ -359,7 +377,7 @@ export const localDb = {
     const after = before - amountCent;
 
     m.balance = after;
-    m.total_consume = (m.total_consume || 0) + amountCent;
+    m.total_consume = checkedSum(m.total_consume || 0, amountCent);
     m.updated_at = nowISO();
 
     const detail = itemsSummary + (remark ? ` (${remark})` : '');
@@ -386,7 +404,7 @@ export const localDb = {
 
   // --- 核心安全：错录撤回 / 红冲退款 (防止店主输错金额) ---
   refundLedger(ledgerId, reason = '店主手工撤销') {
-    const ledgers = load(STORAGE_KEYS.LEDGERS);
+    const ledgers = normalizeRefunds(load(STORAGE_KEYS.LEDGERS));
     const target = ledgers.find(l => l.id === ledgerId);
     if (!target) throw new Error('未找到该流水记录');
     if (target.isRefunded) throw new Error('该笔记录已被撤销过，不可重复撤销');
@@ -394,6 +412,9 @@ export const localDb = {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === target.memberId);
     if (!m) throw new Error('关联会员不存在');
+    if (m.isArchived && members.some(member => !member.isArchived && member.id !== m.id && member.phone === m.phone)) {
+      throw new Error('该手机号已用于其他会员，请先修改该会员手机号，再撤销已注销档案的消费');
+    }
 
     const before = m.balance;
     let after = before;
@@ -403,7 +424,7 @@ export const localDb = {
     if (target.type === 'CONSUME') {
       // 原来是消费扣款（负数），撤销需要补回会员余额
       const restoreAmount = Math.abs(target.changeAmount);
-      after = before + restoreAmount;
+      after = checkedSum(before, restoreAmount);
       m.balance = after;
       m.total_consume = Math.max(0, (m.total_consume || 0) - restoreAmount);
       refundAmount = restoreAmount;
@@ -424,6 +445,10 @@ export const localDb = {
     }
 
     target.isRefunded = true;
+    if (m.isArchived && after > 0) {
+      m.isArchived = false;
+      delete m.deleted_at;
+    }
     m.updated_at = nowISO();
     // 记录冲正流水
     const refundLedgerRecord = {
@@ -432,6 +457,7 @@ export const localDb = {
       memberName: m.name,
       memberPhone: m.phone,
       type: 'REFUND',
+      originalLedgerId: target.id,
       changeAmount: refundAmount,
       balanceBefore: before,
       balanceAfter: after,
@@ -477,7 +503,7 @@ export const localDb = {
   },
 
   getLedgers({ memberId = '', type = '' } = {}) {
-    let ledgers = load(STORAGE_KEYS.LEDGERS);
+    let ledgers = normalizeRefunds(load(STORAGE_KEYS.LEDGERS));
     if (memberId) {
       ledgers = ledgers.filter(l => l.memberId === memberId);
     }
@@ -499,8 +525,7 @@ export const localDb = {
   saveService(item) {
     const services = this.getServices();
     if (!item.name || !item.name.trim()) throw new Error('项目名称必填');
-    const price = parseFloat(item.price);
-    if (isNaN(price) || price < 0) throw new Error('项目价格必须大于等于0');
+    const price = moneyToCent(item.price, '项目价格') / 100;
 
     if (item.id) {
       const idx = services.findIndex(s => s.id === item.id);
@@ -528,7 +553,7 @@ export const localDb = {
   // --- 营业看板汇总 ---
   getDashboard() {
     const members = load(STORAGE_KEYS.MEMBERS);
-    const ledgers = load(STORAGE_KEYS.LEDGERS);
+    const ledgers = normalizeRefunds(load(STORAGE_KEYS.LEDGERS));
 
     const totalBalance = members.reduce((sum, m) => sum + (m.balance || 0), 0);
     const totalRecharge = members.reduce((sum, m) => sum + (m.total_recharge || 0), 0);
@@ -541,7 +566,7 @@ export const localDb = {
     let todayConsumeCount = 0;
 
     for (const l of ledgers) {
-      if (new Date(l.created_at).toDateString() === todayStr) {
+      if (!l.isRefunded && new Date(l.created_at).toDateString() === todayStr) {
         if (l.type === 'RECHARGE') {
           todayRechargeCredit += l.changeAmount;
           todayRechargeCount++;
@@ -553,7 +578,7 @@ export const localDb = {
     }
 
     return {
-      memberCount: members.length,
+      memberCount: members.filter(member => !member.isArchived).length,
       totalBalance,
       historyTotalRecharge: totalRecharge,
       historyTotalConsume: totalConsume,
@@ -577,8 +602,8 @@ export const localDb = {
     if (!parsed || !parsed.data || !Array.isArray(parsed.data.members)) {
       throw new Error('备份文件格式不正确，缺少会员名册数据');
     }
-    const { members } = parsed.data;
-    const ledgers = parsed.data.ledgers ?? [];
+    let { members } = parsed.data;
+    let ledgers = parsed.data.ledgers ?? [];
     const services = parsed.data.services ?? DEFAULT_SERVICES;
     const rechargePlans = parsed.data.rechargePlans ?? DEFAULT_RECHARGE_PLANS;
     if (!Array.isArray(ledgers) || !Array.isArray(services) || !Array.isArray(rechargePlans)) {
@@ -590,27 +615,58 @@ export const localDb = {
           typeof member.name !== 'string' || !member.name.trim() || typeof member.phone !== 'string' ||
           !Number.isSafeInteger(member.balance) || member.balance < 0 ||
           !Number.isSafeInteger(member.total_recharge) || member.total_recharge < 0 ||
-          !Number.isSafeInteger(member.total_consume) || member.total_consume < 0) {
+          !Number.isSafeInteger(member.total_consume) || member.total_consume < 0 ||
+          member.balance !== member.total_recharge - member.total_consume ||
+          (member.isArchived !== undefined && typeof member.isArchived !== 'boolean') ||
+          (member.isArchived && member.balance !== 0) ||
+          (member.notes != null && typeof member.notes !== 'string')) {
         throw new Error('备份文件包含无效或重复的会员数据');
       }
       memberIds.add(member.id);
     }
+    members = members.map(member => ({ ...member, notes: member.notes ?? '' }));
+    const ledgerIds = new Set();
     for (const ledger of ledgers) {
-      if (!ledger || typeof ledger.id !== 'string' || !memberIds.has(ledger.memberId) ||
+      if (!ledger || typeof ledger.id !== 'string' || !ledger.id || ledgerIds.has(ledger.id) ||
+          typeof ledger.memberId !== 'string' || !ledger.memberId ||
           !['RECHARGE', 'CONSUME', 'REFUND'].includes(ledger.type) ||
           !Number.isSafeInteger(ledger.changeAmount) || !Number.isSafeInteger(ledger.balanceBefore) ||
-          !Number.isSafeInteger(ledger.balanceAfter) || typeof ledger.created_at !== 'string' ||
-          Number.isNaN(Date.parse(ledger.created_at))) {
+          !Number.isSafeInteger(ledger.balanceAfter) || ledger.balanceBefore < 0 || ledger.balanceAfter < 0 ||
+          ledger.balanceAfter - ledger.balanceBefore !== ledger.changeAmount ||
+          (ledger.type === 'RECHARGE' && ledger.changeAmount <= 0) ||
+          (ledger.type === 'CONSUME' && ledger.changeAmount >= 0) || ledger.changeAmount === 0 ||
+          (ledger.isRefunded !== undefined && typeof ledger.isRefunded !== 'boolean') ||
+          typeof ledger.created_at !== 'string' ||
+          Number.isNaN(Date.parse(ledger.created_at)) ||
+          ['memberName', 'memberPhone', 'remark'].some(field => ledger[field] != null && typeof ledger[field] !== 'string')) {
         throw new Error('备份文件包含无效的流水数据');
       }
+      ledgerIds.add(ledger.id);
     }
+    // 旧备份可能缺少显示字段；只补齐缺失文本，不覆盖已记录的历史姓名和电话。
+    const membersById = new Map(members.map(member => [member.id, member]));
+    ledgers = ledgers.map(ledger => ({
+      ...ledger,
+      memberName: ledger.memberName ?? membersById.get(ledger.memberId)?.name ?? '已注销会员',
+      memberPhone: ledger.memberPhone ?? membersById.get(ledger.memberId)?.phone ?? '',
+      remark: ledger.remark ?? ''
+    }));
+    ledgers = normalizeRefunds(ledgers);
+    members = restoreArchivedMembers(members, ledgers);
+    validateActiveMemberPhones(members);
+    validateAccountHistory(members, ledgers);
     if (services.some(item => !item || typeof item.id !== 'string' || typeof item.name !== 'string' ||
         !item.name.trim() || !Number.isFinite(item.price) || item.price < 0)) {
       throw new Error('备份文件包含无效的服务项目');
     }
+    for (const service of services) moneyToCent(service.price, '服务项目价格');
     if (rechargePlans.some(plan => !plan || !Number.isFinite(plan.pay) || plan.pay <= 0 ||
         !Number.isFinite(plan.gift) || plan.gift < 0)) {
       throw new Error('备份文件包含无效的充值档位');
+    }
+    for (const plan of rechargePlans) {
+      moneyToCent(plan.pay, '充值档位金额');
+      moneyToCent(plan.gift, '赠送金额');
     }
 
     return {
@@ -621,18 +677,39 @@ export const localDb = {
     };
   },
 
+  readBackupState() {
+    return this.parseAndValidateBackup(JSON.stringify({ data: {
+      members: load(STORAGE_KEYS.MEMBERS), ledgers: load(STORAGE_KEYS.LEDGERS),
+      services: load(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES),
+      rechargePlans: load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS)
+    } })).data;
+  },
+
   // --- 智能对账与备份预览 (对比现有数据与备份数据，防止覆盖新数据) ---
   previewBackup(jsonString) {
     const validated = this.parseAndValidateBackup(jsonString);
     const { members: backupMembers, ledgers: backupLedgers } = validated.data;
 
-    const currentMembers = load(STORAGE_KEYS.MEMBERS, []);
-    const currentLedgers = load(STORAGE_KEYS.LEDGERS, []);
+    let currentDataError = '';
+    let current = { members: [], ledgers: [], services: [], rechargePlans: [] };
+    try {
+      current = this.readBackupState();
+    } catch (error) {
+      currentDataError = error.message;
+    }
+    const { members: currentMembers, ledgers: currentLedgers } = current;
+    let mergeError = currentDataError;
+    if (!mergeError) {
+      try { mergeAccounts(current, validated.data); }
+      catch (error) { mergeError = error.message; }
+    }
 
+    const incomingMemberIds = new Set(backupMembers.map(member => member.id));
     const currentPhoneMap = new Map();
     for (const m of currentMembers) {
-      if (m.phone) currentPhoneMap.set(m.phone.trim(), m);
+      if (!m.isArchived && m.phone && !incomingMemberIds.has(m.id)) currentPhoneMap.set(m.phone.trim(), m);
     }
+    const currentMemberIdSet = new Set(currentMembers.map(member => member.id));
 
     const currentLedgerIdSet = new Set(currentLedgers.map(l => l.id));
 
@@ -640,7 +717,7 @@ export const localDb = {
     let existingMembersCount = 0;
     for (const bm of backupMembers) {
       const cleanPhone = (bm.phone || '').trim();
-      if (currentPhoneMap.has(cleanPhone)) {
+      if (currentMemberIdSet.has(bm.id) || (!bm.isArchived && currentPhoneMap.has(cleanPhone))) {
         existingMembersCount++;
       } else {
         newMembersCount++;
@@ -673,15 +750,17 @@ export const localDb = {
 
     return {
       isValid: true,
+      currentDataError,
+      mergeError,
       exportedAt: validated.exportedAt,
       appName: validated.appName,
       backupStats: {
-        memberCount: backupMembers.length,
+        memberCount: backupMembers.filter(member => !member.isArchived).length,
         ledgerCount: backupLedgers.length,
         totalBalance: backupTotalBalance
       },
       currentStats: {
-        memberCount: currentMembers.length,
+        memberCount: currentMembers.filter(member => !member.isArchived).length,
         ledgerCount: currentLedgers.length,
         totalBalance: currentTotalBalance
       },
@@ -711,10 +790,8 @@ export const localDb = {
   saveLocalSnapshot(tag = '手动备份', reason = '', explicitData = null) {
     try {
       const snapshots = this.getLocalSnapshots();
-      const members = explicitData?.members || load(STORAGE_KEYS.MEMBERS, []);
-      const ledgers = explicitData?.ledgers || load(STORAGE_KEYS.LEDGERS, []);
-      const services = explicitData?.services || load(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
-      const rechargePlans = explicitData?.rechargePlans || load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
+      const data = explicitData ? this.parseAndValidateBackup(JSON.stringify({ data: explicitData })).data : this.readBackupState();
+      const { members, ledgers, services, rechargePlans } = data;
 
       const now = nowISO();
       const datePart = now.split('T')[0];
@@ -729,7 +806,7 @@ export const localDb = {
         fileName,
         tag,
         reason,
-        memberCount: members.length,
+        memberCount: members.filter(member => !member.isArchived).length,
         ledgerCount: ledgers.length,
         totalBalance,
         content: JSON.stringify({
@@ -746,8 +823,8 @@ export const localDb = {
       localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(snapshots));
       return snapshot;
     } catch (e) {
-      console.warn('保存本地快照失败 (不影响正常运行):', e);
-      return null;
+      console.warn('保存本地快照失败:', e);
+      throw new Error('本地快照保存失败，请检查可用空间后重试');
     }
   },
 
@@ -758,25 +835,22 @@ export const localDb = {
       localStorage.setItem(STORAGE_KEYS.SNAPSHOTS, JSON.stringify(snapshots));
       return true;
     } catch {
-      return false;
+      throw new Error('删除本地快照失败，请重试');
     }
   },
 
   // 获取标准导出保存目录说明
   getExportDirectoryInfo() {
     return {
-      downloadPath: '内部存储 / Download (手机下载文件夹)',
-      wechatPath: '微信 > 文件传输助手 (永不过期)',
-      hint: '已导出备份文件默认存放于手机「Download」下载目录中；若使用微信分享，可随时在微信聊天记录中点击发送回手机还原。'
+      downloadPath: '安卓：系统分享面板中选择保存位置；浏览器：查看下载记录',
+      wechatPath: '微信 > 文件传输助手（请另存文件并定期核对）',
+      hint: '导出后通过系统分享发送给微信或文件管理器。请确认接收端文件可打开，并另外保存一份备份。'
     };
   },
 
   // --- 微信/本地一键备份导出 ---
-  exportBackupData() {
-    const members = load(STORAGE_KEYS.MEMBERS);
-    const ledgers = load(STORAGE_KEYS.LEDGERS);
-    const services = load(STORAGE_KEYS.SERVICES);
-    const rechargePlans = load(STORAGE_KEYS.RECHARGE_PLANS);
+  exportBackupData({ archiveSnapshot = true } = {}) {
+    const { members, ledgers, services, rechargePlans } = this.readBackupState();
 
     const now = nowISO();
     const backup = {
@@ -788,97 +862,26 @@ export const localDb = {
     const content = JSON.stringify(backup, null, 2);
 
     // 导出时自动在应用内生成一份备份快照，方便在App界面即时看到检测到的备份文件
-    this.saveLocalSnapshot('导出生成快照', '用户执行一键备份导出', { members, ledgers, services, rechargePlans });
+    if (archiveSnapshot) {
+      this.saveLocalSnapshot('导出生成快照', '用户执行一键备份导出', { members, ledgers, services, rechargePlans });
+    }
 
     return content;
   },
 
   // --- 备份恢复 (支持智能安全合并模式与全量覆盖模式) ---
   importBackupData(jsonString, options = {}) {
-    const mode = options.mode || 'replace'; // 'replace' | 'merge'
+    const mode = options.mode || 'replace';
+    if (!['replace', 'merge'].includes(mode)) throw new Error('不支持的恢复模式');
     const validated = this.parseAndValidateBackup(jsonString);
-    const { members: backupMembers, ledgers: backupLedgers, services: backupServices, rechargePlans: backupPlans } = validated.data;
-
-    // 核心安全保障：在恢复任何数据前，自动保存当前数据的安全回滚快照
-    try {
-      const currentMembers = load(STORAGE_KEYS.MEMBERS, []);
-      const currentLedgers = load(STORAGE_KEYS.LEDGERS, []);
-      if (currentMembers.length > 0 || currentLedgers.length > 0) {
-        localStorage.setItem(STORAGE_KEYS.SAFETY_SNAPSHOT, JSON.stringify({
-          timestamp: nowISO(),
-          members: currentMembers,
-          ledgers: currentLedgers
-        }));
-      }
-    } catch (e) {
-      console.warn('记录恢复前安全回滚快照失败:', e);
-    }
-
+    const { services: backupServices, rechargePlans: backupPlans } = validated.data;
+    let next = validated.data;
+    let summary = { newMembersAdded: 0, newLedgersAdded: 0, updatedMembers: 0 };
     if (mode === 'merge') {
-      // ==================== 智能增量安全合并模式 ====================
-      // 1. 绝对不覆盖现有会员最新的卡内余额与最新消费！
-      // 2. 自动去重，不重复添加已存在的流水单号！
-      // 3. 补充备份中存在但当前手机中缺失的会员和历史对账流水！
-      const currentMembers = load(STORAGE_KEYS.MEMBERS, []);
-      const currentLedgers = load(STORAGE_KEYS.LEDGERS, []);
-      const currentServices = load(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES);
-      const currentPlans = load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
-
-      const phoneToCurrentMember = new Map();
-      const idToCurrentMember = new Map();
-      for (const m of currentMembers) {
-        if (m.phone) phoneToCurrentMember.set(m.phone.trim(), m);
-        idToCurrentMember.set(m.id, m);
-      }
-
-      const currentLedgerIds = new Set(currentLedgers.map(l => l.id));
-      const memberIdMap = new Map(); // backupMemberId -> finalMemberId
-
-      let newMembersAdded = 0;
-      for (const bm of backupMembers) {
-        const cleanPhone = (bm.phone || '').trim();
-        if (phoneToCurrentMember.has(cleanPhone)) {
-          // 当前已存在该会员：保留当前最新余额、累计消费等，仅补全缺失备注
-          const cm = phoneToCurrentMember.get(cleanPhone);
-          memberIdMap.set(bm.id, cm.id);
-          if (!cm.notes && bm.notes) {
-            cm.notes = bm.notes;
-          }
-          // 保留最早开卡时间
-          if (Date.parse(bm.created_at) < Date.parse(cm.created_at)) {
-            cm.created_at = bm.created_at;
-          }
-        } else {
-          // 当前不存在该会员：作为新会员合并纳入
-          let finalId = bm.id;
-          if (idToCurrentMember.has(finalId)) {
-            finalId = generateId('M');
-          }
-          const restoredMember = { ...bm, id: finalId };
-          currentMembers.push(restoredMember);
-          phoneToCurrentMember.set(cleanPhone, restoredMember);
-          idToCurrentMember.set(finalId, restoredMember);
-          memberIdMap.set(bm.id, finalId);
-          newMembersAdded++;
-        }
-      }
-
-      // 智能合并流水 (按流水ID去重，无重复记录)
-      let newLedgersAdded = 0;
-      for (const bl of backupLedgers) {
-        if (!currentLedgerIds.has(bl.id)) {
-          const finalMemberId = memberIdMap.get(bl.memberId) || bl.memberId;
-          const mergedLedger = { ...bl, memberId: finalMemberId };
-          currentLedgers.push(mergedLedger);
-          currentLedgerIds.add(bl.id);
-          newLedgersAdded++;
-        }
-      }
-
-      // 按记录时间降序重排流水
-      currentLedgers.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
-
-      // 合并服务定价项 (按服务名称去重)
+      const current = this.readBackupState();
+      summary = mergeAccounts(current, validated.data);
+      const currentServices = current.services;
+      const currentPlans = current.rechargePlans;
       const serviceNames = new Set(currentServices.map(s => s.name));
       for (const bs of backupServices) {
         if (!serviceNames.has(bs.name)) {
@@ -887,7 +890,6 @@ export const localDb = {
         }
       }
 
-      // 合并充值档位 (按充值金额与赠送额度去重)
       const planKeys = new Set(currentPlans.map(p => `${p.pay}_${p.gift}`));
       for (const bp of backupPlans) {
         const key = `${bp.pay}_${bp.gift}`;
@@ -897,43 +899,34 @@ export const localDb = {
         }
       }
 
-      saveBatch({
-        [STORAGE_KEYS.MEMBERS]: currentMembers,
-        [STORAGE_KEYS.LEDGERS]: currentLedgers,
-        [STORAGE_KEYS.SERVICES]: currentServices,
-        [STORAGE_KEYS.RECHARGE_PLANS]: currentPlans
-      });
-
-      this.saveLocalSnapshot('增量合并后备份', `安全合并恢复 (新增会员 ${newMembersAdded} 人, 新增流水 ${newLedgersAdded} 条)`);
-
-      return {
-        success: true,
-        mode: 'merge',
-        count: currentMembers.length,
-        newMembersAdded,
-        newLedgersAdded
-      };
-    } else {
-      // ==================== 全量完全覆盖模式 ====================
-      saveBatch({
-        [STORAGE_KEYS.MEMBERS]: backupMembers,
-        [STORAGE_KEYS.LEDGERS]: backupLedgers,
-        [STORAGE_KEYS.SERVICES]: backupServices,
-        [STORAGE_KEYS.RECHARGE_PLANS]: backupPlans
-      });
-
-      this.saveLocalSnapshot('完全覆盖后备份', '全量恢复备份覆盖');
-
-      return {
-        success: true,
-        mode: 'replace',
-        count: backupMembers.length
-      };
+      next = { members: summary.members, ledgers: summary.ledgers, services: currentServices, rechargePlans: currentPlans };
     }
+
+    // 保留原始文本，损坏的 JSON 也可以在全量恢复后取回。保存失败则禁止覆盖。
+    recoverPendingWrite();
+    const previousStorage = Object.fromEntries([
+      STORAGE_KEYS.MEMBERS, STORAGE_KEYS.LEDGERS, STORAGE_KEYS.SERVICES, STORAGE_KEYS.RECHARGE_PLANS
+    ].map(key => [key, localStorage.getItem(key)]));
+    save(STORAGE_KEYS.SAFETY_SNAPSHOT, { timestamp: nowISO(), storage: previousStorage });
+    saveBatch({
+      [STORAGE_KEYS.MEMBERS]: next.members, [STORAGE_KEYS.LEDGERS]: next.ledgers,
+      [STORAGE_KEYS.SERVICES]: next.services, [STORAGE_KEYS.RECHARGE_PLANS]: next.rechargePlans
+    });
+    let snapshotSaved = true;
+    try {
+      this.saveLocalSnapshot(mode === 'merge' ? '增量合并后备份' : '完全覆盖后备份', '恢复完成');
+    } catch {
+      snapshotSaved = false;
+    }
+    return {
+      success: true, mode, count: next.members.filter(member => !member.isArchived).length,
+      newMembersAdded: summary.newMembersAdded, newLedgersAdded: summary.newLedgersAdded,
+      updatedMembers: summary.updatedMembers, snapshotSaved
+    };
   },
 
   exportCSV() {
-    const ledgers = load(STORAGE_KEYS.LEDGERS);
+    const ledgers = normalizeRefunds(load(STORAGE_KEYS.LEDGERS));
     let csv = '\uFEFF流水单号,会员姓名,联系电话,流水类型,变动额度(元),变动后余额(元),明细备注,记录时间\n';
     for (const l of ledgers) {
       let typeText = '消费扣款';
@@ -942,7 +935,9 @@ export const localDb = {
       const changeYuan = (l.changeAmount / 100).toFixed(2);
       const afterYuan = (l.balanceAfter / 100).toFixed(2);
       const time = new Date(l.created_at).toLocaleString();
-      csv += `"${l.id}","${l.memberName}","${l.memberPhone}","${typeText}","${changeYuan}","${afterYuan}","${l.remark}","${time}"\n`;
+      const fields = [csvText(l.id), csvText(l.memberName), csvText(l.memberPhone), typeText,
+        changeYuan, afterYuan, csvText(l.remark), time];
+      csv += fields.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',') + '\n';
     }
     return csv;
   }

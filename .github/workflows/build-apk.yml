@@ -42,25 +42,23 @@ jobs:
         RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
         RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
         RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
       run: |
         KEYSTORE_PATH="$RUNNER_TEMP/hairstudio-release.jks"
-        if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
-          echo "检测到自定义发布签名秘钥，正在配置..."
-          printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
-          echo "RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
-          echo "RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
-          echo "HAS_CUSTOM_SIGNING=true" >> "$GITHUB_ENV"
-        else
-          echo "未配置仓库秘钥，正在自动生成专用安全签名..."
-          keytool -genkeypair -v -keystore "$KEYSTORE_PATH" -alias hairstudio -keyalg RSA -keysize 2048 -validity 10000 -storepass hairstudio123 -keypass hairstudio123 -dname "CN=MengfeiHairStudio, OU=App, O=HairStudio, L=Beijing, S=Beijing, C=CN"
-          echo "RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
-          echo "RELEASE_STORE_PASSWORD=hairstudio123" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_ALIAS=hairstudio" >> "$GITHUB_ENV"
-          echo "RELEASE_KEY_PASSWORD=hairstudio123" >> "$GITHUB_ENV"
-          echo "HAS_CUSTOM_SIGNING=false" >> "$GITHUB_ENV"
-        fi
+        for SIGNING_VAR in SIGNING_KEYSTORE_BASE64 RELEASE_STORE_PASSWORD RELEASE_KEY_ALIAS RELEASE_KEY_PASSWORD RELEASE_CERT_SHA256; do
+          if [ -z "${!SIGNING_VAR}" ]; then
+            echo "::error::Missing $SIGNING_VAR; release builds require a fixed signing key and certificate fingerprint"
+            exit 1
+          fi
+        done
+        EXPECTED_FINGERPRINT=$(printf '%s' "$RELEASE_CERT_SHA256" | tr -d ':[:space:]')
+        [[ "$EXPECTED_FINGERPRINT" =~ ^[[:xdigit:]]{64}$ ]] || { echo "::error::Invalid RELEASE_CERT_SHA256"; exit 1; }
+        printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+        chmod 600 "$KEYSTORE_PATH"
+        echo "RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+        echo "RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
+        echo "RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
+        echo "RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
 
     - name: 7. 接受 Android SDK 协议与修复执行权限
       run: |
@@ -82,16 +80,12 @@ jobs:
         test -x "$APKSIGNER"
         SIGNER_INFO=$("$APKSIGNER" verify --verbose --print-certs "$APK")
         printf '%s\n' "$SIGNER_INFO"
-        if [ "$HAS_CUSTOM_SIGNING" = "true" ] && [ -n "$RELEASE_CERT_SHA256" ]; then
-          ACTUAL_FINGERPRINT=$(printf '%s\n' "$SIGNER_INFO" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
-          EXPECTED_FINGERPRINT=$(printf '%s\n' "$RELEASE_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
-          test -n "$ACTUAL_FINGERPRINT" && test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT" || {
-            echo "::error::APK signing certificate does not match RELEASE_CERT_SHA256; refusing to publish an incompatible update"
-            exit 1
-          }
-        else
-          echo "签名校验通过，成功生成已签名发布版 APK"
-        fi
+        ACTUAL_FINGERPRINT=$(printf '%s\n' "$SIGNER_INFO" | awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' | tr -d ':' | tr '[:upper:]' '[:lower:]')
+        EXPECTED_FINGERPRINT=$(printf '%s\n' "$RELEASE_CERT_SHA256" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')
+        test -n "$ACTUAL_FINGERPRINT" && test "$ACTUAL_FINGERPRINT" = "$EXPECTED_FINGERPRINT" || {
+          echo "::error::APK signing certificate does not match RELEASE_CERT_SHA256; refusing to publish an incompatible update"
+          exit 1
+        }
 
     - name: 10. 收集生成好的 APK
       run: |

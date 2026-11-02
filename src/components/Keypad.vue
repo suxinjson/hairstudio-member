@@ -89,6 +89,7 @@
 
 <script setup>
 import { computed } from 'vue';
+import { isValidMoney } from '../money.js';
 
 const props = defineProps({
   modelValue: {
@@ -112,8 +113,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'confirm']);
 
 const isValidAmount = computed(() => {
-  const n = parseFloat(props.modelValue);
-  return !isNaN(n) && n > 0;
+  return isValidMoney(props.modelValue) && Number(props.modelValue) > 0;
 });
 
 const confirmColorClass = computed(() => {
@@ -131,6 +131,7 @@ function append(char) {
   if (val.includes('.')) {
     const parts = val.split('.');
     if (parts[1].length >= 2 && char !== '.') return;
+    if (char !== '.') char = char.slice(0, 2 - parts[1].length);
   }
   if (val.length > 8) return;
   

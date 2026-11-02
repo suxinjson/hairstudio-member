@@ -67,25 +67,25 @@ test('initialization removes untouched legacy demo records but preserves used de
     total_recharge: 20000, total_consume: 3800,
     notes: '每个月固定剪寸头', created_at: timestamp, updated_at: timestamp
   };
-  localStorage.setItem(membersKey, JSON.stringify([first, untouched]));
+  localStorage.setItem(membersKey, JSON.stringify([{ ...first, balance: 37500, total_consume: 12500 }, untouched]));
   localStorage.setItem(ledgersKey, JSON.stringify([
     {
       id: 'SEED-1', memberId: first.id, type: 'RECHARGE', changeAmount: 50000,
-      balanceBefore: 0, balanceAfter: 50000, remark: '开卡充值 实充¥400 送¥100 [微信支付]'
+      balanceBefore: 0, balanceAfter: 50000, remark: '开卡充值 实充¥400 送¥100 [微信支付]', created_at: timestamp
     },
     {
       id: 'SEED-2', memberId: first.id, type: 'CONSUME', changeAmount: -12000,
-      balanceBefore: 50000, balanceAfter: 38000, remark: '时尚冷烫/卷发 (做大卷造型)'
+      balanceBefore: 50000, balanceAfter: 38000, remark: '时尚冷烫/卷发 (做大卷造型)', created_at: timestamp
     },
     {
       id: 'REAL-1', memberId: first.id, type: 'CONSUME', changeAmount: -500,
-      balanceBefore: 38000, balanceAfter: 37500, remark: '真实消费'
+      balanceBefore: 38000, balanceAfter: 37500, remark: '真实消费', created_at: usedTimestamp
     }
-  ]));
+  ].reverse()));
 
   localDb.init();
   assert.deepEqual(localDb.getMembers().map(member => member.id), [first.id]);
-  assert.deepEqual(localDb.getLedgers().map(ledger => ledger.id), ['SEED-1', 'SEED-2', 'REAL-1']);
+  assert.deepEqual(localDb.getLedgers().map(ledger => ledger.id), ['REAL-1', 'SEED-2', 'SEED-1']);
 
   resetStorage();
   const untouchedFirst = { ...first, updated_at: timestamp };

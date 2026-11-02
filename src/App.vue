@@ -22,6 +22,7 @@
           <button 
             v-if="activeTab !== 'settings'"
             @click="openNewMemberModal"
+            :disabled="Boolean(storageError)"
             class="h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm px-4 rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center space-x-1.5"
           >
             <span class="text-base font-black">+</span>
@@ -52,6 +53,11 @@
 
     <!-- 主视口内容 -->
     <main class="app-content flex-1 p-3.5 space-y-4">
+      <div v-if="storageError" class="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-900">
+        <p class="font-black">当前账本无法读取，请从有效备份恢复。</p>
+        <p class="text-sm mt-2">{{ storageError }}。恢复前会保留当前原始数据。</p>
+        <button @click="activeTab = 'settings'" class="mt-3 font-black underline">打开备份恢复</button>
+      </div>
       
       <!-- ==================== TAB 1: 收银台 / 首页 ==================== -->
       <div v-if="activeTab === 'home'" class="space-y-4">
@@ -347,6 +353,7 @@
             <!-- 导出备份发到微信 -->
             <button 
               @click="handleExportBackup"
+              :disabled="isExporting || Boolean(storageError)"
               class="w-full h-18 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white px-4.5 rounded-2xl font-black text-sm flex items-center justify-between shadow-md shadow-emerald-600/20 btn-press"
             >
               <div class="flex items-center space-x-3">
@@ -362,6 +369,7 @@
             <!-- 导出 Excel 表格 -->
             <button 
               @click="handleExportCSV"
+              :disabled="isExporting || Boolean(storageError)"
               class="w-full h-18 bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800 text-white px-4.5 rounded-2xl font-black text-sm flex items-center justify-between shadow-md shadow-blue-500/20 btn-press"
             >
               <div class="flex items-center space-x-3">
@@ -405,9 +413,9 @@
             <div class="p-3 bg-slate-50 rounded-2xl border border-slate-200/90 flex items-start space-x-2.5">
               <span class="text-base">📱</span>
               <div class="flex-1">
-                <div class="font-bold text-slate-800">手机本地直接下载目录：</div>
-                <div class="font-mono text-indigo-700 font-bold select-all mt-0.5">内部存储 / Download (下载文件夹)</div>
-                <div class="text-[11px] text-slate-500 mt-0.5">打开手机自带「文件管理」App，点击「下载」或「Download」文件夹即可直接查看。</div>
+                <div class="font-bold text-slate-800">安卓文件保存方式：</div>
+                <div class="text-indigo-700 font-bold mt-0.5">系统分享面板 → 文件管理器或微信</div>
+                <div class="text-[11px] text-slate-500 mt-0.5">导出后选择接收应用，并确认文件可打开。浏览器版请查看浏览器下载记录。</div>
               </div>
             </div>
 
@@ -416,7 +424,7 @@
               <div class="flex-1">
                 <div class="font-bold text-emerald-950">微信文件传输助手保存：</div>
                 <div class="font-mono text-emerald-800 font-bold select-all mt-0.5">微信聊天记录 > 文件传输助手</div>
-                <div class="text-[11px] text-emerald-800 mt-0.5">备份发给微信后聊天记录永不过期，换新手机时在微信点开该文件即可一键导入恢复。</div>
+                <div class="text-[11px] text-emerald-800 mt-0.5">请将接收到的文件另存，并定期确认可打开。换新手机时，选择保存的 JSON 文件恢复。</div>
               </div>
             </div>
           </div>
@@ -466,6 +474,7 @@
                 </button>
                 <button 
                   @click="handleShareSnapshot(s)" 
+                  :disabled="isExporting"
                   class="h-9 px-3.5 bg-slate-200 hover:bg-slate-300 active:bg-slate-400 text-slate-800 font-bold rounded-xl btn-press"
                 >
                   📤 分享
@@ -766,7 +775,7 @@
       class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4 animate-fade-in"
       @click.self="backupRestoreRequest = null"
     >
-      <section class="feedback-dialog w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl text-left" role="alertdialog" aria-modal="true" aria-labelledby="restore-confirm-title">
+      <section class="feedback-dialog modal-dialog w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl text-left" role="alertdialog" aria-modal="true" aria-labelledby="restore-confirm-title">
         <div class="flex items-center space-x-3 pb-3 border-b border-slate-100">
           <span class="text-3xl">🛡️</span>
           <div>
@@ -795,7 +804,8 @@
           <!-- 当前手机系统数据对比 -->
           <div class="bg-indigo-50/60 p-3 rounded-2xl border border-indigo-100 flex justify-between items-center text-xs">
             <span class="text-indigo-950 font-bold">当前手机现有账本：</span>
-            <span class="font-black text-indigo-900">{{ backupRestoreRequest.preview?.currentStats?.memberCount || 0 }} 位会员 · {{ backupRestoreRequest.preview?.currentStats?.ledgerCount || 0 }} 笔流水</span>
+            <span v-if="backupRestoreRequest.preview.currentDataError" class="font-black text-rose-700">读取异常，无法统计</span>
+            <span v-else class="font-black text-indigo-900">{{ backupRestoreRequest.preview?.currentStats?.memberCount || 0 }} 位会员 · {{ backupRestoreRequest.preview?.currentStats?.ledgerCount || 0 }} 笔流水</span>
           </div>
 
           <!-- 智能差异提示 -->
@@ -805,7 +815,7 @@
               <span>检测到当前手机有更新的开单记账！</span>
             </div>
             <p class="font-normal text-[11px] leading-relaxed text-amber-800">
-              备份生成后，手机上又有新增开单或充值。<strong>强烈建议使用【智能增量合并】</strong>，系统将保留今日最新扣款与最新余额，绝不回滚覆盖！
+              备份生成后，手机上又有新增开单或充值。使用增量合并时会核对账本延续关系，并保留已确认的更新交易。
             </p>
           </div>
 
@@ -826,6 +836,11 @@
           </div>
         </div>
 
+        <div v-if="backupRestoreRequest.preview.mergeError" class="mt-3 p-3 rounded-2xl border border-rose-300 bg-rose-50 text-sm text-rose-900">
+          <p class="font-black">此备份无法自动合并</p>
+          <p class="mt-1">{{ backupRestoreRequest.preview.mergeError }}。请核对后选择完整账本进行全量恢复，当前原始数据会先保留。</p>
+        </div>
+
         <!-- 恢复模式单选切换 -->
         <div class="mt-4 space-y-2">
           <div class="text-xs font-black text-slate-700">选择恢复方式：</div>
@@ -834,14 +849,14 @@
             class="flex items-start p-3 rounded-2xl border-2 transition cursor-pointer"
             :class="restoreMode === 'merge' ? 'border-emerald-500 bg-emerald-50/70 shadow-xs' : 'border-slate-200 bg-white'"
           >
-            <input type="radio" value="merge" v-model="restoreMode" class="mt-1 mr-2.5 text-emerald-600" />
+            <input type="radio" value="merge" v-model="restoreMode" :disabled="Boolean(backupRestoreRequest.preview.mergeError)" class="mt-1 mr-2.5 text-emerald-600" />
             <div>
               <div class="font-black text-sm text-slate-900 flex items-center space-x-1.5">
                 <span>🛡️ 智能增量合并</span>
                 <span class="text-[10px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded">强烈推荐</span>
               </div>
               <div class="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                保留当前最新卡内余额与今天新开单，仅补全备份中缺失的会员和历史记录，自动去重，绝不覆盖新账目。
+                按会员与流水核对账本延续，同步更新余额及撤销状态。较旧备份保留当前交易；两边都有独立交易时停止合并。
               </div>
             </div>
           </label>
@@ -852,7 +867,7 @@
           >
             <input type="radio" value="replace" v-model="restoreMode" class="mt-1 mr-2.5 text-rose-600" />
             <div>
-              <div class="font-black text-sm text-slate-900">⚠️ 全量完全覆盖 (仅限换新机)</div>
+              <div class="font-black text-sm text-slate-900">⚠️ 全量恢复 (换机或修复损坏账本)</div>
               <div class="text-xs text-slate-500 mt-0.5 leading-relaxed">
                 完全用备份文件替换当前手机的所有数据。若当前手机有比备份更新的消费，将被旧数据覆盖！
               </div>
@@ -863,14 +878,14 @@
         <div class="mt-5 grid grid-cols-2 gap-3">
           <button 
             @click="backupRestoreRequest = null" 
-            :disabled="isRestoringBackup" 
+            :disabled="isRestoringBackup"
             class="h-13 rounded-2xl border-2 border-slate-300 text-sm font-bold text-slate-700 btn-press"
           >
             取消
           </button>
           <button 
             @click="confirmBackupRestore" 
-            :disabled="isRestoringBackup" 
+            :disabled="isRestoringBackup || (restoreMode === 'merge' && Boolean(backupRestoreRequest.preview.mergeError))"
             class="h-13 rounded-2xl text-sm font-black text-white btn-press disabled:opacity-60 shadow-md shadow-emerald-600/20"
             :class="restoreMode === 'merge' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'"
           >
@@ -1085,7 +1100,7 @@
           </button>
           <button 
             @click="submitMemberForm"
-            :disabled="isSavingMember || !memberForm.name || !memberForm.phone"
+            :disabled="isSavingMember || !memberForm.name.trim() || !memberForm.phone.trim()"
             class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20 btn-press"
           >
             保存档案
@@ -1228,8 +1243,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { localDb } from './storage.js';
+import { isValidMoney, moneyToCent } from './money.js';
+import { exportFile, isExportCancelled } from './file-export.js';
 import Keypad from './components/Keypad.vue';
 
 // 页面标签：'home' | 'members' | 'ledgers' | 'settings'
@@ -1245,6 +1264,8 @@ const searchQuery = ref('');
 const ledgerSearchQuery = ref('');
 const toastMessage = ref('');
 const feedbackModal = ref(null);
+const storageError = ref('');
+const isExporting = ref(false);
 
 // 选中的会员卡片
 const selectedMember = ref(null);
@@ -1321,8 +1342,9 @@ const filteredLedgersList = computed(() => {
 });
 
 // 日期文本展示
+const currentDate = ref(new Date());
 const currentDateText = computed(() => {
-  const d = new Date();
+  const d = currentDate.value;
   const m = d.getMonth() + 1;
   const day = d.getDate();
   const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -1335,8 +1357,9 @@ function formatCent(cent) {
 
 // 格式化手机号：138 1234 5678 (易读)
 function formatPhoneSpaced(phone) {
-  if (!phone || phone.length < 11) return phone || '';
-  return `${phone.slice(0, 3)} ${phone.slice(3, 7)} ${phone.slice(7)}`;
+  const text = String(phone ?? '');
+  if (text.length < 11) return text;
+  return `${text.slice(0, 3)} ${text.slice(3, 7)} ${text.slice(7)}`;
 }
 
 function formatTime(isoStr) {
@@ -1381,13 +1404,29 @@ function showFeedback(message, type = 'error', details = {}) {
 
 // 刷新全量数据
 function refreshAll() {
-  localDb.init();
-  membersList.value = localDb.getMembers(searchQuery.value);
-  dashboard.value = localDb.getDashboard();
-  hairServices.value = localDb.getServices();
-  rechargePlans.value = localDb.getRechargePlans();
-  localSnapshots.value = localDb.getLocalSnapshots();
-  refreshLedgers();
+  currentDate.value = new Date();
+  try {
+    localDb.init();
+    const nextMembers = localDb.getMembers(searchQuery.value);
+    const nextDashboard = localDb.getDashboard();
+    const nextServices = localDb.getServices();
+    const nextPlans = localDb.getRechargePlans();
+    const nextLedgers = localDb.getLedgers({ type: ledgerFilterType.value });
+    membersList.value = nextMembers;
+    dashboard.value = nextDashboard;
+    hairServices.value = nextServices;
+    rechargePlans.value = nextPlans;
+    ledgersList.value = nextLedgers;
+    localSnapshots.value = localDb.getLocalSnapshots();
+    storageError.value = '';
+  } catch (error) {
+    storageError.value = error.message;
+    activeTab.value = 'settings';
+    membersList.value = [];
+    ledgersList.value = [];
+    selectedMember.value = null;
+    localSnapshots.value = localDb.getLocalSnapshots();
+  }
 }
 
 function refreshLedgers() {
@@ -1437,10 +1476,8 @@ function applyRechargePlan(plan) {
 }
 
 const canSubmitRecharge = computed(() => {
-  const actualPay = Number(rechargeForm.value.actualPay);
-  const giftAmount = Number(rechargeForm.value.giftAmount);
-  const validMoney = value => Number.isFinite(value) && value >= 0 && Math.round(value * 100) === value * 100;
-  return validMoney(actualPay) && actualPay > 0 && validMoney(giftAmount);
+  return isValidMoney(rechargeForm.value.actualPay) && Number(rechargeForm.value.actualPay) > 0 &&
+    isValidMoney(rechargeForm.value.giftAmount === '' ? 0 : rechargeForm.value.giftAmount);
 });
 
 function requestRechargeConfirmation() {
@@ -1514,8 +1551,8 @@ function setConsumePreset(item) {
 
 const isConsumeOverBalance = computed(() => {
   if (!consumingMember.value || !consumeAmountStr.value) return false;
-  const cent = Math.round(parseFloat(consumeAmountStr.value) * 100);
-  return cent > consumingMember.value.balance;
+  if (!isValidMoney(consumeAmountStr.value)) return false;
+  return moneyToCent(consumeAmountStr.value) > consumingMember.value.balance;
 });
 
 function submitConsume() {
@@ -1619,7 +1656,7 @@ function submitMemberForm() {
 }
 
 function handleDeleteMember(m) {
-  if (!confirm(`确定要彻底删除会员「${m.name}」吗？`)) return;
+  if (!confirm(`确定要注销会员「${m.name}」吗？历史档案和流水将保留用于对账。`)) return;
   try {
     localDb.deleteMember(m.id);
     selectedMember.value = null;
@@ -1673,60 +1710,50 @@ function copyReceiptText(text) {
 
 // 微信/手机一键备份导出
 async function handleExportBackup() {
+  if (isExporting.value) return;
+  isExporting.value = true;
   try {
-    const content = localDb.exportBackupData();
-    refreshAll(); // 立即刷新检测到的本地快照列表
-    const dateStr = new Date().toISOString().split('T')[0];
-    const fileName = `梦飞空间会员账本备份_${dateStr}.json`;
-    const blob = new Blob([content], { type: 'application/json' });
-    const file = new File([blob], fileName, { type: 'application/json' });
-
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({
-        title: '梦飞空间会员账本备份',
-        text: `备份时间: ${new Date().toLocaleString()}`,
-        files: [file]
-      });
-      showToast('已唤起分享！文件发给微信文件传输助手永久保存');
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      a.click();
-      URL.revokeObjectURL(url);
-      showFeedback(
-        `备份文件已保存至手机「内部存储 / Download」下载目录（文件名：${fileName}），同时已在App内留存安全快照。`,
-        'success',
-        { title: '备份导出成功' }
-      );
+    const content = localDb.exportBackupData({ archiveSnapshot: false });
+    let snapshotWarning = '';
+    try {
+      localDb.saveLocalSnapshot('导出生成快照', '用户执行一键备份导出');
+    } catch (error) {
+      snapshotWarning = `本地快照未保存：${error.message}。`;
     }
+    refreshAll();
+    const dateStr = new Date().toISOString().split('T')[0];
+    const result = await exportFile({ content, fileName: `梦飞空间会员账本备份_${dateStr}.json`,
+      mimeType: 'application/json', title: '梦飞空间会员账本备份' });
+    showExportResult(result, snapshotWarning);
   } catch (err) {
-    if (err.name !== 'AbortError') {
+    if (!isExportCancelled(err)) {
       showFeedback(err.message, 'error', { title: '备份导出失败' });
     }
+  } finally {
+    isExporting.value = false;
   }
 }
 
-function handleExportCSV() {
+function showExportResult(result, extra = '') {
+  const message = result.kind === 'shared'
+    ? `已完成系统分享（${result.fileName}），请确认接收端文件可打开。`
+    : `已发起文件下载（${result.fileName}），请在浏览器下载记录中确认保存结果。`;
+  showFeedback(`${message}${extra}`, 'success', { title: '文件导出' });
+}
+
+async function handleExportCSV() {
+  if (isExporting.value) return;
+  isExporting.value = true;
   try {
     const csv = localDb.exportCSV();
     const dateStr = new Date().toISOString().split('T')[0];
-    const fileName = `梦飞空间对账明细_${dateStr}.csv`;
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-    showFeedback(
-      `Excel报表已下载至手机「内部存储 / Download」目录，可用 WPS 直接打开对账。`,
-      'success',
-      { title: '对账报表已导出' }
-    );
+    const result = await exportFile({ content: csv, fileName: `梦飞空间对账明细_${dateStr}.csv`,
+      mimeType: 'text/csv;charset=utf-8', title: '梦飞空间对账明细' });
+    showExportResult(result);
   } catch (err) {
-    showFeedback(err.message, 'error', { title: '报表导出失败' });
+    if (!isExportCancelled(err)) showFeedback(err.message, 'error', { title: '报表导出失败' });
+  } finally {
+    isExporting.value = false;
   }
 }
 
@@ -1744,36 +1771,29 @@ function handleCreateManualSnapshot() {
 // 删除快照
 function handleDeleteSnapshot(id) {
   if (!confirm('确定要删除此份本地快照记录吗？')) return;
-  localDb.deleteLocalSnapshot(id);
-  refreshAll();
-  showToast('已删除此份本地快照');
+  try {
+    localDb.deleteLocalSnapshot(id);
+    refreshAll();
+    showToast('已删除此份本地快照');
+  } catch (error) {
+    showFeedback(error.message, 'error', { title: '删除快照失败' });
+  }
 }
 
 // 分享/导出快照
 async function handleShareSnapshot(s) {
+  if (isExporting.value) return;
+  isExporting.value = true;
   try {
-    const blob = new Blob([s.content], { type: 'application/json' });
-    const file = new File([blob], s.fileName, { type: 'application/json' });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({
-        title: '梦飞空间会员账本备份',
-        text: `备份时间: ${formatTime(s.createdAt)}`,
-        files: [file]
-      });
-      showToast('已唤起分享！');
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = s.fileName;
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('备份文件已下载保存');
-    }
+    const result = await exportFile({ content: s.content, fileName: s.fileName,
+      mimeType: 'application/json', title: '梦飞空间会员账本备份' });
+    showExportResult(result);
   } catch (err) {
-    if (err.name !== 'AbortError') {
+    if (!isExportCancelled(err)) {
       showFeedback(err.message, 'error', { title: '分享导出失败' });
     }
+  } finally {
+    isExporting.value = false;
   }
 }
 
@@ -1781,7 +1801,7 @@ async function handleShareSnapshot(s) {
 function handleRestoreSnapshot(s, mode = 'merge') {
   try {
     const preview = localDb.previewBackup(s.content);
-    restoreMode.value = mode;
+    restoreMode.value = preview.currentDataError ? 'replace' : mode;
     backupRestoreRequest.value = {
       content: s.content,
       fileName: s.fileName,
@@ -1803,7 +1823,7 @@ function handleImportBackup(e) {
     try {
       const content = String(event.target.result || '');
       const preview = localDb.previewBackup(content);
-      restoreMode.value = 'merge'; // 默认智能增量合并 (绝不覆盖新数据)
+      restoreMode.value = preview.currentDataError ? 'replace' : 'merge';
       backupRestoreRequest.value = {
         content,
         fileName: file.name,
@@ -1829,17 +1849,22 @@ function confirmBackupRestore() {
   isRestoringBackup.value = true;
   try {
     const mode = restoreMode.value;
+    if (mode === 'merge' && request.preview.mergeError) throw new Error(request.preview.mergeError);
     const result = localDb.importBackupData(request.content, { mode });
     backupRestoreRequest.value = null;
+    selectedMember.value = null;
+    consumingMember.value = null;
+    rechargingMember.value = null;
+    const snapshotMessage = result.snapshotSaved ? '已生成恢复后的本地快照。' : '恢复后的快照未能保存，请立即导出备份。';
     refreshAll();
     if (result.mode === 'merge') {
       showFeedback(
-        `增量安全合并完成！已自动并入 ${result.newMembersAdded} 位新会员与 ${result.newLedgersAdded} 笔历史流水，现有会员最新账目与卡内余额完整保留。已自动生成恢复快照。祝营业顺利！`,
+        `已并入 ${result.newMembersAdded} 位新会员与 ${result.newLedgersAdded} 笔流水，同步 ${result.updatedMembers} 位会员的档案、余额与撤销状态。${snapshotMessage}`,
         'success',
         { title: '备份恢复成功' }
       );
     } else {
-      showFeedback(`已完全覆盖恢复 ${result.count} 位会员及对应账本数据。`, 'success', { title: '全量恢复完成' });
+      showFeedback(`已全量恢复 ${result.count} 位会员及对应账本数据。${snapshotMessage}`, 'success', { title: '全量恢复完成' });
     }
   } catch (err) {
     showFeedback(err.message, 'error', { title: '备份恢复失败' });
@@ -1848,7 +1873,51 @@ function confirmBackupRestore() {
   }
 }
 
-onMounted(() => {
+let dailyRefreshTimer = null;
+let appStateListener = null;
+let isUnmounted = false;
+
+function scheduleDailyRefresh() {
+  clearTimeout(dailyRefreshTimer);
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setHours(24, 0, 0, 0);
+  dailyRefreshTimer = setTimeout(refreshOnResume, midnight.getTime() - now.getTime());
+}
+
+function refreshOnResume() {
+  if (isUnmounted) return;
   refreshAll();
+  scheduleDailyRefresh();
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'visible') refreshOnResume();
+}
+
+onMounted(async () => {
+  refreshAll();
+  scheduleDailyRefresh();
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('focus', refreshOnResume);
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const listener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) refreshOnResume();
+      });
+      if (isUnmounted) await listener.remove();
+      else appStateListener = listener;
+    } catch (error) {
+      console.warn('应用状态监听未能启动:', error);
+    }
+  }
+});
+
+onUnmounted(() => {
+  isUnmounted = true;
+  clearTimeout(dailyRefreshTimer);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  window.removeEventListener('focus', refreshOnResume);
+  appStateListener?.remove().catch(error => console.warn('应用状态监听清理失败:', error));
 });
 </script>
