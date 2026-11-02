@@ -1,3 +1,7 @@
+{
+    default_sni {$PUBLIC_DOMAIN}
+}
+
 http://{$PUBLIC_DOMAIN} {
     handle /.well-known/acme-challenge/* {
         root * /var/lib/member-acme

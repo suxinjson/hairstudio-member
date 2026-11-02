@@ -124,6 +124,18 @@ curl -fsS https://124.70.184.136/api/health
 
 预期返回 `{"status":"ok"}`。这里不要加 `curl -k`：默认验证通过才能说明手机可以信任该证书。
 
+正式 IP 配置的全局选项必须保留 `default_sni {$PUBLIC_DOMAIN}`。使用 IP 的客户端通常不发送 TLS SNI；这个选项使 Caddy 在没有 SNI 时也能选中已加载的 IP 证书。旧配置缺少该选项时，即使证书已签发、Caddy 已启动，也可能出现 `tlsv1 alert internal error`。更新 `deploy/Caddyfile.ip` 后，用下面的命令验证并重新加载：
+
+```bash
+sudo docker compose -f compose.yaml -f deploy/compose.ip.yaml exec -T web \
+  caddy validate --config /etc/caddy/Caddyfile
+sudo docker compose -f compose.yaml -f deploy/compose.ip.yaml exec -T web \
+  caddy reload --force --config /etc/caddy/Caddyfile
+curl -fsS https://124.70.184.136/api/health
+```
+
+参见 [Caddy default_sni 官方说明](https://caddyserver.com/docs/caddyfile/options#default-sni)。此选项只设置缺失 SNI 时的证书选择，客户端仍须正常校验证书信任链和 IP 地址。
+
 首次部署还需创建店主账号。以下命令使用本 IP 方案的两份 Compose 配置；已有店主账号时跳过，不要重复创建：
 
 ```bash
@@ -142,12 +154,12 @@ App 设置中的服务器地址使用 `https://124.70.184.136`，再登录店主
 
 ## 6. 配置自动续期和重新加载
 
-先保存续期后的 Caddy 重新加载命令，否则容器可能继续使用内存中的旧证书，并验证续期和重新加载：
+先保存续期后的 Caddy 重新加载命令，否则容器可能继续使用内存中的旧证书，并验证续期和重新加载。命令必须包含 `--force`：证书续期不会修改 Caddyfile，普通 reload 可能跳过相同配置，继续使用旧证书。参见 [Caddy reload 官方说明](https://caddyserver.com/docs/command-line#caddy-reload)。
 
 ```bash
 cd ~/member
 APP_DIR="$(pwd -P)"
-RELOAD_HOOK="docker compose --project-directory \"$APP_DIR\" -f \"$APP_DIR/compose.yaml\" -f \"$APP_DIR/deploy/compose.ip.yaml\" exec -T web caddy reload --config /etc/caddy/Caddyfile"
+RELOAD_HOOK="docker compose --project-directory \"$APP_DIR\" -f \"$APP_DIR/compose.yaml\" -f \"$APP_DIR/deploy/compose.ip.yaml\" exec -T web caddy reload --force --config /etc/caddy/Caddyfile"
 sudo /opt/member-certbot/bin/certbot reconfigure --cert-name member-ip --deploy-hook "$RELOAD_HOOK"
 sudo /opt/member-certbot/bin/certbot renew --cert-name member-ip --dry-run --run-deploy-hooks
 ```
