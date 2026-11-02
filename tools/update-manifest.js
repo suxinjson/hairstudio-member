@@ -15,10 +15,10 @@ export function buildUpdateManifest(bytes, { versionCode, versionName, certifica
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [apkPath, outputPath] = process.argv.slice(2);
   if (!apkPath || !outputPath || !process.env.APKSIGNER) throw new Error('须提供 APK、清单路径和 APKSIGNER 环境变量');
-  const verification = execFileSync(process.env.APKSIGNER, ['verify', '--print-certs', apkPath], { encoding: 'utf8' });
-  const actual = /Signer #1 certificate SHA-256 digest:\s*([a-fA-F0-9]+)/.exec(verification)?.[1]?.toLowerCase();
+  const verification = execFileSync(process.env.APKSIGNER, ['verify', '--print-certs', apkPath], { encoding: 'utf8', shell: process.platform === 'win32' });
+  const actual = /certificate SHA-256 digest:\s*([a-fA-F0-9:]+)/i.exec(verification)?.[1]?.replace(/[:\s]/g, '').toLowerCase();
   const expected = String(process.env.RELEASE_CERT_SHA256 || '').replace(/[:\s]/g, '').toLowerCase();
-  if (!actual || actual !== expected) throw new Error('APK 实际签名与固定证书不一致');
+  if (!actual || actual !== expected) throw new Error(`APK 实际签名 (${actual || '未提取到'}) 与固定证书 (${expected}) 不一致`);
   const manifest = buildUpdateManifest(await readFile(apkPath), { versionCode: Number(process.env.VERSION_CODE),
     versionName: process.env.VERSION_NAME, certificateSha256: actual, notes: process.env.RELEASE_NOTES || '' });
   await writeFile(outputPath, JSON.stringify(manifest, null, 2) + '\n');

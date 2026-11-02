@@ -76,3 +76,45 @@ test('APK certificate mismatch prevents publication', { skip: !bashAvailable }, 
   const matching = run(script, directory, configured);
   assert.equal(matching.status, 0, matching.stdout + matching.stderr);
 });
+
+test('APK certificate verification supports V2 Signer format and colon delimiters', { skip: !bashAvailable }, t => {
+  const { directory, env } = fixture(t);
+  const toolsDirectory = join(directory, 'build-tools', '35.0.0');
+  mkdirSync(toolsDirectory, { recursive: true });
+  const rawFingerprint = 'da28115caa57eedb2e6adf802a8348209e5190d91b5b6767bb6a3119ad6a0041';
+  const colonFingerprint = rawFingerprint.match(/.{2}/g).join(':');
+  writeFileSync(join(toolsDirectory, 'apksigner'), `#!/bin/sh\nprintf '%s\\n' 'V2 Signer: certificate SHA-256 digest: ${rawFingerprint}'\n`, { mode: 0o755 });
+  const configured = { ...env, ANDROID_HOME: directory.replaceAll('\\', '/'), RELEASE_CERT_SHA256: colonFingerprint };
+  const script = stepScript('9. 校验 APK 签名');
+  const matching = run(script, directory, configured);
+  assert.equal(matching.status, 0, matching.stdout + matching.stderr);
+});
+
+test('update-manifest accepts V2 Signer certificate output and generates manifest', t => {
+  const { directory } = fixture(t);
+  const rawFingerprint = 'da28115caa57eedb2e6adf802a8348209e5190d91b5b6767bb6a3119ad6a0041';
+  const apksignerScript = join(directory, process.platform === 'win32' ? 'apksigner.cmd' : 'apksigner');
+  const dummyApk = join(directory, 'app-release.apk');
+  const manifestOutput = join(directory, 'manifest.json');
+  if (process.platform === 'win32') {
+    writeFileSync(apksignerScript, `@echo V2 Signer: certificate SHA-256 digest: ${rawFingerprint}\r\n`);
+  } else {
+    writeFileSync(apksignerScript, `#!/bin/sh\nprintf '%s\\n' 'V2 Signer: certificate SHA-256 digest: ${rawFingerprint}'\n`, { mode: 0o755 });
+  }
+  writeFileSync(dummyApk, 'fake apk bytes');
+  const result = spawnSync(process.execPath, [resolve('tools/update-manifest.js'), dummyApk, manifestOutput], {
+    env: {
+      ...process.env,
+      APKSIGNER: apksignerScript,
+      RELEASE_CERT_SHA256: rawFingerprint.toUpperCase(),
+      VERSION_CODE: '10',
+      VERSION_NAME: '1.0.10'
+    },
+    encoding: 'utf8'
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const saved = JSON.parse(readFileSync(manifestOutput, 'utf8'));
+  assert.equal(saved.versionCode, 10);
+  assert.equal(saved.versionName, '1.0.10');
+  assert.equal(saved.certificateSha256, rawFingerprint);
+});
