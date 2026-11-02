@@ -142,7 +142,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
   const client = {
     snapshot() { try { return { ...getCloudState(), busy, online: isOnline(), error: lastError }; } catch (error) { return { status: 'error', outbox: [], activity: [], busy, error: error.message }; } },
     subscribe(listener) { listeners.add(listener); listener(this.snapshot()); return () => listeners.delete(listener); },
-    async login(serverUrl, username, password) {
+    async login(serverUrl, username, password, { autoBootstrap = false } = {}) {
       return run(async () => {
         const old = getCloudState(); serverUrl = normalizeServerUrl(serverUrl);
         if (old.binding && old.serverUrl !== serverUrl) throw new Error('本机已绑定另一服务器，请先备份并解除绑定');
@@ -158,6 +158,11 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         if (old.binding) return;
         const local = localDb.readRecoveryState().data;
         if (!local) { setState({ ...getCloudState(), status: 'needs-choice' }); return; }
+        if (autoBootstrap && session.user.role === 'owner' && remote.revision === 0 &&
+            !remote.data.members.length && !remote.data.ledgers.length) {
+          setState({ ...getCloudState(), status: 'needs-bootstrap' });
+          return;
+        }
         const hasCustomSettings = canonicalJSON(local.services) !== canonicalJSON(DEFAULT_SERVICES) ||
           canonicalJSON(local.rechargePlans) !== canonicalJSON(DEFAULT_RECHARGE_PLANS);
         if (!local.members.length && !local.ledgers.length && !hasCustomSettings) {

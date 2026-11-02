@@ -2,13 +2,10 @@
   <section class="bg-white rounded-3xl p-5 border border-slate-200 space-y-4">
     <div>
       <h2 class="font-black text-lg">☁️ 云端账号与同步</h2>
-      <p class="text-sm text-slate-600 mt-1">首次登录需要联网。已登录设备断网时继续记账，联网后自动同步。</p>
+      <p class="text-sm text-slate-600 mt-1">{{ loginHint }}</p>
     </div>
     <p v-if="message || state.error" class="rounded-xl bg-amber-50 text-amber-900 p-3" role="status">{{ message || state.error }}</p>
     <form v-if="!state.user" @submit.prevent="login" class="space-y-3">
-      <label class="block">服务器地址
-        <input v-model.trim="form.serverUrl" type="url" required placeholder="https://member.example.com" class="w-full border rounded-xl p-3 mt-1" :disabled="state.busy" />
-      </label>
       <label class="block">账号
         <input v-model.trim="form.username" autocomplete="username" required class="w-full border rounded-xl p-3 mt-1" :disabled="state.busy" />
       </label>
@@ -81,18 +78,25 @@
 </template>
 <script setup>
 import { ref, computed, onUnmounted } from 'vue';
+import { Capacitor } from '@capacitor/core';
 import { cloudClient, checkForUpdate, downloadUpdate, installUpdate } from '../cloud-device.js';
 import { DEFAULT_CLOUD_SERVER_URL } from '../cloud-config.js';
 import { localDb } from '../storage.js';
 import { exportFile } from '../file-export.js';
 const props = defineProps({ recoveryRequired: { type: Boolean, default: false } });
+const isNativeApp = Capacitor.isNativePlatform();
 const roles = { owner: '店主', clerk: '店员', viewer: '只读' };
 const statuses = { local: '仅本机账本', pending: '等待同步', synced: '同步完成', conflict: '需要核对', 'login-required': '需要登录', 'needs-bootstrap': '等待初始迁移', 'needs-choice': '等待选择账本' };
 const eventNames = { login: '登录', online: '联网', offline: '断网', bootstrap: '初始迁移', createMember: '新增会员', updateMember: '修改会员', deleteMember: '注销会员', recharge: '充值', consume: '消费', refundLedger: '撤销', saveService: '修改服务', deleteService: '删除服务', importBackupData: '恢复备份', user_created: '创建账号', user_permissions_changed: '修改权限', sync_conflict_resolved: '处理同步冲突' };
 const state = ref(cloudClient.snapshot());
 const unsubscribe = cloudClient.subscribe(value => { state.value = value; });
 onUnmounted(unsubscribe);
-const form = ref({ serverUrl: state.value.serverUrl || DEFAULT_CLOUD_SERVER_URL, username: '', password: '' });
+const browserOrigin = /^https?:$/.test(globalThis.location?.protocol || '') ? globalThis.location.origin : '';
+const fixedServerUrl = isNativeApp ? DEFAULT_CLOUD_SERVER_URL : browserOrigin || DEFAULT_CLOUD_SERVER_URL;
+const form = ref({ username: '', password: '' });
+const loginHint = computed(() => isNativeApp
+  ? 'App 可不登录离线记账；登录后会检测本机数据并安全同步到云端。'
+  : '网页版需要登录后使用，服务器已自动配置。');
 const newUser = ref({ username: '', displayName: '', password: '', role: 'clerk' });
 const message = ref(''), users = ref(null), audit = ref(null), update = ref(null), downloaded = ref(null), downloading = ref(false), progress = ref(0);
 const resolutionMessage = computed(() => {
@@ -103,7 +107,15 @@ const resolutionMessage = computed(() => {
   return state.value.status === 'conflict' ? '两台设备修改了同一会员或设置，本机记录已保留。请先导出本机账本并核对，再决定如何处理。' : '本机账本或设置与云端不同。请先备份本机，再选择是否采用云端账本。';
 });
 async function perform(action) { message.value = ''; try { await action(); } catch (error) { message.value = error.message; } }
-async function login() { await perform(async () => { await cloudClient.login(form.value.serverUrl, form.value.username, form.value.password); form.value.password = ''; await cloudClient.sync(); }); }
+async function login() {
+  await perform(async () => {
+    await cloudClient.login(fixedServerUrl, form.value.username, form.value.password, { autoBootstrap: isNativeApp });
+    form.value.password = '';
+    // App 首次登录且云端为空时，自动把本机离线账本迁移到云端。
+    if (isNativeApp && cloudClient.snapshot().status === 'needs-bootstrap') await cloudClient.bootstrap();
+    await cloudClient.sync();
+  });
+}
 async function bootstrap() { if (confirm('将本机会员和流水迁移为云端的初始账本？此操作只允许店主在云端为空时执行。')) await perform(async () => { await cloudClient.bootstrap(); await cloudClient.sync(); }); }
 async function exportPending() {
   await perform(async () => {

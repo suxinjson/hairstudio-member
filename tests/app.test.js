@@ -61,6 +61,7 @@ class MemoryStorage {
 
 let app;
 beforeEach(() => {
+  Capacitor.isNativePlatform = () => true;
   globalThis.localStorage = new MemoryStorage();
   document.body.innerHTML = '<div id="app"></div>';
   localDb.init();
@@ -128,6 +129,8 @@ test('a failed manual snapshot displays failure instead of success', async t => 
 });
 
 test('external export succeeds with an explicit warning when its optional local snapshot fails', async t => {
+  Capacitor.isNativePlatform = () => false;
+  cloudProfile('owner', t);
   t.mock.method(console, 'warn', () => {});
   const received = [];
   Object.defineProperty(navigator, 'canShare', { value: () => true, configurable: true });
@@ -278,10 +281,11 @@ test('native app activation refreshes daily totals and removes its listener on u
   t.mock.method(Capacitor, 'isNativePlatform', () => true);
   let onAppStateChange;
   const remove = t.mock.fn(async () => {});
+  const removeBack = t.mock.fn(async () => {});
   t.mock.method(nativeApp, 'addListener', async (event, listener) => {
-    assert.equal(event, 'appStateChange');
-    onAppStateChange = listener;
-    return { remove };
+    if (event === 'appStateChange') { onAppStateChange = listener; return { remove }; }
+    assert.equal(event, 'backButton');
+    return { remove: removeBack };
   });
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
@@ -296,19 +300,35 @@ test('native app activation refreshes daily totals and removes its listener on u
   app.unmount();
   app = null;
   assert.equal(remove.mock.callCount(), 1);
+  assert.equal(removeBack.mock.callCount(), 1);
 });
 
 test('a native listener that finishes registering after unmount is removed immediately', async t => {
   t.mock.method(Capacitor, 'isNativePlatform', () => true);
   let completeRegistration;
   const remove = t.mock.fn(async () => {});
-  t.mock.method(nativeApp, 'addListener', () => new Promise(resolve => { completeRegistration = resolve; }));
+  const removeBack = t.mock.fn(async () => {});
+  t.mock.method(nativeApp, 'addListener', event => event === 'appStateChange'
+    ? new Promise(resolve => { completeRegistration = resolve; })
+    : Promise.resolve({ remove: removeBack }));
   await mount();
   app.unmount();
   app = null;
   completeRegistration({ remove });
   await nextTick();
   assert.equal(remove.mock.callCount(), 1);
+  assert.equal(removeBack.mock.callCount(), 0);
+});
+
+test('browser use requires login even before a device is cloud-bound', async () => {
+  Capacitor.isNativePlatform = () => false;
+  localDb.createMember({ name: '网页端隐藏会员', phone: '13800001111', initialBalance: 100 });
+  await mount();
+  assert.ok(document.body.textContent.includes('网页版需要登录后使用'));
+  assert.ok(document.body.textContent.includes('安全登录'));
+  assert.equal(document.body.textContent.includes('服务器地址'), false);
+  assert.equal(document.body.textContent.includes('网页端隐藏会员'), false);
+  assert.equal(document.querySelector('nav'), null);
 });
 
 function cloudProfile(role, t) {
@@ -397,6 +417,7 @@ test('the cloud-bound recovery screen restores a backup and requires explicit ow
 });
 
 test('a corrupt cloud ledger can export its original storage and pending records through the UI', async t => {
+  Capacitor.isNativePlatform = () => false;
   t.mock.method(console, 'error', () => {});
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   cloudProfile('owner', t);
@@ -418,6 +439,7 @@ test('a corrupt cloud ledger can export its original storage and pending records
 });
 
 test('a browser restart exposes login and hides the stale signed-in ledger while retaining pending operations', async () => {
+  Capacitor.isNativePlatform = () => false;
   localDb.createMember({ name: '私密会员', phone: '13800001111', initialBalance: 100 });
   cloudProfile('owner');
   const pending = [{ id: 'queued-charge', actorId: 'test-user' }];

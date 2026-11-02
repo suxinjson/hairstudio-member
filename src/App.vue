@@ -13,7 +13,7 @@
                 梦飞空间会员管家
               </h1>
               <div class="text-xs text-indigo-300 font-semibold mt-0.5 tracking-wide">
-                {{ currentDateText }} · 离线极速记账
+                {{ currentDateText }} · {{ connectionLabel }}
               </div>
             </div>
           </div>
@@ -53,8 +53,8 @@
 
     <!-- 主视口内容 -->
     <main class="app-content flex-1 p-3.5 space-y-4">
-      <div v-if="cloudState.binding && !cloudLocked" class="rounded-2xl p-3 border bg-white text-sm flex items-center justify-between gap-2">
-        <span>{{ cloudState.online ? '☁️ 设备已联网' : '📴 离线记账' }} · 待同步 {{ cloudState.outbox.length }} 笔<span v-if="cloudState.status === 'conflict'"> · 请核对冲突</span></span>
+      <div v-if="cloudState.binding && !cloudLocked && (cloudState.outbox.length || cloudState.status === 'conflict' || !cloudState.online)" class="sync-banner rounded-2xl p-3 border bg-white text-sm flex items-center justify-between gap-2">
+        <span>{{ cloudState.online ? '☁️ 已联网' : '📴 当前离线' }}<span v-if="cloudState.outbox.length"> · 待同步 {{ cloudState.outbox.length }} 笔</span><span v-if="cloudState.status === 'conflict'"> · 请核对冲突</span></span>
         <button @click="activeTab = 'settings'" class="font-bold text-indigo-700">同步设置</button>
       </div>
       <div v-if="storageError" class="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-900">
@@ -74,7 +74,7 @@
               <span>今日小店收银简报</span>
             </span>
             <span class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full font-bold">
-              ✓ 数据安全在手机中
+              ✓ {{ isNativeApp && !cloudState.binding ? '数据保存在本机' : '账本状态正常' }}
             </span>
           </div>
 
@@ -411,8 +411,8 @@
           </div>
         </div>
 
-        <!-- 导出目录与保存位置展示卡片 -->
-        <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] space-y-3">
+        <!-- 仅 App 展示安卓文件说明，网页无需暴露设备路径信息 -->
+        <div v-if="isNativeApp" class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] space-y-3">
           <div class="flex items-center space-x-2.5">
             <span class="text-2xl">📁</span>
             <div>
@@ -1272,6 +1272,7 @@ import { canWrite } from './sync-protocol.js';
 
 // 页面标签：'home' | 'members' | 'ledgers' | 'settings'
 const activeTab = ref('home');
+const isNativeApp = Capacitor.isNativePlatform();
 
 // 全局响应式状态
 const dashboard = ref({});
@@ -1334,10 +1335,17 @@ const localSnapshots = ref([]);
 const restoreMode = ref('merge');
 const ledgerFilterType = ref('');
 const cloudState = ref(cloudClient.snapshot());
-const cloudLocked = computed(() => Boolean(cloudState.value.binding && !cloudState.value.user));
+const cloudLocked = computed(() => !cloudState.value.user && (!isNativeApp || Boolean(cloudState.value.binding)));
+const connectionLabel = computed(() => {
+  if (!cloudState.value.user) return isNativeApp ? '本机离线账本' : '请登录';
+  if (!cloudState.value.online) return '离线记账';
+  if (cloudState.value.status === 'conflict') return '联网 · 待核对';
+  if (cloudState.value.outbox.length) return `联网 · 待同步 ${cloudState.value.outbox.length} 笔`;
+  return '在线同步';
+});
 const stopCloudSubscription = cloudClient.subscribe(state => {
   cloudState.value = state;
-  if (state.binding && !state.user) {
+  if (!state.user && (!isNativeApp || state.binding)) {
     activeTab.value = 'settings'; selectedMember.value = null; consumingMember.value = null; rechargingMember.value = null;
     showMemberModal.value = false; showServiceModal.value = false; receiptModal.value = null; backupRestoreRequest.value = null;
   }
@@ -1908,6 +1916,7 @@ function confirmBackupRestore() {
 
 let dailyRefreshTimer = null;
 let appStateListener = null;
+let backButtonListener = null;
 let isUnmounted = false;
 let stopCloud = null;
 
@@ -1930,6 +1939,20 @@ function handleVisibilityChange() {
   if (document.visibilityState === 'visible') refreshOnResume();
 }
 
+function closeTopLayer() {
+  if (feedbackModal.value) { feedbackModal.value = null; return true; }
+  if (receiptModal.value) { receiptModal.value = null; return true; }
+  if (backupRestoreRequest.value) { backupRestoreRequest.value = null; return true; }
+  if (showServiceModal.value) { showServiceModal.value = false; return true; }
+  if (showMemberModal.value) { showMemberModal.value = false; return true; }
+  if (rechargeConfirmation.value) { rechargeConfirmation.value = null; return true; }
+  if (rechargingMember.value) { rechargingMember.value = null; return true; }
+  if (consumingMember.value) { consumingMember.value = null; return true; }
+  if (selectedMember.value) { selectedMember.value = null; return true; }
+  if (activeTab.value !== 'home' && !cloudLocked.value) { activeTab.value = 'home'; return true; }
+  return false;
+}
+
 onMounted(async () => {
   refreshAll();
   scheduleDailyRefresh();
@@ -1937,15 +1960,25 @@ onMounted(async () => {
   window.addEventListener('focus', refreshOnResume);
   window.addEventListener('cloud-data-updated', refreshAll);
   cloudClient.start().then(stop => { if (isUnmounted) stop(); else stopCloud = stop; }).catch(error => showFeedback(error.message, 'error', { title: '云端连接未启动' }));
-  if (Capacitor.isNativePlatform()) {
+  if (isNativeApp) {
     try {
       const listener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
         if (isActive) refreshOnResume();
       });
-      if (isUnmounted) await listener.remove();
-      else appStateListener = listener;
+      if (isUnmounted) { await listener.remove(); return; }
+      appStateListener = listener;
     } catch (error) {
       console.warn('应用状态监听未能启动:', error);
+    }
+    try {
+      const backListener = await CapacitorApp.addListener('backButton', () => {
+        // 优先关闭最上层窗口，其次回到首页，避免误触退出应用。
+        closeTopLayer();
+      });
+      if (isUnmounted) await backListener.remove();
+      else backButtonListener = backListener;
+    } catch (error) {
+      console.warn('返回键监听未能启动:', error);
     }
   }
 });
@@ -1958,5 +1991,6 @@ onUnmounted(() => {
   window.removeEventListener('cloud-data-updated', refreshAll);
   stopCloud?.(); stopCloudSubscription();
   appStateListener?.remove().catch(error => console.warn('应用状态监听清理失败:', error));
+  backButtonListener?.remove().catch(error => console.warn('返回键监听清理失败:', error));
 });
 </script>

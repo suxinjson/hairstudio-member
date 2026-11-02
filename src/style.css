@@ -24,6 +24,9 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+  overflow-wrap: anywhere;
 }
 
 #app {
@@ -51,7 +54,7 @@ body {
 }
 
 .brand-title {
-  max-width: 18ch;
+  max-width: min(18ch, 48vw);
   overflow-wrap: anywhere;
   line-height: 1.25;
 }
@@ -65,6 +68,23 @@ body {
 .app-content {
   width: 100%;
   padding: 18px 20px 28px;
+}
+
+.app-shell :where(.flex) > * {
+  min-width: 0;
+}
+
+.app-shell :where(button, label, p, span, div, h1, h2, h3) {
+  overflow-wrap: anywhere;
+}
+
+.app-shell button {
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.sync-banner {
+  flex-wrap: wrap;
 }
 
 .dashboard-card,
@@ -132,6 +152,11 @@ body {
   min-height: 60px;
 }
 
+.app-nav .grid {
+  height: auto;
+  min-height: 64px;
+}
+
 .app-nav button:active {
   background: #f1f6f4;
 }
@@ -188,6 +213,7 @@ body {
   overscroll-behavior: contain;
   border-radius: 14px !important;
   padding: 20px !important;
+  width: min(100%, 500px);
 }
 
 .modal-dialog input,
@@ -318,6 +344,65 @@ body {
   .app-content .dashboard-card > div:last-child > div {
     font-size: 14px;
   }
+}
+
+@media (max-width: 520px) {
+  .app-header .px-4 > .flex:first-child {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .app-header .px-4 > .flex:first-child > div:first-child {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .app-header .px-4 > .flex:first-child > button {
+    flex: 0 1 auto;
+    min-height: 44px;
+    height: auto;
+  }
+
+  .dashboard-card .grid.grid-cols-2,
+  .member-card .grid.grid-cols-2,
+  .modal-dialog .grid.grid-cols-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .member-card > div:first-child,
+  .app-content [class*="justify-between"],
+  .modal-header {
+    gap: 10px;
+  }
+
+  .app-content [class*="justify-between"] {
+    flex-wrap: wrap;
+  }
+
+  .member-card > div:first-child > .text-right {
+    width: 100%;
+    text-align: left;
+    padding-left: 66px;
+  }
+
+  .modal-header {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 420px), (min-resolution: 2dppx) and (max-width: 520px) {
+  .app-content {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .app-shell .text-5xl { font-size: 2.25rem; }
+  .app-shell .text-4xl { font-size: 2rem; }
+  .app-shell .text-3xl { font-size: 1.5rem; }
+  .app-shell .text-2xl { font-size: 1.25rem; }
+
+  .app-nav .text-2xl { font-size: 1.25rem; }
+  .app-nav button { padding: 6px 2px; }
 }
 
 /* 顶部水滴屏安全防遮挡 */
