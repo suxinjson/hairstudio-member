@@ -17,6 +17,7 @@ const require = createRequire(import.meta.url);
 const vueUrl = pathToFileURL(require.resolve('vue')).href;
 const directory = await mkdtemp(join(tmpdir(), 'member-ui-test-'));
 const keypadPath = join(directory, 'keypad.mjs');
+const cloudSettingsPath = join(directory, 'cloud-settings.mjs');
 const nativeAppPath = join(directory, 'native-app.mjs');
 await writeFile(nativeAppPath, 'export const App = { addListener() { throw new Error("Unexpected native subscription"); } };');
 const nativeAppUrl = pathToFileURL(nativeAppPath).href;
@@ -31,17 +32,20 @@ async function compileComponent(sourceUrl, outputPath, keypadUrl) {
     const target = specifier === 'vue' ? vueUrl
       : specifier === '@capacitor/app' ? nativeAppUrl
       : specifier.endsWith('Keypad.vue') ? keypadUrl
+      : specifier.endsWith('CloudSettings.vue') ? pathToFileURL(cloudSettingsPath).href
       : specifier.startsWith('.') ? new URL(specifier, sourceUrl).href : pathToFileURL(require.resolve(specifier)).href;
     return `from ${quote}${target}${quote}`;
   });
   await writeFile(outputPath, rewritten);
 }
 await compileComponent(new URL('../src/components/Keypad.vue', import.meta.url), keypadPath);
+await compileComponent(new URL('../src/components/CloudSettings.vue', import.meta.url), cloudSettingsPath);
 const appPath = join(directory, 'app.mjs');
 await compileComponent(new URL('../src/App.vue', import.meta.url), appPath, pathToFileURL(keypadPath).href);
 const { default: App } = await import(pathToFileURL(appPath).href);
 const { createApp, nextTick } = await import(vueUrl);
 const { localDb } = await import('../src/storage.js');
+const { saveCloudState, getCloudState } = await import('../src/cloud-storage.js');
 
 class MemoryStorage {
   values = new Map();
@@ -304,4 +308,39 @@ test('a native listener that finishes registering after unmount is removed immed
   completeRegistration({ remove });
   await nextTick();
   assert.equal(remove.mock.callCount(), 1);
+});
+
+function cloudProfile(role) {
+  saveCloudState({ serverUrl: 'https://member.example.com', binding: { storeId: 'test-store' }, deviceId: crypto.randomUUID(),
+    user: role ? { id: 'test-user', storeId: 'test-store', role, displayName: '店主', username: 'owner' } : null,
+    revision: 1, outbox: [], activity: [], status: role ? 'synced' : 'login-required' });
+}
+test('a logged-out cloud account shows login without exposing members or backup snapshots', async () => {
+  localDb.createMember({ name: '私密会员', phone: '13800001111', initialBalance: 100 });
+  cloudProfile(null);
+  await mount();
+  assert.ok(document.body.textContent.includes('安全登录'));
+  assert.equal(document.body.textContent.includes('私密会员'), false);
+  assert.equal(document.querySelector('nav'), null);
+  assert.equal(document.body.textContent.includes('一键备份所有账本'), false);
+});
+test('read-only cloud accounts cannot initiate a charge or change service prices', async () => {
+  const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('viewer');
+  await mount();
+  assert.equal(button('剪发扣款').disabled, true);
+  assert.equal(button('会员充值').disabled, true);
+  await settings(); assert.equal(button('新增项目').disabled, true);
+  assert.throws(() => localDb.consume({ memberId: member.id, amount: 38 }), /权限/);
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+});
+test('a cached signed-in cloud account records a charge and its pending operation through the UI', async () => {
+  const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('owner'); await mount();
+  button('剪发扣款').click(); await nextTick();
+  button('精致洗剪吹 (').click(); await nextTick();
+  button('确认扣除').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 6200);
+  assert.equal(getCloudState().outbox.length, 1);
+  assert.equal(getCloudState().outbox[0].method, 'consume');
 });

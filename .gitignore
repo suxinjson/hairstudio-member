@@ -23,3 +23,10 @@ android/app/*.iml
 .DS_Store
 Thumbs.db
 *.log
+
+# Cloud credentials, packages and database backup artifacts
+.env
+.env.*
+!.env.example
+releases/
+backups/

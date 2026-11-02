@@ -88,13 +88,17 @@ jobs:
         }
 
     - name: 10. 收集生成好的 APK
+      env:
+        RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
       run: |
         mkdir -p output_apk
         cp android/app/build/outputs/apk/release/app-release.apk "output_apk/hairstudio-member-v${VERSION_NAME}.apk"
+        export APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+        node tools/update-manifest.js "output_apk/hairstudio-member-v${VERSION_NAME}.apk" output_apk/update-manifest.json
 
     - name: 11. 上传安装包供直接下载
       uses: actions/upload-artifact@v4
       with:
         name: hairstudio-member-${{ env.VERSION_NAME }}
-        path: output_apk/hairstudio-member-v*.apk
+        path: output_apk/*
         retention-days: 30

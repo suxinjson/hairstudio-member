@@ -1,0 +1,52 @@
+export const CLOUD_STATE_KEY = 'hairstudio_cloud_state_v1';
+export const WRITE_METHODS = ['createMember', 'updateMember', 'deleteMember', 'recharge', 'consume',
+  'refundLedger', 'saveService', 'deleteService', 'importBackupData'];
+export const OWNER_METHODS = ['deleteMember', 'refundLedger', 'saveService', 'deleteService', 'importBackupData', 'bootstrap'];
+
+export function newId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+  const hex = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-');
+}
+
+export function canWrite(role, method) {
+  return role === 'owner' || (role === 'clerk' && WRITE_METHODS.includes(method) && !OWNER_METHODS.includes(method));
+}
+
+export function canonicalJSON(value) {
+  if (Array.isArray(value)) return '[' + value.map(canonicalJSON).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.keys(value).sort()
+    .filter(key => value[key] !== undefined).map(key => JSON.stringify(key) + ':' + canonicalJSON(value[key])).join(',') + '}';
+  return JSON.stringify(value);
+}
+
+export function mutationPrecondition(data, method, args) {
+  let memberId;
+  if (['recharge', 'consume'].includes(method)) memberId = args[0]?.memberId;
+  if (['updateMember', 'deleteMember'].includes(method)) memberId = args[0];
+  if (method === 'refundLedger') memberId = data.ledgers.find(record => record.id === args[0])?.memberId;
+  if (memberId) {
+    const member = data.members.find(item => item.id === memberId);
+    if (!member) return { member: null };
+    return { member: Object.fromEntries(['id', 'name', 'phone', 'balance', 'total_recharge', 'total_consume',
+      'notes', 'created_at', 'updated_at'].map(field => [field, member[field] ?? ''])), isArchived: Boolean(member.isArchived) };
+  }
+  if (['saveService', 'deleteService'].includes(method)) return { services: data.services };
+  if (method === 'importBackupData') return { snapshot: data };
+  return {};
+}
+
+export function validateOperation(operation) {
+  if (!operation || typeof operation.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(operation.id) ||
+      !WRITE_METHODS.includes(operation.method) || !Array.isArray(operation.args) || operation.args.length > 2 ||
+      !operation.generated || !Array.isArray(operation.generated.ids) || operation.generated.ids.length > 3 ||
+      operation.generated.ids.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(id)) ||
+      !Array.isArray(operation.generated.times) || operation.generated.times.length > 8 ||
+      operation.generated.times.some(time => typeof time !== 'string' || !Number.isFinite(Date.parse(time))) ||
+      !operation.precondition || typeof operation.precondition !== 'object') {
+    throw new Error('同步操作格式无效');
+  }
+  if (operation.method === 'importBackupData' && typeof operation.args[0] !== 'string') throw new Error('恢复操作格式无效');
+}

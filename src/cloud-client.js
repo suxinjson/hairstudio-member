@@ -1,0 +1,233 @@
+import { localDb } from './storage.js';
+import { getCloudState, saveCloudState, installCloudRecording, replayOperation } from './cloud-storage.js';
+import { CLOUD_STATE_KEY, canonicalJSON, newId } from './sync-protocol.js';
+
+export function normalizeServerUrl(value) {
+  const url = new URL(value);
+  if (url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error('请填写服务器域名，例如 https://member.example.com');
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) throw new Error('云端连接必须使用 HTTPS');
+  return url.origin;
+}
+export async function sha256(data) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...args),
+  vault = { load: async () => null, save: async () => {}, clear: async () => {} },
+  isOnline = () => globalThis.navigator?.onLine !== false, onData = () => {}, clock = () => new Date().toISOString() } = {}) {
+  let accessToken = '', refreshToken = '', busy = false, lastError = '', refreshPromise = null;
+  const listeners = new Set();
+  const emit = () => { for (const listener of listeners) listener(client.snapshot()); };
+  const setState = state => { saveCloudState(state); emit(); };
+
+  async function raw(path, body, authorization = accessToken, method = body === undefined ? 'GET' : 'POST') {
+    const state = getCloudState();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await requestFetch(state.serverUrl + '/api/v1' + path, {
+        method, headers: { ...(authorization ? { Authorization: 'Bearer ' + authorization } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: controller.signal, credentials: 'omit', cache: 'no-store', redirect: 'error'
+      });
+      const result = await response.json();
+      if (!response.ok) { const error = new Error(result.error || '云端请求失败'); error.status = response.status; error.code = result.code; throw error; }
+      return result;
+    } catch (error) {
+      if (!error.status) { const network = new Error('暂时无法连接服务器，本机账本和待同步记录已保留'); network.network = true; throw network; }
+      throw error;
+    } finally { clearTimeout(timer); }
+  }
+
+  async function keepSession(session) {
+    accessToken = session.accessToken; refreshToken = session.refreshToken;
+    const state = getCloudState();
+    await vault.save({ refreshToken, serverUrl: state.serverUrl, userId: session.user.id, storeId: session.user.storeId });
+    // 原生安全存储是异步的，期间新增的记账操作必须保留。
+    setState({ ...getCloudState(), user: session.user });
+  }
+  async function refreshSession() {
+    if (!refreshPromise) refreshPromise = (async () => {
+      if (!refreshToken) throw Object.assign(new Error('请重新登录后同步，离线记账可继续使用'), { status: 401 });
+      try { await keepSession(await raw('/auth/refresh', { refreshToken }, '')); }
+      catch (error) {
+        if (error.status === 401) { accessToken = ''; refreshToken = ''; await vault.clear(); setState({ ...getCloudState(), user: null, status: 'login-required' }); }
+        throw error;
+      }
+    })().finally(() => { refreshPromise = null; });
+    return refreshPromise;
+  }
+  async function request(path, body, method) {
+    if (!accessToken) await refreshSession();
+    try { return await raw(path, body, accessToken, method); }
+    catch (error) { if (error.status !== 401) throw error; await refreshSession(); return raw(path, body, accessToken, method); }
+  }
+  async function verifyAccount(account) {
+    if (!account || !Number.isSafeInteger(account.revision) || account.revision < 0 ||
+      typeof account.integrity !== 'string' || await sha256(canonicalJSON(account.data)) !== account.integrity) throw new Error('收到的云端账本校验失败，本机数据未覆盖');
+    account.data = localDb.parseAndValidateBackup(JSON.stringify({ data: account.data })).data;
+    return account;
+  }
+  async function accept(account, acknowledged = []) {
+    await verifyAccount(account);
+    const state = getCloudState();
+    if (account.revision < state.revision) throw new Error('云端版本发生回退，本机数据未覆盖');
+    const ids = new Set(acknowledged);
+    const pending = state.outbox.filter(operation => !ids.has(operation.id));
+    let data = account.data;
+    try { for (const operation of pending) data = replayOperation(data, operation).data; }
+    catch (error) {
+      setState({ ...state, revision: account.revision, outbox: pending, remoteConflict: account, status: 'conflict' });
+      throw error;
+    }
+    localDb.applyCloudSnapshot(data, CLOUD_STATE_KEY, { ...state, revision: account.revision, outbox: pending, bootstrap: null,
+      remoteConflict: null, status: pending.length ? 'pending' : 'synced', lastSync: clock() });
+    onData(); emit();
+  }
+  async function run(callback) {
+    if (busy) return;
+    busy = true; lastError = ''; emit();
+    try { return await callback(); }
+    catch (error) { lastError = error.message; emit(); throw error; }
+    finally { busy = false; emit(); }
+  }
+  async function flushActivity() {
+    const state = getCloudState();
+    const events = state.activity.filter(event => event.actorId === state.user?.id && event.deviceId === state.deviceId).slice(0, 100);
+    if (!events.length) return;
+    await request('/activity', { events });
+    const ids = new Set(events.map(event => event.id));
+    setState({ ...getCloudState(), activity: getCloudState().activity.filter(event => !ids.has(event.id)) });
+  }
+
+  const client = {
+    snapshot() { try { return { ...getCloudState(), busy, online: isOnline(), error: lastError }; } catch (error) { return { status: 'error', outbox: [], activity: [], busy, error: error.message }; } },
+    subscribe(listener) { listeners.add(listener); listener(this.snapshot()); return () => listeners.delete(listener); },
+    async login(serverUrl, username, password) {
+      return run(async () => {
+        const old = getCloudState(); serverUrl = normalizeServerUrl(serverUrl);
+        if (old.binding && old.serverUrl !== serverUrl) throw new Error('本机已绑定另一服务器，请先备份并解除绑定');
+        setState({ ...old, serverUrl, deviceId: old.deviceId || newId() });
+        const session = await raw('/auth/login', { username, password, deviceId: getCloudState().deviceId }, '');
+        const current = getCloudState();
+        if ((current.binding && current.binding.storeId !== session.user.storeId) || current.outbox.some(op => op.actorId !== session.user.id)) {
+          await raw('/auth/logout', {}, session.accessToken);
+          throw new Error('本机绑定的门店或未同步记录所属账号不同，请使用原账号登录');
+        }
+        await keepSession(session);
+        const remote = await verifyAccount(await request('/account'));
+        if (old.binding) return;
+        const local = localDb.readBackupState();
+        if (!local.members.length && !local.ledgers.length) {
+          setState({ ...getCloudState(), binding: { storeId: session.user.storeId }, status: 'synced' });
+          await accept(remote);
+        } else {
+          setState({ ...getCloudState(), status: remote.revision === 0 && !remote.data.members.length && session.user.role === 'owner' ? 'needs-bootstrap' : 'needs-choice' });
+        }
+      });
+    },
+    async restoreSession() {
+      const state = getCloudState();
+      if (!state.serverUrl) return;
+      const saved = await vault.load();
+      if (saved && saved.serverUrl === state.serverUrl && (!state.binding || saved.storeId === state.binding.storeId)) refreshToken = saved.refreshToken;
+      emit();
+    },
+    async bootstrap() {
+      return run(async () => {
+        const state = getCloudState();
+        if (state.user?.role !== 'owner') throw new Error('仅店主可以迁移初始账本');
+        const bootstrap = state.bootstrap || { id: newId(), data: localDb.readBackupState() };
+        setState({ ...state, binding: { storeId: state.user.storeId }, bootstrap, status: 'pending' });
+        await accept(await request('/account/bootstrap', bootstrap), []);
+      });
+    },
+    async sync() {
+      const state = getCloudState();
+      if (!state.binding || !state.user || !state.serverUrl || !isOnline() || state.status === 'conflict' || busy) return;
+      return run(async () => {
+        if (getCloudState().bootstrap) await accept(await request('/account/bootstrap', getCloudState().bootstrap));
+        for (let count = 0; count < 10; count++) {
+          const operations = getCloudState().outbox.slice(0, 100);
+          if (!operations.length) break;
+          let response;
+          try { response = await request('/sync', { operations }); }
+          catch (error) {
+            if (error.code === 'SYNC_CONFLICT') {
+              const remote = await verifyAccount(await request('/account'));
+              setState({ ...getCloudState(), remoteConflict: remote, status: 'conflict' });
+            }
+            throw error;
+          }
+          if (canonicalJSON(response.acknowledged) !== canonicalJSON(operations.map(operation => operation.id))) throw new Error('云端确认单号不匹配，待同步记录已保留');
+          await accept(response, response.acknowledged);
+        }
+        const head = await request('/account/head');
+        if (head.revision > getCloudState().revision) await accept(await request('/account'));
+        await flushActivity();
+      });
+    },
+    async useCloudLedger() {
+      return run(async () => {
+        if (!getCloudState().user) throw new Error('请先登录');
+        const remote = await verifyAccount(await request('/account'));
+        const state = getCloudState();
+        // 保留覆盖前的完整本机账本与待同步记录，便于核对；不是自动覆盖路径。
+        const safety = { createdAt: clock(), data: localDb.readBackupState(), cloud: state };
+        localStorage.setItem('hairstudio_cloud_pre_replace_v1', JSON.stringify(safety));
+        if (remote.revision < state.revision) throw new Error('云端版本发生回退，不能替换本机账本');
+        localDb.applyCloudSnapshot(remote.data, CLOUD_STATE_KEY, { ...state, binding: { storeId: state.user.storeId },
+          outbox: [], bootstrap: null, status: 'synced', revision: remote.revision, lastSync: clock(), remoteConflict: null });
+        onData(); emit();
+        this.recordConnection('sync_conflict_resolved');
+      });
+    },
+    async logout() {
+      if (busy || refreshPromise) throw new Error('请等待当前同步完成');
+      return run(async () => {
+        const previousAccess = accessToken, previousRefresh = refreshToken;
+        setState({ ...getCloudState(), user: null, status: 'login-required' });
+        accessToken = ''; refreshToken = '';
+        await vault.clear();
+        // 撤销过期会话时也不能通过 keepSession 恢复本机登录状态。
+        try {
+          let authorization = previousAccess;
+          if (!authorization && previousRefresh) authorization = (await raw('/auth/refresh', { refreshToken: previousRefresh }, '')).accessToken;
+          if (authorization) {
+            try { await raw('/auth/logout', {}, authorization); }
+            catch (error) {
+              if (error.status !== 401 || !previousRefresh) throw error;
+              authorization = (await raw('/auth/refresh', { refreshToken: previousRefresh }, '')).accessToken;
+              await raw('/auth/logout', {}, authorization);
+            }
+          }
+        } catch (error) { if (!error.network && error.status !== 401) throw error; }
+      });
+    },
+    async unlink() {
+      if (busy || getCloudState().outbox.length || getCloudState().bootstrap) throw new Error('请先同步待办记录，才能解除绑定');
+      await this.logout();
+      setState({ ...getCloudState(), binding: null, serverUrl: '', user: null, revision: 0, status: 'local' });
+    },
+    recordConnection(type) {
+      const state = getCloudState();
+      if (!state.binding || !state.user) return;
+      setState({ ...state, activity: [...state.activity, { id: newId(), type, at: clock(), actorId: state.user.id, deviceId: state.deviceId }] });
+    },
+    request,
+    async downloadAuthorization() { await refreshSession(); return accessToken; },
+    async start() {
+      const stopRecording = installCloudRecording(() => { emit(); this.sync().catch(() => {}); });
+      const online = () => { this.recordConnection('online'); this.sync().catch(() => {}); emit(); };
+      const offline = () => { this.recordConnection('offline'); emit(); };
+      globalThis.window?.addEventListener('online', online);
+      globalThis.window?.addEventListener('offline', offline);
+      const timer = setInterval(() => this.sync().catch(() => {}), 30000);
+      const stop = () => { stopRecording(); clearInterval(timer); globalThis.window?.removeEventListener('online', online); globalThis.window?.removeEventListener('offline', offline); };
+      try { await this.restoreSession(); if (getCloudState().binding) { if (isOnline()) online(); else offline(); } }
+      catch (error) { lastError = error.message; emit(); }
+      return stop;
+    }
+  };
+  return client;
+}

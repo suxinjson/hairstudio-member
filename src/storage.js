@@ -2,7 +2,7 @@
 import { moneyToCent } from './money.js';
 import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones } from './accounting.js';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   MEMBERS: 'hairstudio_members_v2',
   LEDGERS: 'hairstudio_ledgers_v2',
   SERVICES: 'hairstudio_services_v2',
@@ -32,6 +32,9 @@ export const DEFAULT_RECHARGE_PLANS = [
   { pay: 2000, gift: 500 }
 ];
 
+export function createLocalDb(localStorage, options = {}) {
+let mutation = null;
+
 function load(key, defaultVal = []) {
   recoverPendingWrite();
   const raw = localStorage.getItem(key);
@@ -47,6 +50,9 @@ function load(key, defaultVal = []) {
 }
 
 function save(key, data) {
+  if (mutation && options.beforeWrite && Object.values(STORAGE_KEYS).slice(0, 4).includes(key)) {
+    return saveBatch({ [key]: data });
+  }
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch (e) {
@@ -57,6 +63,7 @@ function save(key, data) {
 
 function saveBatch(entries) {
   recoverPendingWrite();
+  if (mutation && options.beforeWrite) entries = options.beforeWrite(entries, JSON.parse(JSON.stringify(mutation)));
   const writes = Object.entries(entries).map(([key, value]) => ({
     key,
     value: JSON.stringify(value),
@@ -80,6 +87,9 @@ function saveBatch(entries) {
     }
     console.error('事务写入异常:', error);
     throw new Error('本地存储写入失败，账本已回滚或将在下次启动时恢复');
+  }
+  if (mutation && options.afterWrite) {
+    try { options.afterWrite(); } catch (error) { console.warn('账本已保存，后续同步通知失败:', error); }
   }
 }
 
@@ -168,11 +178,16 @@ function removeUntouchedDemoData() {
 }
 
 function generateId(prefix = '') {
-  return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).substring(2, 6)}`.toUpperCase();
+  const id = options.generateId?.(prefix) || `${prefix}${globalThis.crypto?.randomUUID?.() ||
+    Date.now().toString(36) + Math.random().toString(36).substring(2, 10)}`.toUpperCase();
+  if (mutation && prefix !== 'SNP') mutation.generated.ids.push(id);
+  return id;
 }
 
 function nowISO() {
-  return new Date().toISOString();
+  const value = options.now?.() || new Date().toISOString();
+  if (mutation) mutation.generated.times.push(value);
+  return value;
 }
 
 function csvText(value) {
@@ -181,7 +196,7 @@ function csvText(value) {
   return /^[\s\u0000-\u001f]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text) ? "'" + text : text;
 }
 
-export const localDb = {
+const db = {
   init() {
     recoverPendingWrite();
     // 初始化服务项目
@@ -685,6 +700,16 @@ export const localDb = {
     } })).data;
   },
 
+  applyCloudSnapshot(data, metadataKey, metadata) {
+    if (mutation) throw new Error('不能在记账过程中替换云端账本');
+    const validated = this.parseAndValidateBackup(JSON.stringify({ data })).data;
+    saveBatch({
+      [STORAGE_KEYS.MEMBERS]: validated.members, [STORAGE_KEYS.LEDGERS]: validated.ledgers,
+      [STORAGE_KEYS.SERVICES]: validated.services, [STORAGE_KEYS.RECHARGE_PLANS]: validated.rechargePlans,
+      [metadataKey]: metadata
+    });
+  },
+
   // --- 智能对账与备份预览 (对比现有数据与备份数据，防止覆盖新数据) ---
   previewBackup(jsonString) {
     const validated = this.parseAndValidateBackup(jsonString);
@@ -942,3 +967,28 @@ export const localDb = {
     return csv;
   }
 };
+
+for (const method of ['createMember', 'updateMember', 'deleteMember', 'recharge', 'consume',
+  'refundLedger', 'recordLedger', 'saveService', 'deleteService', 'importBackupData']) {
+  const implementation = db[method];
+  db[method] = function (...args) {
+    if (mutation) throw new Error('不能嵌套执行账本变更');
+    mutation = { method, args: JSON.parse(JSON.stringify(args)), generated: { ids: [], times: [] } };
+    try { return implementation.apply(this, args); } finally { mutation = null; }
+  };
+}
+return db;
+}
+
+const currentStorage = Object.fromEntries(['getItem', 'setItem', 'removeItem'].map(method =>
+  [method, (...args) => globalThis.localStorage[method](...args)]));
+let writeInterceptor = null;
+let writeListener = null;
+export function configureCloudWrites(beforeWrite, afterWrite) {
+  writeInterceptor = beforeWrite;
+  writeListener = afterWrite;
+}
+export const localDb = createLocalDb(currentStorage, {
+  beforeWrite: (entries, operation) => writeInterceptor?.(entries, operation) || entries,
+  afterWrite: () => writeListener?.()
+});

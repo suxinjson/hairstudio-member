@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: member
+      POSTGRES_DB: member
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置数据库密码}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U member -d member"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [private]
+  api:
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGDATABASE: member
+      PGUSER: member
+      PGPASSWORD: ${POSTGRES_PASSWORD:?请设置数据库密码}
+      ALLOWED_ORIGINS: https://localhost,https://${PUBLIC_DOMAIN:?请设置公网域名}
+      RELEASE_DIRECTORY: /app/releases
+      RELEASE_CERT_SHA256: ${RELEASE_CERT_SHA256:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes: ["packages:/app/releases"]
+    networks: [private]
+  web:
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?请设置公网域名}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes: ["caddy_data:/data", "caddy_config:/config"]
+    depends_on: [api]
+    networks: [private, public]
+volumes:
+  database:
+  packages:
+  caddy_data:
+  caddy_config:
+networks:
+  private:
+    internal: true
+  public:

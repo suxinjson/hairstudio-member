@@ -20,9 +20,9 @@
 
           <!-- 新建会员大按钮 (50px高度，高触感) -->
           <button 
-            v-if="activeTab !== 'settings'"
+            v-if="activeTab !== 'settings' && !cloudLocked"
             @click="openNewMemberModal"
-            :disabled="Boolean(storageError)"
+            :disabled="Boolean(storageError) || !canCloudWrite('createMember')"
             class="h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm px-4 rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center space-x-1.5"
           >
             <span class="text-base font-black">+</span>
@@ -31,7 +31,7 @@
         </div>
 
         <!-- 醒目放大搜索框 (56px大高度，报手机号后4位或姓名秒查) -->
-        <div v-if="activeTab !== 'settings'" class="mt-3.5 relative">
+        <div v-if="activeTab !== 'settings' && !cloudLocked" class="mt-3.5 relative">
           <input 
             v-model="headerSearchQuery"
             @input="handleSearch"
@@ -53,6 +53,10 @@
 
     <!-- 主视口内容 -->
     <main class="app-content flex-1 p-3.5 space-y-4">
+      <div v-if="cloudState.binding && !cloudLocked" class="rounded-2xl p-3 border bg-white text-sm flex items-center justify-between gap-2">
+        <span>{{ cloudState.online ? '☁️ 设备已联网' : '📴 离线记账' }} · 待同步 {{ cloudState.outbox.length }} 笔<span v-if="cloudState.status === 'conflict'"> · 请核对冲突</span></span>
+        <button @click="activeTab = 'settings'" class="font-bold text-indigo-700">同步设置</button>
+      </div>
       <div v-if="storageError" class="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-900">
         <p class="font-black">当前账本无法读取，请从有效备份恢复。</p>
         <p class="text-sm mt-2">{{ storageError }}。恢复前会保留当前原始数据。</p>
@@ -60,7 +64,7 @@
       </div>
       
       <!-- ==================== TAB 1: 收银台 / 首页 ==================== -->
-      <div v-if="activeTab === 'home'" class="space-y-4">
+      <div v-if="activeTab === 'home' && !cloudLocked" class="space-y-4">
         
         <!-- 今日营业收支卡片 (高档清爽配色，清晰大字) -->
         <div class="dashboard-card bg-white rounded-3xl p-4.5 shadow-[0_2px_12px_rgba(0,0,0,0.04)] border border-slate-200/90">
@@ -169,6 +173,7 @@
             <div class="mt-4 pt-3.5 border-t border-slate-100 grid grid-cols-2 gap-3">
               <button 
                 @click.stop="openConsumeModal(m)"
+                :disabled="!canCloudWrite('consume')"
                 class="h-13 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 active:from-rose-700 active:to-rose-800 text-white rounded-2xl font-black text-base shadow-md shadow-rose-500/25 flex items-center justify-center space-x-1.5 btn-press"
               >
                 <span class="text-lg">✂️</span>
@@ -177,6 +182,7 @@
 
               <button 
                 @click.stop="openRechargeModal(m)"
+                :disabled="!canCloudWrite('recharge')"
                 class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 active:to-teal-800 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-600/25 flex items-center justify-center space-x-1.5 btn-press"
               >
                 <span class="text-lg">💳</span>
@@ -188,7 +194,7 @@
       </div>
 
       <!-- ==================== TAB 2: 会员名册 ==================== -->
-      <div v-if="activeTab === 'members'" class="space-y-3.5">
+      <div v-if="activeTab === 'members' && !cloudLocked" class="space-y-3.5">
         <div class="flex items-center justify-between px-1.5">
           <span class="text-sm text-slate-700 font-black">全店名册 (共 {{ membersList.length }} 人)</span>
           <span class="text-xs text-slate-400 font-semibold">点击查看或编辑档案</span>
@@ -223,7 +229,7 @@
       </div>
 
       <!-- ==================== TAB 3: 流水明细与撤销冲正 ==================== -->
-      <div v-if="activeTab === 'ledgers'" class="space-y-3.5">
+      <div v-if="activeTab === 'ledgers' && !cloudLocked" class="space-y-3.5">
         <!-- 筛选标签 -->
         <div class="flex space-x-1.5 bg-slate-200/80 p-1.5 rounded-2xl text-sm font-black">
           <button 
@@ -281,6 +287,7 @@
               <button 
                 v-if="item.type !== 'REFUND' && !item.isRefunded"
                 @click.stop="confirmRefundLedger(item)"
+                :disabled="!canCloudWrite('refundLedger')"
                 class="text-rose-600 hover:text-rose-700 bg-rose-50 border border-rose-200/80 px-3.5 py-1.5 rounded-xl font-bold active:bg-rose-100 text-xs btn-press"
               >
                 撤销此单
@@ -295,6 +302,8 @@
 
       <!-- ==================== TAB 4: 服务定价与备份安全 ==================== -->
       <div v-if="activeTab === 'settings'" class="space-y-4">
+        <CloudSettings />
+        <template v-if="!cloudLocked">
         
         <!-- 理发项目与定价管理 -->
         <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
@@ -305,6 +314,7 @@
             </div>
             <button 
               @click="openAddServiceModal"
+              :disabled="!canCloudWrite('saveService')"
               class="h-11 bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-4 rounded-xl font-black shadow-sm btn-press"
             >
               + 新增项目
@@ -324,12 +334,14 @@
               <div class="flex space-x-2">
                 <button 
                   @click="openEditServiceModal(s)"
+                  :disabled="!canCloudWrite('saveService')"
                   class="h-9 px-3.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl font-bold text-xs active:bg-indigo-100 btn-press"
                 >
                   修改
                 </button>
                 <button 
                   @click="deleteServiceItem(s.id)"
+                  :disabled="!canCloudWrite('deleteService')"
                   class="h-9 px-3.5 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl font-bold text-xs active:bg-rose-100 btn-press"
                 >
                   删除
@@ -496,15 +508,16 @@
             <span>💡</span>
             <span>理发店安心记账小贴士：</span>
           </div>
-          <p>1. 本 App 是<strong>纯安卓独立原生应用</strong>，运行在手机专属私有沙盒内，手机管家清理“垃圾缓存”不会误删账本。</p>
-          <p>2. 建议<strong>每周日打烊时</strong>顺手点击「一键备份所有账本」，发一份给微信“文件传输助手”，双保险万无一失！</p>
+          <p>1. 本机账本支持离线记账，登录并绑定云端后联网自动同步。卸载或清除应用数据前请先导出备份。</p>
+          <p>2. 建议每天打烊时确认待同步记录为零，并另存一份 JSON 备份，定期核对文件可打开。</p>
         </div>
+        </template>
       </div>
 
     </main>
 
     <!-- 底部固定导航栏 (适配全面屏手势条，大触控热区) -->
-    <nav class="app-nav fixed bottom-0 left-0 right-0 max-w-[500px] mx-auto bg-white/95 backdrop-blur-md border-t border-slate-200/90 z-30 pb-gesture-safe shadow-lg">
+    <nav v-if="!cloudLocked" class="app-nav fixed bottom-0 left-0 right-0 max-w-[500px] mx-auto bg-white/95 backdrop-blur-md border-t border-slate-200/90 z-30 pb-gesture-safe shadow-lg">
       <div class="grid grid-cols-4 h-16">
         <button 
           @click="activeTab = 'home'"
@@ -625,7 +638,7 @@
           v-model="consumeAmountStr" 
           confirmText="确认扣除" 
           theme="danger"
-          :disabled="isConsumeOverBalance || isSubmittingConsume"
+          :disabled="isConsumeOverBalance || isSubmittingConsume || !canCloudWrite('consume')"
           @confirm="submitConsume" 
         />
       </div>
@@ -738,7 +751,7 @@
         <div class="p-5 border-t border-slate-100 bg-white pb-gesture-safe">
           <button 
             @click="requestRechargeConfirmation"
-            :disabled="!canSubmitRecharge || isSubmittingRecharge"
+            :disabled="!canSubmitRecharge || isSubmittingRecharge || !canCloudWrite('recharge')"
             class="w-full h-14 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 active:to-teal-800 disabled:bg-slate-300 text-white rounded-2xl font-black text-lg shadow-lg shadow-emerald-500/25 btn-press"
           >
             核对充值信息
@@ -764,7 +777,7 @@
         </div>
         <div class="mt-6 grid grid-cols-2 gap-3">
           <button @click="rechargeConfirmation = null" class="h-14 rounded-xl border-2 border-slate-300 text-base font-bold text-slate-700 btn-press">返回修改</button>
-          <button @click="confirmRecharge" :disabled="isSubmittingRecharge" class="h-14 rounded-xl bg-emerald-700 text-base font-black text-white btn-press disabled:opacity-60">确认充值</button>
+          <button @click="confirmRecharge" :disabled="isSubmittingRecharge || !canCloudWrite('recharge')" class="h-14 rounded-xl bg-emerald-700 text-base font-black text-white btn-press disabled:opacity-60">确认充值</button>
         </div>
       </section>
     </div>
@@ -885,7 +898,7 @@
           </button>
           <button 
             @click="confirmBackupRestore" 
-            :disabled="isRestoringBackup || (restoreMode === 'merge' && Boolean(backupRestoreRequest.preview.mergeError))"
+            :disabled="isRestoringBackup || !canCloudWrite('importBackupData') || (restoreMode === 'merge' && Boolean(backupRestoreRequest.preview.mergeError))"
             class="h-13 rounded-2xl text-sm font-black text-white btn-press disabled:opacity-60 shadow-md shadow-emerald-600/20"
             :class="restoreMode === 'merge' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'"
           >
@@ -1008,6 +1021,7 @@
           <div v-if="selectedMember.balance === 0" class="pt-2 text-center">
             <button 
               @click="handleDeleteMember(selectedMember)"
+              :disabled="!canCloudWrite('deleteMember')"
               class="text-xs text-rose-500 underline font-bold"
             >
               删除注销此会员档案 (仅限余额为0)
@@ -1019,6 +1033,7 @@
         <div class="p-5 border-t border-slate-200 bg-white grid grid-cols-2 gap-3 pb-gesture-safe">
           <button 
             @click="openRechargeModal(selectedMember)"
+            :disabled="!canCloudWrite('recharge')"
             class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center space-x-1.5 btn-press"
           >
             <span>💳 额度充值</span>
@@ -1026,6 +1041,7 @@
 
           <button 
             @click="openConsumeModal(selectedMember)"
+            :disabled="!canCloudWrite('consume')"
             class="h-13 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white rounded-2xl font-black text-base shadow-md shadow-rose-500/20 flex items-center justify-center space-x-1.5 btn-press"
           >
             <span>✂️ 剪发扣款</span>
@@ -1100,7 +1116,7 @@
           </button>
           <button 
             @click="submitMemberForm"
-            :disabled="isSavingMember || !memberForm.name.trim() || !memberForm.phone.trim()"
+            :disabled="isSavingMember || !canCloudWrite(editingMemberId ? 'updateMember' : 'createMember') || !memberForm.name.trim() || !memberForm.phone.trim()"
             class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20 btn-press"
           >
             保存档案
@@ -1155,7 +1171,7 @@
           </button>
           <button 
             @click="submitServiceForm"
-            :disabled="isSavingService || !serviceForm.name || serviceForm.price === ''"
+            :disabled="isSavingService || !canCloudWrite('saveService') || !serviceForm.name || serviceForm.price === ''"
             class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20 btn-press"
           >
             保存项目
@@ -1250,6 +1266,9 @@ import { localDb } from './storage.js';
 import { isValidMoney, moneyToCent } from './money.js';
 import { exportFile, isExportCancelled } from './file-export.js';
 import Keypad from './components/Keypad.vue';
+import CloudSettings from './components/CloudSettings.vue';
+import { cloudClient } from './cloud-device.js';
+import { canWrite } from './sync-protocol.js';
 
 // 页面标签：'home' | 'members' | 'ledgers' | 'settings'
 const activeTab = ref('home');
@@ -1314,6 +1333,16 @@ const isRestoringBackup = ref(false);
 const localSnapshots = ref([]);
 const restoreMode = ref('merge');
 const ledgerFilterType = ref('');
+const cloudState = ref(cloudClient.snapshot());
+const cloudLocked = computed(() => Boolean(cloudState.value.binding && !cloudState.value.user));
+const stopCloudSubscription = cloudClient.subscribe(state => {
+  cloudState.value = state;
+  if (state.binding && !state.user) {
+    activeTab.value = 'settings'; selectedMember.value = null; consumingMember.value = null; rechargingMember.value = null;
+    showMemberModal.value = false; showServiceModal.value = false; receiptModal.value = null; backupRestoreRequest.value = null;
+  }
+});
+function canCloudWrite(method) { return !cloudState.value.binding || canWrite(cloudState.value.user?.role, method); }
 
 const headerSearchQuery = computed({
   get: () => activeTab.value === 'ledgers' ? ledgerSearchQuery.value : searchQuery.value,
@@ -1418,6 +1447,9 @@ function refreshAll() {
     rechargePlans.value = nextPlans;
     ledgersList.value = nextLedgers;
     localSnapshots.value = localDb.getLocalSnapshots();
+    if (selectedMember.value) selectedMember.value = localDb.getMemberById(selectedMember.value.id);
+    if (consumingMember.value) consumingMember.value = localDb.getMemberById(consumingMember.value.id);
+    if (rechargingMember.value) rechargingMember.value = localDb.getMemberById(rechargingMember.value.id);
     storageError.value = '';
   } catch (error) {
     storageError.value = error.message;
@@ -1876,6 +1908,7 @@ function confirmBackupRestore() {
 let dailyRefreshTimer = null;
 let appStateListener = null;
 let isUnmounted = false;
+let stopCloud = null;
 
 function scheduleDailyRefresh() {
   clearTimeout(dailyRefreshTimer);
@@ -1889,6 +1922,7 @@ function refreshOnResume() {
   if (isUnmounted) return;
   refreshAll();
   scheduleDailyRefresh();
+  cloudClient.sync().catch(() => {});
 }
 
 function handleVisibilityChange() {
@@ -1900,6 +1934,8 @@ onMounted(async () => {
   scheduleDailyRefresh();
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('focus', refreshOnResume);
+  window.addEventListener('cloud-data-updated', refreshAll);
+  cloudClient.start().then(stop => { if (isUnmounted) stop(); else stopCloud = stop; }).catch(error => showFeedback(error.message, 'error', { title: '云端连接未启动' }));
   if (Capacitor.isNativePlatform()) {
     try {
       const listener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
@@ -1918,6 +1954,8 @@ onUnmounted(() => {
   clearTimeout(dailyRefreshTimer);
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('focus', refreshOnResume);
+  window.removeEventListener('cloud-data-updated', refreshAll);
+  stopCloud?.(); stopCloudSubscription();
   appStateListener?.remove().catch(error => console.warn('应用状态监听清理失败:', error));
 });
 </script>

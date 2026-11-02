@@ -3,12 +3,16 @@
   "version": "1.0.0",
   "description": "梦飞空间会员管家 - 独立安卓原生App",
   "type": "module",
+  "workspaces": ["server"],
   "scripts": {
     "dev": "vite",
     "build": "vite build && npx cap sync android",
     "test": "node --test",
     "sync": "npx cap sync android",
-    "open:android": "npx cap open android"
+    "open:android": "npx cap open android",
+    "server": "node server/main.js",
+    "server:create-owner": "node server/create-owner.js",
+    "server:publish": "node server/publish-release.js"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.1",
