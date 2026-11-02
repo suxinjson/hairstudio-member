@@ -3,47 +3,52 @@
     
     <!-- 顶部状态栏与大搜索框 (适配水滴屏/挖孔屏，48px+ safe-area 防遮挡) -->
     <header class="app-header bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white pt-status-safe sticky top-0 z-30 shadow-lg border-b border-slate-800">
-      <div class="px-4 pt-3.5 pb-4">
+      <div class="header-inner">
         <!-- 标题行与新建按钮 -->
-        <div class="flex items-center justify-between">
-          <div class="flex items-center space-x-3">
-            <span class="text-3xl">💈</span>
-            <div>
-              <h1 class="brand-title text-xl font-black tracking-tight text-white">
-                梦飞空间会员管家
+        <div class="header-row">
+          <div class="header-brand">
+            <span class="brand-icon" aria-hidden="true">💈</span>
+            <div class="brand-copy">
+              <h1 class="brand-title font-black text-white" aria-label="梦飞空间会员管家" title="梦飞空间会员管家">
+                <span class="brand-full">梦飞空间会员管家</span>
+                <span class="brand-medium">梦飞会员管家</span>
+                <span class="brand-short">梦飞会员</span>
               </h1>
-              <div class="text-xs text-indigo-300 font-semibold mt-0.5 tracking-wide">
-                {{ currentDateText }} · {{ connectionLabel }}
+              <div class="header-meta text-indigo-300 font-semibold" :title="currentDateText + ' · ' + connectionLabel">
+                <span class="header-meta-full">{{ currentDateText }} · {{ connectionLabel }}</span>
+                <span class="header-meta-compact">{{ compactDateText }} · {{ compactConnectionLabel }}</span>
               </div>
             </div>
           </div>
 
-          <!-- 新建会员大按钮 (50px高度，高触感) -->
+          <!-- 登记按钮保留完整文字和字号，优先收缩品牌描述。 -->
           <button 
             v-if="activeTab !== 'settings' && !cloudLocked"
             @click="openNewMemberModal"
             :disabled="Boolean(storageError) || !canCloudWrite('createMember')"
-            class="h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm px-4 rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center space-x-1.5"
+            class="register-member h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center"
           >
             <span class="text-base font-black">+</span>
             <span>登记新会员</span>
           </button>
         </div>
 
-        <!-- 醒目放大搜索框 (56px大高度，报手机号后4位或姓名秒查) -->
-        <div v-if="activeTab !== 'settings' && !cloudLocked" class="mt-3.5 relative">
+        <!-- 紧凑搜索框，输入变化和失焦时立即查找。 -->
+        <div v-if="activeTab !== 'settings' && !cloudLocked && !(activeTab === 'ledgers' && ledgerView === 'summary')" class="header-search relative">
           <input 
             v-model="headerSearchQuery"
-            @input="handleSearch"
+            @change="handleSearch"
+            @blur="handleSearch"
+            @compositionend="handleSearch"
             type="text" 
             :placeholder="searchPlaceholder"
-            class="w-full h-14 bg-slate-800/90 border-2 border-slate-700/90 text-white text-base rounded-2xl pl-12 pr-12 placeholder:text-slate-400 focus:outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 transition shadow-inner font-bold"
+            class="w-full bg-slate-800/90 border-2 border-slate-700/90 text-white text-base rounded-2xl pl-10 pr-10 placeholder:text-slate-400 focus:outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 transition shadow-inner font-bold"
           />
-          <span class="absolute left-4 top-4 text-xl text-slate-400 pointer-events-none">🔍</span>
+          <span class="absolute left-3 top-3 text-lg text-slate-400 pointer-events-none">🔍</span>
           <button 
             v-if="headerSearchQuery"
             @click="clearSearch"
-            class="absolute right-3.5 top-3 text-slate-300 hover:text-white text-base w-8 h-8 flex items-center justify-center rounded-full bg-slate-700 active:bg-slate-600"
+            class="absolute right-2 top-2 text-slate-300 hover:text-white text-base w-8 h-8 flex items-center justify-center rounded-full bg-slate-700 active:bg-slate-600"
           >
             ✕
           </button>
@@ -66,50 +71,6 @@
       <!-- ==================== TAB 1: 收银台 / 首页 ==================== -->
       <div v-if="activeTab === 'home' && !cloudLocked" class="space-y-4">
         
-        <!-- 今日营业收支卡片 (高档清爽配色，清晰大字) -->
-        <div class="dashboard-card bg-white rounded-3xl p-4.5 shadow-[0_2px_12px_rgba(0,0,0,0.04)] border border-slate-200/90">
-          <div class="flex items-center justify-between pb-3 border-b border-slate-100">
-            <span class="text-sm font-black text-slate-800 flex items-center space-x-2">
-              <span class="text-base">📊</span>
-              <span>今日小店收银简报</span>
-            </span>
-            <span class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full font-bold">
-              ✓ {{ isNativeApp && !cloudState.binding ? '数据保存在本机' : '账本状态正常' }}
-            </span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-3 mt-3.5">
-            <div class="bg-gradient-to-br from-emerald-50/80 to-teal-50/40 p-4 rounded-2xl border border-emerald-100">
-              <div class="text-xs text-emerald-800 font-bold">今日储值充值</div>
-              <div class="text-2xl font-black text-emerald-600 tabular-nums mt-1">
-                ¥ {{ formatCent(dashboard.today?.rechargeCreditTotal || 0) }}
-              </div>
-              <div class="text-xs text-emerald-700 font-medium mt-1">
-                入账 {{ dashboard.today?.rechargeCount || 0 }} 笔
-              </div>
-            </div>
-
-            <div class="bg-gradient-to-br from-rose-50/80 to-orange-50/40 p-4 rounded-2xl border border-rose-100">
-              <div class="text-xs text-rose-800 font-bold">今日剪发扣额</div>
-              <div class="text-2xl font-black text-rose-600 tabular-nums mt-1">
-                ¥ {{ formatCent(dashboard.today?.consumeAmount || 0) }}
-              </div>
-              <div class="text-xs text-rose-700 font-medium mt-1">
-                到店服务 {{ dashboard.today?.consumeCount || 0 }} 人次
-              </div>
-            </div>
-          </div>
-
-          <div class="mt-3.5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
-            <div>
-              全店会员沉淀总额：<strong class="text-slate-900 text-sm font-black tabular-nums">¥ {{ formatCent(dashboard.totalBalance || 0) }}</strong>
-            </div>
-            <div>
-              总客户数：<strong class="text-slate-900 text-sm font-black">{{ dashboard.memberCount || 0 }}</strong> 人
-            </div>
-          </div>
-        </div>
-
         <!-- 列表小标题 -->
         <div class="flex items-center justify-between px-1.5 pt-1">
           <h2 class="text-sm font-black text-slate-700">
@@ -230,73 +191,125 @@
 
       <!-- ==================== TAB 3: 流水明细与撤销冲正 ==================== -->
       <div v-if="activeTab === 'ledgers' && !cloudLocked" class="space-y-3.5">
-        <!-- 筛选标签 -->
-        <div class="flex space-x-1.5 bg-slate-200/80 p-1.5 rounded-2xl text-sm font-black">
-          <button 
-            v-for="type in [{ key: '', label: '全部流水' }, { key: 'CONSUME', label: '剪发扣费' }, { key: 'RECHARGE', label: '储值入账' }, { key: 'REFUND', label: '撤销记录' }]"
-            :key="type.key"
-            @click="ledgerFilterType = type.key; refreshLedgers()"
-            class="flex-1 py-2.5 rounded-xl transition text-center btn-press"
-            :class="ledgerFilterType === type.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'"
-          >
-            {{ type.label }}
-          </button>
+        <div class="ledger-tabs" role="tablist" aria-label="账单流水视图">
+          <button id="ledger-transactions-tab" role="tab" :aria-selected="ledgerView === 'transactions'" aria-controls="ledger-transactions" @click="ledgerView = 'transactions'">流水明细</button>
+          <button id="ledger-summary-tab" role="tab" :aria-selected="ledgerView === 'summary'" aria-controls="ledger-summary" @click="ledgerView = 'summary'">收银简报</button>
         </div>
+        <div v-if="ledgerView === 'transactions'" id="ledger-transactions" role="tabpanel" aria-labelledby="ledger-transactions-tab" class="space-y-3.5">
+          <!-- 筛选标签 -->
+          <div class="flex space-x-1.5 bg-slate-200/80 p-1.5 rounded-2xl text-sm font-black">
+            <button
+              v-for="type in [{ key: '', label: '全部流水' }, { key: 'CONSUME', label: '剪发扣费' }, { key: 'RECHARGE', label: '储值入账' }, { key: 'REFUND', label: '撤销记录' }]"
+              :key="type.key"
+              @click="ledgerFilterType = type.key; refreshLedgers()"
+              class="flex-1 py-2.5 rounded-xl transition text-center btn-press"
+              :class="ledgerFilterType === type.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'"
+            >
+              {{ type.label }}
+            </button>
+          </div>
 
-        <div v-if="filteredLedgersList.length === 0" class="bg-white rounded-3xl p-8 text-center border border-slate-200/90 text-slate-500 text-base font-bold">
-          {{ ledgerSearchQuery ? '没有找到匹配的流水，请换个姓名、手机号或关键词试试' : '暂无相关账目流水' }}
-        </div>
-        <div v-else class="space-y-3">
-          <div 
-            v-for="item in filteredLedgersList"
-            :key="item.id"
-            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] text-sm"
-          >
-            <div class="flex items-center justify-between">
-              <div class="flex items-center space-x-2">
-                <span 
-                  class="px-2.5 py-1 rounded-xl font-black text-xs"
-                  :class="getBadgeClass(item.type)"
+          <div v-if="filteredLedgersList.length === 0" class="bg-white rounded-3xl p-8 text-center border border-slate-200/90 text-slate-500 text-base font-bold">
+            {{ ledgerSearchQuery ? '没有找到匹配的流水，请换个姓名、手机号或关键词试试' : '暂无相关账目流水' }}
+          </div>
+          <div v-else class="space-y-3">
+            <div
+              v-for="item in filteredLedgersList"
+              :key="item.id"
+              class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] text-sm"
+            >
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <span
+                    class="px-2.5 py-1 rounded-xl font-black text-xs"
+                    :class="getBadgeClass(item.type)"
+                  >
+                    {{ getTypeText(item.type) }}
+                  </span>
+                  <button class="copyable-text font-black text-slate-900 text-lg" @click.stop="copyMemberField(item.memberName, '姓名')" aria-label="复制会员姓名">{{ item.memberName }}</button>
+                  <button class="copyable-text text-slate-500 font-mono font-bold" @click.stop="copyMemberField(item.memberPhone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(item.memberPhone) }}</button>
+                </div>
+                <div
+                  class="text-lg font-black tabular-nums"
+                  :class="item.changeAmount > 0 ? 'text-emerald-600' : 'text-slate-900'"
                 >
-                  {{ getTypeText(item.type) }}
+                  {{ item.changeAmount > 0 ? '+' : '' }}{{ (item.changeAmount / 100).toFixed(2) }} 元
+                </div>
+              </div>
+
+              <div class="mt-3 flex items-center justify-between text-slate-600 pt-2.5 border-t border-slate-100 text-xs font-semibold">
+                <div class="truncate max-w-[220px]">
+                  {{ item.remark || '无项目说明' }}
+                </div>
+                <div>
+                  变动后余额: <strong class="text-slate-900 font-black">¥{{ (item.balanceAfter / 100).toFixed(2) }}</strong>
+                </div>
+              </div>
+
+              <!-- 时间与撤单操作 -->
+              <div class="flex items-center justify-between text-slate-400 text-xs mt-2.5 pt-1.5 border-t border-dashed border-slate-100">
+                <span class="font-medium">{{ formatTime(item.created_at) }}</span>
+
+                <button
+                  v-if="item.type !== 'REFUND' && !item.isRefunded"
+                  @click.stop="confirmRefundLedger(item)"
+                  :disabled="!canCloudWrite('refundLedger')"
+                  class="text-rose-600 hover:text-rose-700 bg-rose-50 border border-rose-200/80 px-3.5 py-1.5 rounded-xl font-bold active:bg-rose-100 text-xs btn-press"
+                >
+                  撤销此单
+                </button>
+                <span v-else-if="item.isRefunded" class="text-slate-400 bg-slate-100 px-2.5 py-1 rounded-xl font-medium">
+                  已撤销冲正
                 </span>
-                <button class="copyable-text font-black text-slate-900 text-lg" @click.stop="copyMemberField(item.memberName, '姓名')" aria-label="复制会员姓名">{{ item.memberName }}</button>
-                <button class="copyable-text text-slate-500 font-mono font-bold" @click.stop="copyMemberField(item.memberPhone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(item.memberPhone) }}</button>
               </div>
-              <div 
-                class="text-lg font-black tabular-nums"
-                :class="item.changeAmount > 0 ? 'text-emerald-600' : 'text-slate-900'"
-              >
-                {{ item.changeAmount > 0 ? '+' : '' }}{{ (item.changeAmount / 100).toFixed(2) }} 元
-              </div>
-            </div>
-
-            <div class="mt-3 flex items-center justify-between text-slate-600 pt-2.5 border-t border-slate-100 text-xs font-semibold">
-              <div class="truncate max-w-[220px]">
-                {{ item.remark || '无项目说明' }}
-              </div>
-              <div>
-                变动后余额: <strong class="text-slate-900 font-black">¥{{ (item.balanceAfter / 100).toFixed(2) }}</strong>
-              </div>
-            </div>
-
-            <!-- 时间与撤单操作 -->
-            <div class="flex items-center justify-between text-slate-400 text-xs mt-2.5 pt-1.5 border-t border-dashed border-slate-100">
-              <span class="font-medium">{{ formatTime(item.created_at) }}</span>
-              
-              <button 
-                v-if="item.type !== 'REFUND' && !item.isRefunded"
-                @click.stop="confirmRefundLedger(item)"
-                :disabled="!canCloudWrite('refundLedger')"
-                class="text-rose-600 hover:text-rose-700 bg-rose-50 border border-rose-200/80 px-3.5 py-1.5 rounded-xl font-bold active:bg-rose-100 text-xs btn-press"
-              >
-                撤销此单
-              </button>
-              <span v-else-if="item.isRefunded" class="text-slate-400 bg-slate-100 px-2.5 py-1 rounded-xl font-medium">
-                已撤销冲正
-              </span>
             </div>
           </div>
+        </div>
+        <div v-else id="ledger-summary" role="tabpanel" aria-labelledby="ledger-summary-tab">
+          <!-- 今日营业收支卡片 (高档清爽配色，清晰大字) -->
+          <div class="dashboard-card bg-white rounded-3xl p-4.5 shadow-[0_2px_12px_rgba(0,0,0,0.04)] border border-slate-200/90">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+              <span class="text-sm font-black text-slate-800 flex items-center space-x-2">
+                <span class="text-base">📊</span>
+                <span>今日小店收银简报</span>
+              </span>
+              <span class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full font-bold">
+                ✓ {{ isNativeApp && !cloudState.binding ? '数据保存在本机' : '账本状态正常' }}
+              </span>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 mt-3.5">
+              <div class="bg-gradient-to-br from-emerald-50/80 to-teal-50/40 p-4 rounded-2xl border border-emerald-100">
+                <div class="text-xs text-emerald-800 font-bold">今日储值充值</div>
+                <div class="text-2xl font-black text-emerald-600 tabular-nums mt-1">
+                  ¥ {{ formatCent(dashboard.today?.rechargeCreditTotal || 0) }}
+                </div>
+                <div class="text-xs text-emerald-700 font-medium mt-1">
+                  入账 {{ dashboard.today?.rechargeCount || 0 }} 笔
+                </div>
+              </div>
+
+              <div class="bg-gradient-to-br from-rose-50/80 to-orange-50/40 p-4 rounded-2xl border border-rose-100">
+                <div class="text-xs text-rose-800 font-bold">今日剪发扣额</div>
+                <div class="text-2xl font-black text-rose-600 tabular-nums mt-1">
+                  ¥ {{ formatCent(dashboard.today?.consumeAmount || 0) }}
+                </div>
+                <div class="text-xs text-rose-700 font-medium mt-1">
+                  到店服务 {{ dashboard.today?.consumeCount || 0 }} 人次
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3.5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
+              <div>
+                全店会员沉淀总额：<strong class="text-slate-900 text-sm font-black tabular-nums">¥ {{ formatCent(dashboard.totalBalance || 0) }}</strong>
+              </div>
+              <div>
+                总客户数：<strong class="text-slate-900 text-sm font-black">{{ dashboard.memberCount || 0 }}</strong> 人
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -948,7 +961,7 @@
       class="fixed inset-0 bg-black/60 z-40 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
       @click.self="selectedMember = null"
     >
-      <div class="bg-white rounded-t-[32px] max-h-[90vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
+      <div class="member-detail-sheet bg-white rounded-t-[32px] max-h-[90vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
         <!-- 弹窗把手 -->
         <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
 
@@ -981,7 +994,7 @@
           </div>
         </div>
 
-        <div class="flex-1 overflow-y-auto p-5 space-y-4">
+        <div class="member-detail-content flex-1 overflow-y-auto p-5 space-y-4">
           <!-- 醒目大额度黑金渐变卡片 -->
           <div class="bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 rounded-3xl p-5 text-white shadow-md relative border border-slate-800">
             <div class="text-xs text-indigo-200 font-black uppercase tracking-wider">卡内当前可用额度</div>
@@ -1064,13 +1077,13 @@
         </div>
 
         <!-- 底部快捷充值与扣款 (大按钮52px) -->
-        <div class="p-5 border-t border-slate-200 bg-white grid grid-cols-2 gap-3 pb-gesture-safe">
+        <div class="member-detail-actions border-t border-slate-200 bg-white grid grid-cols-2 pb-gesture-safe">
           <button 
             @click="openRechargeModal(selectedMember)"
             :disabled="!canCloudWrite('recharge')"
             class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center space-x-1.5 btn-press"
           >
-            <span>💳 额度充值</span>
+            <span class="detail-action-icon" aria-hidden="true">💳</span><span>额度充值</span>
           </button>
 
           <button 
@@ -1078,7 +1091,7 @@
             :disabled="!canCloudWrite('consume')"
             class="h-13 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white rounded-2xl font-black text-base shadow-md shadow-rose-500/20 flex items-center justify-center space-x-1.5 btn-press"
           >
-            <span>✂️ 剪发扣款</span>
+            <span class="detail-action-icon" aria-hidden="true">✂️</span><span>剪发扣款</span>
           </button>
         </div>
       </div>
@@ -1293,7 +1306,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { localDb } from './storage.js';
@@ -1306,6 +1319,7 @@ import { canWrite } from './sync-protocol.js';
 
 // 页面标签：'home' | 'members' | 'ledgers' | 'settings'
 const activeTab = ref('home');
+const ledgerView = ref('transactions');
 const isNativeApp = Capacitor.isNativePlatform();
 const settingsPath = ref([]);
 const settingsPage = computed(() => settingsPath.value.at(-1) || 'overview');
@@ -1415,6 +1429,13 @@ const connectionLabel = computed(() => {
   if (cloudState.value.outbox.length) return `联网 · 待同步 ${cloudState.value.outbox.length} 笔`;
   return '在线同步';
 });
+const compactConnectionLabel = computed(() => {
+  if (!cloudState.value.user) return isNativeApp && !cloudState.value.binding ? '本机' : '未登录';
+  if (!cloudState.value.online) return '离线';
+  if (cloudState.value.syncLoginRequired) return '待登录';
+  if (cloudState.value.status === 'conflict') return '待核对';
+  return cloudState.value.outbox.length ? '待同步' : '已同步';
+});
 const stopCloudSubscription = cloudClient.subscribe(state => {
   cloudState.value = state;
   if (!state.user && !isNativeApp) {
@@ -1436,6 +1457,7 @@ const searchPlaceholder = computed(() => activeTab.value === 'ledgers'
   ? '搜索姓名、手机号、服务项目或备注…'
   : '输入会员姓名或手机号码查找…'
 );
+watch(headerSearchQuery, handleSearch, { flush: 'sync' });
 
 const filteredLedgersList = computed(() => {
   const query = ledgerSearchQuery.value.trim().toLocaleLowerCase();
@@ -1452,6 +1474,7 @@ const filteredLedgersList = computed(() => {
 
 // 日期文本展示
 const currentDate = ref(new Date());
+const compactDateText = computed(() => `${currentDate.value.getMonth() + 1}/${String(currentDate.value.getDate()).padStart(2, '0')}`);
 const currentDateText = computed(() => {
   const d = currentDate.value;
   const m = d.getMonth() + 1;
@@ -1546,9 +1569,16 @@ function refreshLedgers() {
   ledgersList.value = localDb.getLedgers({ type: ledgerFilterType.value });
 }
 
-function handleSearch() {
-  if (activeTab.value === 'ledgers') return;
-  membersList.value = localDb.getMembers(searchQuery.value);
+function handleSearch(event) {
+  if (storageError.value || event?.target?.composing) return;
+  if (event?.target && typeof event.target.value === 'string' && headerSearchQuery.value !== event.target.value) {
+    headerSearchQuery.value = event.target.value;
+    return;
+  }
+  try {
+    if (activeTab.value === 'ledgers') refreshLedgers();
+    else membersList.value = localDb.getMembers(searchQuery.value);
+  } catch { refreshAll(); }
 }
 
 function clearSearch() {

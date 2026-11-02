@@ -110,11 +110,22 @@ body {
   color: #a8d9c9;
 }
 
-.brand-title {
-  max-width: min(18ch, 48vw);
-  overflow-wrap: anywhere;
-  line-height: 1.25;
-}
+.header-inner { padding: 8px 12px 10px; }
+.header-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.header-brand { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.brand-icon { flex-shrink: 0; font-size: 24px; line-height: 1; }
+.brand-copy { min-width: 0; }
+.app-header .brand-title { font-size: 19px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-medium, .brand-short, .header-meta-compact { display: none; }
+.header-meta { font-size: 12px; line-height: 1.4; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-shell .register-member { flex-shrink: 0; gap: 4px; padding: 8px 10px; font-size: 16px; white-space: nowrap; }
+.register-member > span { white-space: nowrap; }
+.header-search { margin-top: 8px; }
+.header-search input { height: 48px; }
+
+.ledger-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 5px; border-radius: 16px; background: #e2e8e8; }
+.ledger-tabs button { min-height: 44px; padding: 10px 8px; border-radius: 12px; font-size: 16px; font-weight: 800; color: #52626a; }
+.ledger-tabs button[aria-selected="true"] { color: #167c68; background: white; box-shadow: 0 1px 4px rgb(24 39 43 / 10%); }
 
 .app-header input {
   background: #304147;
@@ -428,10 +439,6 @@ body {
     padding-right: 10px;
   }
 
-  .brand-title {
-    font-size: 17px;
-  }
-
   .feedback-dialog {
     padding: 24px 18px 18px;
   }
@@ -452,23 +459,6 @@ body {
 }
 
 @media (max-width: 520px) {
-  .app-header .px-4 > .flex:first-child {
-    align-items: flex-start;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .app-header .px-4 > .flex:first-child > div:first-child {
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-
-  .app-header .px-4 > .flex:first-child > button {
-    flex: 0 1 auto;
-    min-height: 44px;
-    height: auto;
-  }
-
   .dashboard-card .grid.grid-cols-2,
   .member-card .grid.grid-cols-2,
   .modal-dialog .grid.grid-cols-2 {
@@ -525,6 +515,34 @@ body {
 }
 
 /* 顶部水滴屏安全防遮挡 */
+@media (max-width: 420px) {
+  .brand-full, .header-meta-full { display: none; }
+  .brand-medium, .header-meta-compact { display: inline; }
+  .app-header .brand-title { font-size: 17px; }
+  .brand-icon { font-size: 18px; }
+  .header-brand { gap: 6px; }
+}
+
+@media (max-width: 300px) {
+  .brand-medium { display: none; }
+  .brand-short { display: inline; }
+  .brand-icon { font-size: 16px; }
+  .header-inner { padding-left: 8px; padding-right: 8px; }
+  .app-shell .register-member { padding-left: 8px; padding-right: 8px; }
+}
+
+/* 会员详情只滚动内容，底部两项操作始终保持可见。 */
+.app-shell .member-detail-sheet { height: min(90dvh, 900px); max-height: min(90dvh, 900px); overflow: hidden; }
+.app-shell .member-detail-sheet > .member-detail-content { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.app-shell .member-detail-sheet > .member-detail-actions.grid.grid-cols-2 { flex: none; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px 12px var(--safe-bottom); }
+.app-shell .member-detail-actions button { white-space: nowrap; font-size: 16px; min-height: 52px; }
+.member-detail-actions button > span { white-space: nowrap; }
+.member-detail-actions .detail-action-icon { font-size: 18px; }
+@media (max-width: 300px) {
+  .app-shell .member-detail-sheet > .member-detail-actions { padding-left: 8px; padding-right: 8px; gap: 6px; }
+  .member-detail-actions .detail-action-icon { font-size: 14px; }
+}
+
 .pt-status-safe {
   padding-top: var(--safe-top);
 }

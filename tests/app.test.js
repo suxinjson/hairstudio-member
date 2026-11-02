@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { JSDOM } from 'jsdom';
 
 const dom = new JSDOM('<div id="app"></div>', { url: 'https://localhost' });
-for (const key of ['window', 'document', 'Element', 'HTMLElement', 'SVGElement', 'Node', 'FileReader']) {
+for (const key of ['window', 'document', 'Document', 'Element', 'HTMLElement', 'SVGElement', 'Node', 'FileReader']) {
   globalThis[key] = dom.window[key];
 }
 Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true });
@@ -233,7 +233,11 @@ test('a numeric ledger phone is rejected by the import screen and the current le
   assert.ok(document.body.textContent.includes('138 0000 1111'));
 });
 
-function assertDailySummary(date, recharge) {
+async function assertDailySummary(date, recharge) {
+  if (!document.querySelector('.dashboard-card')) {
+    document.querySelectorAll('nav button')[2].click(); await nextTick();
+    document.querySelector('#ledger-summary-tab').click(); await nextTick();
+  }
   assert.ok(document.querySelector('header').textContent.includes(date));
   const rechargeCard = document.querySelector('.dashboard-card .grid > div');
   assert.match(rechargeCard.textContent, new RegExp(`¥\\s*${recharge.replace('.', '\\.')}\\b`));
@@ -243,13 +247,13 @@ test('midnight refreshes the date and today totals without a transaction, and st
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date(2026, 10, 2, 23, 59, 59) });
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
-  assertDailySummary('11月2日', '100.00');
+  await assertDailySummary('11月2日', '100.00');
   t.mock.timers.tick(1000);
   await nextTick();
-  assertDailySummary('11月3日', '0.00');
+  await assertDailySummary('11月3日', '0.00');
   t.mock.timers.tick(24 * 60 * 60 * 1000);
   await nextTick();
-  assertDailySummary('11月4日', '0.00');
+  await assertDailySummary('11月4日', '0.00');
   const dashboardRead = t.mock.method(localDb, 'getDashboard');
   app.unmount();
   app = null;
@@ -263,7 +267,7 @@ for (const event of ['focus', 'visibilitychange']) {
     t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: day });
     localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
     await mount();
-    assertDailySummary('11月2日', '100.00');
+    await assertDailySummary('11月2日', '100.00');
     t.mock.timers.setTime(new Date(2026, 10, 3, 12).getTime());
     const target = event === 'focus' ? window : document;
     if (event === 'visibilitychange') {
@@ -272,7 +276,7 @@ for (const event of ['focus', 'visibilitychange']) {
     }
     target.dispatchEvent(new dom.window.Event(event));
     await nextTick();
-    assertDailySummary('11月3日', '0.00');
+    await assertDailySummary('11月3日', '0.00');
     const dashboardRead = t.mock.method(localDb, 'getDashboard');
     app.unmount();
     app = null;
@@ -294,14 +298,14 @@ test('native app activation refreshes daily totals and removes its listener on u
   });
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
-  assertDailySummary('11月2日', '100.00');
+  await assertDailySummary('11月2日', '100.00');
   t.mock.timers.setTime(new Date(2026, 10, 3, 12).getTime());
   onAppStateChange({ isActive: false });
   await nextTick();
-  assertDailySummary('11月2日', '100.00');
+  await assertDailySummary('11月2日', '100.00');
   onAppStateChange({ isActive: true });
   await nextTick();
-  assertDailySummary('11月3日', '0.00');
+  await assertDailySummary('11月3日', '0.00');
   app.unmount();
   app = null;
   assert.equal(remove.mock.callCount(), 1);
@@ -334,6 +338,72 @@ test('browser use requires login even before a device is cloud-bound', async () 
   assert.equal(document.body.textContent.includes('服务器地址'), false);
   assert.equal(document.body.textContent.includes('网页端隐藏会员'), false);
   assert.equal(document.querySelector('nav'), null);
+});
+
+test('cashier starts with quick actions and the daily summary has a separate ledger tab', async () => {
+  localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  await mount();
+  assert.equal(document.querySelector('.dashboard-card'), null);
+  assert.ok(button('剪发扣款'));
+  assert.ok(button('会员充值'));
+  document.querySelectorAll('nav button')[2].click(); await nextTick();
+  assert.equal(document.querySelector('#ledger-transactions-tab').getAttribute('aria-selected'), 'true');
+  assert.equal(document.querySelector('.dashboard-card'), null);
+  document.querySelector('#ledger-summary-tab').click(); await nextTick();
+  assert.equal(document.querySelector('#ledger-summary-tab').getAttribute('aria-selected'), 'true');
+  assert.ok(document.querySelector('.dashboard-card').textContent.includes('今日小店收银简报'));
+  assert.equal(document.querySelector('header input'), null);
+  document.querySelector('#ledger-transactions-tab').click(); await nextTick();
+  assert.ok(document.querySelector('header input'));
+  assert.equal(document.querySelector('.dashboard-card'), null);
+});
+
+test('member and ledger fuzzy searches respond to input, blur, change and clear', async () => {
+  localDb.createMember({ name: '张阿姨', phone: '13800001111', initialBalance: 100 });
+  localDb.createMember({ name: '李大姐', phone: '13900002222', initialBalance: 200 });
+  await mount();
+  const input = document.querySelector('header input');
+  async function search(value, event) {
+    input.value = value;
+    input.dispatchEvent(new dom.window.Event(event, { bubbles: true }));
+    await nextTick();
+  }
+  await search('阿', 'input');
+  assert.equal(document.querySelectorAll('.member-card').length, 1);
+  assert.ok(document.querySelector('.member-card').textContent.includes('张阿姨'));
+  await search('2222', 'blur');
+  assert.equal(document.querySelectorAll('.member-card').length, 1);
+  assert.ok(document.querySelector('.member-card').textContent.includes('李大姐'));
+  await search('查无此人', 'change');
+  assert.equal(document.querySelectorAll('.member-card').length, 0);
+  document.querySelector('header .header-search button').click(); await nextTick();
+  assert.equal(document.querySelectorAll('.member-card').length, 2);
+  document.querySelectorAll('nav button')[2].click(); await nextTick();
+  await search('1111', 'input');
+  assert.ok(document.querySelector('#ledger-transactions').textContent.includes('张阿姨'));
+  assert.equal(document.querySelector('#ledger-transactions').textContent.includes('李大姐'), false);
+  await search('大姐', 'blur');
+  assert.ok(document.querySelector('#ledger-transactions').textContent.includes('李大姐'));
+  assert.equal(document.querySelector('#ledger-transactions').textContent.includes('张阿姨'), false);
+  await search('储值', 'change');
+  assert.ok(document.querySelector('#ledger-transactions').textContent.includes('张阿姨'));
+  assert.ok(document.querySelector('#ledger-transactions').textContent.includes('李大姐'));
+});
+
+test('Chinese composition searches after committing the completed input', async () => {
+  localDb.createMember({ name: '张阿姨', phone: '13800001111' });
+  localDb.createMember({ name: '李大姐', phone: '13900002222' });
+  await mount();
+  const input = document.querySelector('header input');
+  input.dispatchEvent(new dom.window.Event('compositionstart', { bubbles: true }));
+  input.value = '阿';
+  input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await nextTick();
+  assert.equal(document.querySelectorAll('.member-card').length, 2);
+  input.dispatchEvent(new dom.window.Event('compositionend', { bubbles: true }));
+  await nextTick();
+  assert.equal(document.querySelectorAll('.member-card').length, 1);
+  assert.ok(document.querySelector('.member-card').textContent.includes('张阿姨'));
 });
 
 function cloudProfile(role, t) {
@@ -509,7 +579,7 @@ test('native back closes forms and traverses settings levels before counting exi
   await back(); await nextTick();
   assert.ok(document.body.textContent.includes('日常经营'));
   await back(); await nextTick();
-  assert.ok(document.querySelector('.dashboard-card'));
+  assert.ok(document.querySelector('.member-card'));
   assert.equal(exit.mock.callCount(), 0);
   await back(); await back();
   document.querySelector('.app-shell').dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
@@ -547,7 +617,7 @@ test('native cached account remains usable when secure credentials cannot be rea
   await new Promise(resolve => setImmediate(resolve)); await nextTick();
   assert.equal(getCloudState().user.id, 'test-user');
   assert.equal(getCloudState().syncLoginRequired, true);
-  assert.ok(document.querySelector('.dashboard-card'));
+  assert.ok(document.querySelector('.member-card'));
   assert.equal(button('剪发扣款').disabled, false);
   button('剪发扣款').click(); await nextTick();
   button('精致洗剪吹 (').click(); await nextTick();
@@ -564,7 +634,7 @@ test('ordinary long-press menus are suppressed while input menus remain availabl
   t.mock.method(console, 'warn', () => {});
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
-  const label = document.querySelector('.dashboard-card');
+  const label = document.querySelector('.member-card');
   const context = new dom.window.Event('contextmenu', { bubbles: true, cancelable: true });
   label.dispatchEvent(context);
   assert.equal(context.defaultPrevented, true);
