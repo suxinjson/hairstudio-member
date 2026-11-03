@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: 编译安装包
+    name: 编译安装包与自动发布
     runs-on: ubuntu-24.04
     env:
       VERSION_CODE: ${{ github.run_number }}
@@ -101,9 +101,52 @@ jobs:
         export APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
         node tools/update-manifest.js "output_apk/hairstudio-member-v${VERSION_NAME}.apk" output_apk/update-manifest.json
 
-    - name: 11. 上传安装包供直接下载
+    - name: 11. 打包生成服务器更新包
+      run: |
+        mkdir -p deploy_bundle/releases
+        cp -r server src deploy Dockerfile compose.yaml package.json package-lock.json capacitor.config.json deploy_bundle/
+        cp "output_apk/hairstudio-member-v${VERSION_NAME}.apk" deploy_bundle/releases/
+        cp output_apk/update-manifest.json deploy_bundle/releases/
+        chmod +x deploy_bundle/deploy/deploy-update.sh
+        tar -czf "output_apk/server-update-v${VERSION_NAME}.tar.gz" -C deploy_bundle .
+
+    - name: 12. 上传安装包与服务端更新产物供备用下载
       uses: actions/upload-artifact@v6
       with:
         name: hairstudio-member-${{ env.VERSION_NAME }}
         path: output_apk/*
         retention-days: 30
+
+    - name: 13. [方案B] 自动 SSH 远程部署到云服务器并发布新版 APK
+      if: ${{ secrets.SERVER_SSH_KEY != '' }}
+      env:
+        SERVER_HOST: ${{ secrets.SERVER_HOST || '124.70.184.136' }}
+        SERVER_USER: ${{ secrets.SERVER_USER || 'ubuntu' }}
+        SERVER_PORT: ${{ secrets.SERVER_PORT || '22' }}
+        SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH || '~/member' }}
+      run: |
+        echo ">>> 检测到已配置 SERVER_SSH_KEY，开始通过 SSH 自动部署到 $SERVER_HOST..."
+        mkdir -p ~/.ssh
+        printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+
+        SSH_OPTS="-i ~/.ssh/id_rsa -p $SERVER_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
+        SCP_OPTS="-i ~/.ssh/id_rsa -P $SERVER_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
+
+        # 传输部署更新包
+        echo ">>> [1/2] 上传服务器升级包到临时目录..."
+        scp $SCP_OPTS "output_apk/server-update-v${VERSION_NAME}.tar.gz" "$SERVER_USER@$SERVER_HOST:/tmp/server-update.tar.gz"
+
+        # 远程解压并运行一键更新发布脚本
+        echo ">>> [2/2] 正在远程解压、重启容器并发布最新 APK..."
+        ssh $SSH_OPTS "$SERVER_USER@$SERVER_HOST" "
+          set -euo pipefail
+          TARGET_DIR=\$(eval echo $SERVER_DEPLOY_PATH)
+          mkdir -p \"\$TARGET_DIR\"
+          tar -xzf /tmp/server-update.tar.gz -C \"\$TARGET_DIR\"
+          rm -f /tmp/server-update.tar.gz
+          cd \"\$TARGET_DIR\"
+          bash deploy/deploy-update.sh
+        "
+        echo ">>> 🎉 云服务器自动部署及 APK 发布成功完成！手机端已可检查更新！"
