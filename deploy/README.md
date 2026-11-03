@@ -33,6 +33,8 @@ App 的默认云服务器地址已设为 `https://124.70.184.136`。使用 IP �
 
 自动更新脚本 `bash deploy/deploy-update.sh` 按 `.env` 中的 `PUBLIC_DOMAIN` 选择证书配置：IPv4 地址使用 `deploy/compose.ip.yaml`，域名使用标准配置。宿主机的其他 Certbot 目录不会改变此选择。Caddy 配置必须校验通过，HTTPS 健康接口须在最多 12 次探测内返回 200（每次最多等待 15 秒，失败间隔 5 秒），否则脚本返回非零状态并停止 APK 发布。持续失败时先检查输出的 Web/API 日志，再重新部署。
 
+自动 SSH 部署还须配置已核验的 `SERVER_KNOWN_HOSTS`，步骤见 [GitHub 部署主机密钥配置](github-apk.md#6-自动-ssh-部署的服务器主机密钥)。更新包通过 `bash deploy/install-update.sh ~/member 更新包.tar.gz` 安装，使用 `flock`（Ubuntu 的 util-linux 提供）锁定版本检查、解压及发布全过程。旧版本在替换代码前跳过；失败后可重试相同或更新版本。`.member-deployment-version` 记录已开始部署的版本下限，请保留该文件；普通 `deploy-update.sh` 也使用同一把锁。
+
 ## 权限与离线边界
 
 | 操作 | 店主 | 店员 | 只读 |
@@ -69,7 +71,7 @@ docker compose run --rm --no-deps \
   migrate node server/publish-release.js /tmp/update-manifest.json /tmp/update.apk
 ```
 
-清单由已验证签名的 CI 产物生成；服务器比对 SHA-256、文件大小、包名、固定证书和递增版本号，发布权限只提供给服务器管理员，不开放给普通 App 账号。下载需要登录，不重定向到其他域名。
+清单由已验证签名的 CI 产物生成；服务器比对 SHA-256、文件大小、包名、固定证书和递增版本号。最新版本的相同 APK 及清单可重复发布；同版不同内容和较旧版本仍被拒绝。发布权限只提供给服务器管理员，不开放给普通 App 账号。下载需要登录，不重定向到其他域名。
 
 API 对发布表只有读取权限，对 APK 卷只读。创建门店、执行迁移及发布更新均使用短期管理员容器；管理员密码不会传入 API 容器。
 

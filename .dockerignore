@@ -9,5 +9,8 @@ android/local.properties
 .env.*
 releases
 backups
+.member-update.*
+.member-deploy.lock
+.member-deployment-version
 *.jks
 *.keystore

@@ -4,11 +4,12 @@ import { cp, mkdtemp, mkdir, readFile, writeFile, symlink, access, rm } from 'no
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const bash = process.platform === 'win32' ? 'C:/Program Files/Git/bin/bash.exe' : 'bash';
 const bashAvailable = spawnSync(bash, ['--version'], { encoding: 'utf8' }).status === 0;
+const flockAvailable = bashAvailable && spawnSync(bash, ['--noprofile', '--norc', '-c', 'command -v flock'], { encoding: 'utf8' }).status === 0;
 const unix = path => path.replaceAll('\\', '/');
 
 async function fixture(t) {
@@ -33,7 +34,7 @@ async function deployment(t, { domain = 'member.example.com', validationFails = 
     writeFile(join(directory, '.env'), `PUBLIC_DOMAIN=${domain}\n`),
     writeFile(join(directory, 'compose.yaml'), 'services: {}\n'),
     writeFile(join(directory, 'releases/hairstudio-member-v1.0.1.apk'), 'test-apk'),
-    writeFile(join(directory, 'releases/update-manifest.json'), '{}'),
+    writeFile(join(directory, 'releases/update-manifest.json'), JSON.stringify({ versionName: '1.0.1' }, null, 2)),
     writeFile(join(directory, 'deploy/deploy-update.sh'), (await readFile(new URL('../deploy/deploy-update.sh', import.meta.url), 'utf8')).replaceAll('\r\n', '\n')),
     writeFile(join(bin, 'docker'), `#!/usr/bin/env bash
 printf 'docker %s\\n' "$*" >> "$REVIEW_LOG"
@@ -56,7 +57,8 @@ if [ "$REVIEW_HEALTH" = failed ]; then exit 22; fi
 if [ "$REVIEW_HEALTH" = transient ] && [ "$count" -lt 3 ]; then exit 22; fi
 if [ "$REVIEW_HEALTH" = redirect ]; then printf '302'; else printf '200'; fi
 `, { mode: 0o755 }),
-    writeFile(join(bin, 'sleep'), '#!/usr/bin/env bash\nprintf "sleep\\n" >> "$REVIEW_LOG"\n', { mode: 0o755 })
+    writeFile(join(bin, 'sleep'), '#!/usr/bin/env bash\nprintf "sleep\\n" >> "$REVIEW_LOG"\n', { mode: 0o755 }),
+    writeFile(join(bin, 'flock'), '#!/usr/bin/env bash\nprintf "flock %s\\n" "$*" >> "$REVIEW_LOG"\n', { mode: 0o755 })
   ]);
   if (ipConfig) await writeFile(join(directory, 'deploy/compose.ip.yaml'), 'services: {}\n');
   const result = run('export PATH="$REVIEW_BIN:$PATH"\nsource deploy/deploy-update.sh', directory, {
@@ -77,6 +79,108 @@ test('domain deployment keeps the standard Caddy configuration when Certbot is i
   assert.ok(!result.commands.includes('compose.ip.yaml'));
   assert.ok(result.commands.includes('server/publish-release.js'));
   assert.ok(result.commands.indexOf('curl\n') < result.commands.indexOf('server/publish-release.js'));
+});
+
+function shellPath(path) { return process.platform === 'win32' ? unix(path).replace(/^([A-Za-z]):/, (_, drive) => '/' + drive.toLowerCase()) : path; }
+
+async function installation(t, { realLock = false } = {}) {
+  const directory = await fixture(t), target = join(directory, 'target with spaces'), bin = join(directory, 'bin');
+  await mkdir(target); await mkdir(bin);
+  await writeFile(join(target, '.env'), 'PRIVATE_VALUE=retained\n');
+  if (!realLock) await writeFile(join(bin, 'flock'), '#!/usr/bin/env bash\nprintf "lock\\n" >> "$REVIEW_LOG"\n', { mode: 0o755 });
+  const env = { REVIEW_INSTALLER: shellPath(join(root, 'deploy/install-update.sh')), REVIEW_TARGET: shellPath(target),
+    REVIEW_LOG: shellPath(join(directory, 'install.log')), REVIEW_BIN: shellPath(bin) };
+  async function bundle(version, manifestVersion = version) {
+    const payload = join(directory, 'payload-' + version), archive = join(directory, 'bundle-' + version + '.tar.gz');
+    await mkdir(join(payload, 'deploy'), { recursive: true }); await mkdir(join(payload, 'releases'));
+    await writeFile(join(payload, 'release-version.txt'), String(version) + '\n');
+    await writeFile(join(payload, 'source.txt'), 'source-' + version);
+    await writeFile(join(payload, 'releases/update-manifest.json'), JSON.stringify({ versionCode: manifestVersion, versionName: '1.0.' + manifestVersion }, null, 2));
+    await writeFile(join(payload, 'deploy/deploy-update.sh'), '#!/usr/bin/env bash\nversion=$(cat release-version.txt)\nprintf "deploy-%s\\n" "$version" >> "$REVIEW_LOG"\nsleep "${REVIEW_DELAY:-0}"\nprintf "finished-%s-%s\\n" "$version" "$(cat release-version.txt)" >> "$REVIEW_LOG"\n');
+    const result = run('tar -czf "$REVIEW_BUNDLE" -C "$REVIEW_PAYLOAD" .', directory, { REVIEW_BUNDLE: shellPath(archive), REVIEW_PAYLOAD: shellPath(payload) });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    return shellPath(archive);
+  }
+  const script = 'export PATH="$REVIEW_BIN:$PATH"\nbash "$REVIEW_INSTALLER" "$REVIEW_TARGET" "$REVIEW_BUNDLE"';
+  return { directory, target, env, script, bundle };
+}
+
+test('installation rejects stale archives before replacing code and permits the same version to retry', { skip: !bashAvailable }, async t => {
+  const setup = await installation(t);
+  const newest = await setup.bundle(3), stale = await setup.bundle(2);
+  const first = run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: newest });
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  const older = run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: stale });
+  assert.equal(older.status, 0, older.stdout + older.stderr);
+  assert.match(older.stdout, /Skipping stale deployment/);
+  assert.equal(await readFile(join(setup.target, 'source.txt'), 'utf8'), 'source-3');
+  assert.equal(await readFile(join(setup.target, '.env'), 'utf8'), 'PRIVATE_VALUE=retained\n');
+  assert.equal((await readFile(join(setup.target, '.member-deployment-version'), 'utf8')).trim(), '3');
+  const retry = run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: newest });
+  assert.equal(retry.status, 0, retry.stdout + retry.stderr);
+  assert.equal((await readFile(join(setup.directory, 'install.log'), 'utf8')).split('\n').filter(line => line === 'deploy-3').length, 2);
+});
+
+test('a legacy installed manifest also prevents rollback, and inconsistent archive metadata cannot replace code', { skip: !bashAvailable }, async t => {
+  const setup = await installation(t);
+  await mkdir(join(setup.target, 'releases'));
+  await writeFile(join(setup.target, 'releases/update-manifest.json'), JSON.stringify({ versionCode: 5 }, null, 2));
+  await writeFile(join(setup.target, 'source.txt'), 'existing');
+  const stale = await setup.bundle(4), inconsistent = await setup.bundle(6, 7);
+  assert.equal(run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: stale }).status, 0);
+  const bad = run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: inconsistent });
+  assert.notEqual(bad.status, 0);
+  assert.equal(await readFile(join(setup.target, 'source.txt'), 'utf8'), 'existing');
+  await assert.rejects(access(join(setup.target, '.member-deployment-version')));
+});
+
+test('concurrent installations use separate archives and serialize the entire deployment under flock', { skip: !flockAvailable }, async t => {
+  const setup = await installation(t, { realLock: true });
+  const older = await setup.bundle(10), newer = await setup.bundle(11);
+  const start = (archive, delay) => {
+    const child = spawn(bash, ['--noprofile', '--norc', '-c', setup.script], { cwd: setup.directory,
+      env: { ...process.env, ...setup.env, REVIEW_BUNDLE: archive, REVIEW_DELAY: delay }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', chunk => { output += chunk; }); child.stderr.on('data', chunk => { output += chunk; });
+    return new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', code => resolve({ code, output })); });
+  };
+  const first = start(older, '0.5');
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if ((await readFile(join(setup.directory, 'install.log'), 'utf8').catch(() => '')).includes('deploy-10')) break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  const second = start(newer, '0');
+  for (const result of await Promise.all([first, second])) assert.equal(result.code, 0, result.output);
+  assert.equal(await readFile(join(setup.target, 'source.txt'), 'utf8'), 'source-11');
+  assert.deepEqual((await readFile(join(setup.directory, 'install.log'), 'utf8')).trim().split('\n'), ['deploy-10', 'finished-10-10', 'deploy-11', 'finished-11-11']);
+});
+
+test('SSH deployment requires a matching pinned host and uses strict checking with distinct run paths', { skip: !bashAvailable }, async t => {
+  const directory = await fixture(t), bin = join(directory, 'bin'); await mkdir(bin);
+  for (const command of ['ssh', 'scp']) await writeFile(join(bin, command), '#!/usr/bin/env bash\nprintf "%s %s\\n" "${0##*/}" "$*" >> "$REVIEW_LOG"\n', { mode: 0o755 });
+  const lines = (await readFile(join(root, '.github/workflows/build-apk.yml'), 'utf8')).replaceAll('\r\n', '\n').split('\n');
+  const step = lines.findIndex(line => line.includes('13. [方案B]'));
+  const start = lines.findIndex((line, index) => index > step && line.trim() === 'run: |');
+  const script = [];
+  for (let index = start + 1; index < lines.length; index++) { if (lines[index] && !lines[index].startsWith('        ')) break; script.push(lines[index].slice(8)); }
+  const env = { REVIEW_BIN: shellPath(bin), REVIEW_LOG: shellPath(join(directory, 'ssh.log')), RUNNER_TEMP: shellPath(directory),
+    SERVER_HOST: 'member.example.com', SERVER_USER: 'ubuntu', SERVER_PORT: '2222', SERVER_DEPLOY_PATH: '~/member with spaces',
+    SERVER_SSH_KEY: 'fixture key', SERVER_KNOWN_HOSTS: '', GITHUB_RUN_ID: '100', GITHUB_RUN_ATTEMPT: '1', VERSION_NAME: '1.0.1' };
+  const command = 'export PATH="$REVIEW_BIN:$PATH"\n' + script.join('\n');
+  const missing = run(command, directory, env);
+  assert.notEqual(missing.status, 0); assert.match(missing.stdout, /Missing SERVER_KNOWN_HOSTS/);
+  await assert.rejects(access(join(directory, 'ssh.log')));
+  const wrongHost = run(command, directory, { ...env, SERVER_KNOWN_HOSTS: 'other.example.com ssh-ed25519 AAAA' });
+  assert.notEqual(wrongHost.status, 0); await assert.rejects(access(join(directory, 'ssh.log')));
+  const pinned = { ...env, SERVER_KNOWN_HOSTS: '[member.example.com]:2222 ssh-ed25519 AAAA' };
+  for (const attempt of ['1', '2']) {
+    const result = run(command, directory, { ...pinned, GITHUB_RUN_ATTEMPT: attempt });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  }
+  const calls = await readFile(join(directory, 'ssh.log'), 'utf8');
+  assert.ok(!calls.includes('StrictHostKeyChecking=no')); assert.ok(!calls.includes('UserKnownHostsFile=/dev/null'));
+  assert.ok(calls.split('\n').filter(Boolean).every(line => line.includes('StrictHostKeyChecking=yes')));
+  assert.match(calls, /member-update-100-1\.tar\.gz/); assert.match(calls, /member-update-100-2\.tar\.gz/);
+  assert.ok(!calls.includes('eval echo'));
 });
 
 test('IPv4 deployment consistently loads the IP certificate configuration', { skip: !bashAvailable }, async t => {
@@ -138,7 +242,7 @@ test('the workflow deployment archive builds its Docker frontend without an Andr
     if (lines[index] && !lines[index].startsWith('        ')) break;
     script.push(lines[index].slice(8));
   }
-  const packaged = run('set -e\n' + script.join('\n'), directory, { VERSION_NAME: '1.0.1' });
+  const packaged = run('set -e\n' + script.join('\n'), directory, { VERSION_NAME: '1.0.1', VERSION_CODE: '1' });
   assert.equal(packaged.status, 0, packaged.stdout + packaged.stderr);
   const unpacked = join(directory, 'unpacked');
   await mkdir(unpacked);
@@ -147,6 +251,8 @@ test('the workflow deployment archive builds its Docker frontend without an Andr
   await assert.rejects(access(join(unpacked, '.env')));
   await assert.rejects(access(join(unpacked, 'android')));
   await access(join(unpacked, '.dockerignore'));
+  assert.equal((await readFile(join(unpacked, 'release-version.txt'), 'utf8')).trim(), '1');
+  await access(join(unpacked, 'deploy/install-update.sh'));
   await symlink(join(root, 'node_modules'), join(unpacked, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   // Execute the actual frontend build instruction shipped in the Dockerfile.
   const dockerfile = await readFile(join(unpacked, 'Dockerfile'), 'utf8');

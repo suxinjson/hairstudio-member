@@ -244,7 +244,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         if (remote.revision < state.revision) throw new Error('云端版本发生回退，不能替换本机账本');
         preserveLocal(state);
         localDb.applyCloudSnapshot(remote.data, CLOUD_STATE_KEY, { ...state, binding: { storeId: state.user.storeId },
-          outbox: [], bootstrap: null, status: 'synced', revision: remote.revision, lastSync: clock(), remoteConflict: null, conflictReason: null });
+          outbox: [], bootstrap: null, status: 'synced', revision: remote.revision, lastSync: clock(), remoteConflict: null, conflictReason: null }, { allowRecovery: true });
         onData(); emit();
         this.recordConnection('sync_conflict_resolved');
       });

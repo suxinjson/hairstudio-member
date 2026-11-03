@@ -5,6 +5,10 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+concurrency:
+  group: member-release-${{ github.repository }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: 编译安装包与自动发布
@@ -108,6 +112,7 @@ jobs:
         cp -r server src deploy Dockerfile compose.yaml package.json package-lock.json capacitor.config.json index.html vite.config.js .dockerignore deploy_bundle/
         cp "output_apk/hairstudio-member-v${VERSION_NAME}.apk" deploy_bundle/releases/
         cp output_apk/update-manifest.json deploy_bundle/releases/
+        printf '%s\n' "$VERSION_CODE" > deploy_bundle/release-version.txt
         chmod +x deploy_bundle/deploy/deploy-update.sh
         tar -czf "output_apk/server-update-v${VERSION_NAME}.tar.gz" -C deploy_bundle .
 
@@ -125,28 +130,38 @@ jobs:
         SERVER_USER: ${{ secrets.SERVER_USER || 'ubuntu' }}
         SERVER_PORT: ${{ secrets.SERVER_PORT || '22' }}
         SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH || '~/member' }}
+        SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
       run: |
+        set -euo pipefail
+        if [ -z "$SERVER_KNOWN_HOSTS" ]; then
+          echo "::error::Missing SERVER_KNOWN_HOSTS; configure the verified SSH host public key (see deploy/github-apk.md)"
+          exit 1
+        fi
         echo ">>> 检测到已配置 SERVER_SSH_KEY，开始通过 SSH 自动部署到 $SERVER_HOST..."
-        mkdir -p ~/.ssh
-        printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
+        SSH_KEY_PATH="$RUNNER_TEMP/member-deploy-key"
+        printf '%s\n' "$SERVER_SSH_KEY" > "$SSH_KEY_PATH"
+        chmod 600 "$SSH_KEY_PATH"
+        KNOWN_HOSTS="$RUNNER_TEMP/member-deploy-known-hosts"
+        printf '%s\n' "$SERVER_KNOWN_HOSTS" > "$KNOWN_HOSTS"
+        chmod 600 "$KNOWN_HOSTS"
+        HOST_MATCH="$SERVER_HOST"
+        if [ "$SERVER_PORT" != '22' ]; then HOST_MATCH="[$SERVER_HOST]:$SERVER_PORT"; fi
+        ssh-keygen -F "$HOST_MATCH" -f "$KNOWN_HOSTS" > /dev/null || { echo "::error::SERVER_KNOWN_HOSTS has no verified key for $HOST_MATCH"; exit 1; }
 
-        SSH_OPTS="-i ~/.ssh/id_rsa -p $SERVER_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
-        SCP_OPTS="-i ~/.ssh/id_rsa -P $SERVER_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30"
+        SSH_OPTS=(-i "$SSH_KEY_PATH" -p "$SERVER_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS" -o BatchMode=yes -o ConnectTimeout=30)
+        SCP_OPTS=(-i "$SSH_KEY_PATH" -P "$SERVER_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS" -o BatchMode=yes -o ConnectTimeout=30)
+        REMOTE_BUNDLE="/tmp/member-update-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.tar.gz"
+        REMOTE_INSTALLER="/tmp/member-update-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sh"
 
         # 传输部署更新包
         echo ">>> [1/2] 上传服务器升级包到临时目录..."
-        scp $SCP_OPTS "output_apk/server-update-v${VERSION_NAME}.tar.gz" "$SERVER_USER@$SERVER_HOST:/tmp/server-update.tar.gz"
+        scp "${SCP_OPTS[@]}" "output_apk/server-update-v${VERSION_NAME}.tar.gz" "$SERVER_USER@$SERVER_HOST:$REMOTE_BUNDLE"
+        scp "${SCP_OPTS[@]}" deploy/install-update.sh "$SERVER_USER@$SERVER_HOST:$REMOTE_INSTALLER"
 
         # 远程解压并运行一键更新发布脚本
         echo ">>> [2/2] 正在远程解压、重启容器并发布最新 APK..."
-        ssh $SSH_OPTS "$SERVER_USER@$SERVER_HOST" "
-          set -euo pipefail
-          TARGET_DIR=\$(eval echo $SERVER_DEPLOY_PATH)
-          mkdir -p \"\$TARGET_DIR\"
-          tar -xzf /tmp/server-update.tar.gz -C \"\$TARGET_DIR\"
-          rm -f /tmp/server-update.tar.gz
-          cd \"\$TARGET_DIR\"
-          bash deploy/deploy-update.sh
-        "
+        printf -v REMOTE_COMMAND 'bash %q %q %q' "$REMOTE_INSTALLER" "$SERVER_DEPLOY_PATH" "$REMOTE_BUNDLE"
+        ssh "${SSH_OPTS[@]}" "$SERVER_USER@$SERVER_HOST" "$REMOTE_COMMAND"
+        printf -v CLEANUP_COMMAND 'rm -f -- %q %q' "$REMOTE_INSTALLER" "$REMOTE_BUNDLE"
+        ssh "${SSH_OPTS[@]}" "$SERVER_USER@$SERVER_HOST" "$CLEANUP_COMMAND"
         echo ">>> 🎉 云服务器自动部署及 APK 发布成功完成！手机端已可检查更新！"

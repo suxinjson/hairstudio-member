@@ -30,3 +30,7 @@ Thumbs.db
 !.env.example
 releases/
 backups/
+.member-deploy.lock
+.member-deployment-version
+.member-update.*/
+release-version.txt

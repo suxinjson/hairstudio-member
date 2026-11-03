@@ -718,7 +718,11 @@ test('update publication checks file integrity, fixed certificate and strictly i
   await assert.rejects(publishRelease(pool, { ...manifest, sha256: 'b'.repeat(64) }, bytes, directory, certificate));
   await assert.rejects(publishRelease(pool, manifest, bytes, directory, 'b'.repeat(64)));
   await publishRelease(pool, manifest, bytes, directory, certificate);
-  await assert.rejects(publishRelease(pool, manifest, bytes, directory, certificate), /必须高于/);
+  assert.equal((await publishRelease(pool, manifest, bytes, directory, certificate)).unchanged, true);
+  await assert.rejects(publishRelease(pool, { ...manifest, notes: 'changed' }, bytes, directory, certificate), /必须高于/);
+  const different = Buffer.from('different-apk');
+  const replacement = buildUpdateManifest(different, { versionCode: 2, versionName: '1.0.2', certificateSha256: certificate });
+  await assert.rejects(publishRelease(pool, replacement, different, directory, certificate), /必须高于/);
   const latest = await api('/updates/latest'); assert.equal((await latest.json()).versionCode, 2);
   const downloadServer = createApi({ service, pool, releaseDirectory: directory });
   await new Promise(resolve => downloadServer.listen(0, '127.0.0.1', resolve));
@@ -939,6 +943,41 @@ test('adopting a cloud ledger preserves corrupt local bytes and pending charges 
   assert.deepEqual(safety.storage, original);
   assert.deepEqual(safety.cloud.outbox, pending);
   assert.equal(safety.data, null);
+});
+
+test('a cloud-bound owner can recover a damaged transaction journal offline without losing pending operations', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount();
+  await connectedClient({ online: () => false });
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  localStorage.setItem('hairstudio_pending_write_v1', '{broken');
+  const original = localDb.readRecoveryState();
+  localDb.importBackupData(backup, { mode: 'replace' });
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  assert.deepEqual(getCloudState().outbox, pending);
+  assert.equal(getCloudState().conflictReason, 'recovery');
+  const safety = JSON.parse(localStorage.getItem(STORAGE_KEYS.SAFETY_SNAPSHOT));
+  assert.equal(safety.pendingWrite, '{broken');
+  assert.deepEqual(safety.storage, original.storage);
+  assert.deepEqual(safety.cloud.outbox, pending);
+});
+
+test('explicit cloud adoption preserves a damaged journal and the original outbox before replacing them', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount();
+  const client = await connectedClient({ online: () => false });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const pending = getCloudState().outbox;
+  localStorage.setItem('hairstudio_pending_write_v1', '{broken');
+  await client.useCloudLedger();
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  assert.equal(localStorage.getItem('hairstudio_pending_write_v1'), null);
+  assert.equal(getCloudState().outbox.length, 0);
+  const safety = JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1'));
+  assert.equal(safety.pendingWrite, '{broken');
+  assert.deepEqual(safety.cloud.outbox, pending);
 });
 
 test('a failure to save the corrupt cloud recovery point leaves both raw data and the outbox untouched', async t => {

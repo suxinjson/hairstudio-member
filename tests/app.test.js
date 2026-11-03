@@ -137,6 +137,32 @@ test('a failed manual snapshot displays failure instead of success', async t => 
   assert.equal(localDb.getLocalSnapshots().length, 0);
 });
 
+test('a damaged transaction journal can be exported from the backup screen and then restored', async t => {
+  t.mock.method(console, 'error', () => {});
+  Capacitor.isNativePlatform = () => false;
+  cloudProfile('owner', t);
+  const received = [];
+  Object.defineProperty(navigator, 'canShare', { value: () => true, configurable: true });
+  Object.defineProperty(navigator, 'share', { value: async request => { received.push(request.files[0]); }, configurable: true });
+  t.after(() => { delete navigator.canShare; delete navigator.share; });
+  localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  localStorage.setItem('hairstudio_pending_write_v1', '{broken');
+  await mount();
+  assert.ok(document.body.textContent.includes('当前账本无法读取'));
+  assert.equal(button('导出账本原始数据').disabled, false);
+  button('导出账本原始数据').click();
+  await new Promise(resolve => setTimeout(resolve, 10)); await nextTick();
+  const raw = JSON.parse(await received[0].text());
+  assert.equal(raw.pendingWrite, '{broken');
+  assert.equal(raw.data, null);
+  button('知道了').click(); await nextTick();
+  await selectBackup(backup);
+  button('确认完全覆盖').click(); await nextTick();
+  assert.equal(localDb.getMembers()[0].balance, 10000);
+  assert.equal(document.body.textContent.includes('当前账本无法读取'), false);
+});
+
 test('external export succeeds with an explicit warning when its optional local snapshot fails', async t => {
   Capacitor.isNativePlatform = () => false;
   cloudProfile('owner', t);

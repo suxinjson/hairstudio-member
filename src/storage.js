@@ -1,7 +1,7 @@
 // 手机本地单机存储引擎 (企业级强一致性 + 离线容灾 + 误操作冲正撤销)
 import { moneyToCent } from './money.js';
 import { DATA_LIMITS, byteLength, assertJsonBudget, assertAccountLimits, validateMutationArgs, DataLimitError } from './data-limits.js';
-import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones } from './accounting.js';
+import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones, normalizeMemberPhone } from './accounting.js';
 
 export const STORAGE_KEYS = {
   MEMBERS: 'hairstudio_members_v2',
@@ -60,8 +60,9 @@ function save(key, data) {
   }
 }
 
-function saveBatch(entries) {
-  recoverPendingWrite();
+function saveBatch(entries, { replaceJournal = false } = {}) {
+  if (!replaceJournal) recoverPendingWrite();
+  const previousJournal = replaceJournal ? localStorage.getItem(PENDING_WRITE_KEY) : null;
   if (mutation) assertAccountLimits(Object.fromEntries([
     ['members', STORAGE_KEYS.MEMBERS], ['ledgers', STORAGE_KEYS.LEDGERS],
     ['services', STORAGE_KEYS.SERVICES], ['rechargePlans', STORAGE_KEYS.RECHARGE_PLANS]
@@ -73,7 +74,7 @@ function saveBatch(entries) {
     previous: localStorage.getItem(key)
   }));
   try {
-    localStorage.setItem(PENDING_WRITE_KEY, JSON.stringify({ version: 1, writes }));
+    localStorage.setItem(PENDING_WRITE_KEY, JSON.stringify({ version: 1, writes, ...(previousJournal === null ? {} : { previousJournal }) }));
   } catch (error) {
     console.error('事务写入异常:', error);
     throw new Error('无法建立本地恢复点，账本未修改；请导出备份并清理存储空间后重试');
@@ -98,24 +99,36 @@ function saveBatch(entries) {
 
 function recoverPendingWrite() {
   const raw = localStorage.getItem(PENDING_WRITE_KEY);
-  if (!raw) return;
+  if (raw === null) return;
   try {
     const pending = JSON.parse(raw);
-    if (pending.version !== 1 || !Array.isArray(pending.writes)) throw new Error('恢复日志格式无效');
+    if (!pending || pending.version !== 1 || !Array.isArray(pending.writes) ||
+        (pending.previousJournal !== undefined && typeof pending.previousJournal !== 'string') ||
+        pending.writes.some(write => !write || typeof write.key !== 'string' || write.key === PENDING_WRITE_KEY ||
+          (write.previous !== null && typeof write.previous !== 'string'))) throw new Error('恢复日志格式无效');
+    // 全部校验通过后才回滚，避免坏日志前半段有效、后半段无效时改写账本。
     for (const write of [...pending.writes].reverse()) {
-      if (typeof write.key !== 'string' ||
-          (write.previous !== null && typeof write.previous !== 'string')) {
-        throw new Error('恢复日志内容无效');
-      }
       if (localStorage.getItem(write.key) === write.previous) continue;
       if (write.previous === null) localStorage.removeItem(write.key);
       else localStorage.setItem(write.key, write.previous);
     }
-    localStorage.removeItem(PENDING_WRITE_KEY);
+    if (pending.previousJournal !== undefined) {
+      localStorage.setItem(PENDING_WRITE_KEY, pending.previousJournal);
+      recoverPendingWrite();
+    } else localStorage.removeItem(PENDING_WRITE_KEY);
   } catch (error) {
     console.error('本地事务恢复失败:', error);
     throw new Error('检测到未完成的数据恢复；请勿清除应用数据，并尽快导出账本或联系支持');
   }
+}
+
+function rawRecoveryState() {
+  return {
+    storage: Object.fromEntries([
+      STORAGE_KEYS.MEMBERS, STORAGE_KEYS.LEDGERS, STORAGE_KEYS.SERVICES, STORAGE_KEYS.RECHARGE_PLANS
+    ].map(key => [key, localStorage.getItem(key)])),
+    pendingWrite: localStorage.getItem(PENDING_WRITE_KEY)
+  };
 }
 
 function checkedSum(...values) {
@@ -251,9 +264,9 @@ const db = {
     if (!name || !name.trim()) throw new Error('会员姓名不能为空');
     if (!phone || !phone.trim()) throw new Error('手机号码不能为空');
 
-    const cleanPhone = phone.trim();
+    const cleanPhone = normalizeMemberPhone(phone);
     const members = load(STORAGE_KEYS.MEMBERS);
-    if (members.some(m => !m.isArchived && m.phone === cleanPhone)) {
+    if (members.some(m => !m.isArchived && normalizeMemberPhone(m.phone) === cleanPhone)) {
       throw new Error(`手机号 ${cleanPhone} 已存在`);
     }
 
@@ -272,6 +285,7 @@ const db = {
     };
 
     const nextMembers = [newMember, ...members];
+    validateActiveMemberPhones(nextMembers);
     const nextLedgers = [...load(STORAGE_KEYS.LEDGERS)];
     if (initCent > 0) {
       nextLedgers.unshift(this.makeLedger({
@@ -300,8 +314,8 @@ const db = {
 
     if (phone !== undefined) {
       if (typeof phone !== 'string' || !phone.trim()) throw new Error('手机号码不能为空');
-      const cleanPhone = phone.trim();
-      if (members.some(item => !item.isArchived && item.id !== id && item.phone === cleanPhone)) {
+      const cleanPhone = normalizeMemberPhone(phone);
+      if (members.some(item => !item.isArchived && item.id !== id && normalizeMemberPhone(item.phone) === cleanPhone)) {
         throw new Error(`手机号 ${cleanPhone} 已被其他会员占用`);
       }
       m.phone = cleanPhone;
@@ -317,6 +331,7 @@ const db = {
     }
     m.updated_at = nowISO();
 
+    validateActiveMemberPhones(members);
     save(STORAGE_KEYS.MEMBERS, members);
     return m;
   },
@@ -434,7 +449,7 @@ const db = {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === target.memberId);
     if (!m) throw new Error('关联会员不存在');
-    if (m.isArchived && members.some(member => !member.isArchived && member.id !== m.id && member.phone === m.phone)) {
+    if (m.isArchived && members.some(member => !member.isArchived && member.id !== m.id && normalizeMemberPhone(member.phone) === normalizeMemberPhone(m.phone))) {
       throw new Error('该手机号已用于其他会员，请先修改该会员手机号，再撤销已注销档案的消费');
     }
 
@@ -720,22 +735,30 @@ const db = {
   },
 
   readRecoveryState() {
-    recoverPendingWrite();
-    const storage = Object.fromEntries([
-      STORAGE_KEYS.MEMBERS, STORAGE_KEYS.LEDGERS, STORAGE_KEYS.SERVICES, STORAGE_KEYS.RECHARGE_PLANS
-    ].map(key => [key, localStorage.getItem(key)]));
-    try { return { storage, data: this.readBackupState(), dataError: '' }; }
-    catch (error) { return { storage, data: null, dataError: error.message }; }
+    const original = rawRecoveryState();
+    try { recoverPendingWrite(); }
+    catch (error) { return { ...original, data: null, dataError: error.message }; }
+    const current = rawRecoveryState();
+    try { return { ...current, data: this.readBackupState(), dataError: '' }; }
+    catch (error) { return { ...current, data: null, dataError: error.message }; }
   },
 
-  applyCloudSnapshot(data, metadataKey, metadata) {
+  applyCloudSnapshot(data, metadataKey, metadata, { allowRecovery = false } = {}) {
     if (mutation) throw new Error('不能在记账过程中替换云端账本');
     const validated = this.parseAndValidateBackup(JSON.stringify({ data })).data;
+    let replaceJournal = false;
+    if (allowRecovery) {
+      const recovery = this.readRecoveryState();
+      if (recovery.dataError) {
+        save(STORAGE_KEYS.SAFETY_SNAPSHOT, { timestamp: nowISO(), storage: recovery.storage, pendingWrite: recovery.pendingWrite, dataError: recovery.dataError });
+        replaceJournal = recovery.pendingWrite !== null;
+      }
+    }
     saveBatch({
       [STORAGE_KEYS.MEMBERS]: validated.members, [STORAGE_KEYS.LEDGERS]: validated.ledgers,
       [STORAGE_KEYS.SERVICES]: validated.services, [STORAGE_KEYS.RECHARGE_PLANS]: validated.rechargePlans,
       [metadataKey]: metadata
-    });
+    }, { replaceJournal });
   },
 
   // --- 智能对账与备份预览 (对比现有数据与备份数据，防止覆盖新数据) ---
@@ -956,15 +979,13 @@ const db = {
     }
 
     // 保留原始文本，损坏的 JSON 也可以在全量恢复后取回。保存失败则禁止覆盖。
-    recoverPendingWrite();
-    const previousStorage = Object.fromEntries([
-      STORAGE_KEYS.MEMBERS, STORAGE_KEYS.LEDGERS, STORAGE_KEYS.SERVICES, STORAGE_KEYS.RECHARGE_PLANS
-    ].map(key => [key, localStorage.getItem(key)]));
-    save(STORAGE_KEYS.SAFETY_SNAPSHOT, { timestamp: nowISO(), storage: previousStorage });
+    const recovery = this.readRecoveryState();
+    if (mode === 'merge' && recovery.dataError) throw new Error(recovery.dataError);
+    save(STORAGE_KEYS.SAFETY_SNAPSHOT, { timestamp: nowISO(), storage: recovery.storage, pendingWrite: recovery.pendingWrite, dataError: recovery.dataError });
     saveBatch({
       [STORAGE_KEYS.MEMBERS]: next.members, [STORAGE_KEYS.LEDGERS]: next.ledgers,
       [STORAGE_KEYS.SERVICES]: next.services, [STORAGE_KEYS.RECHARGE_PLANS]: next.rechargePlans
-    });
+    }, { replaceJournal: Boolean(recovery.dataError && recovery.pendingWrite !== null) });
     let snapshotSaved = true;
     try {
       this.saveLocalSnapshot(mode === 'merge' ? '增量合并后备份' : '完全覆盖后备份', '恢复完成');

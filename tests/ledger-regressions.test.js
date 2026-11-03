@@ -2,6 +2,7 @@ import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from 'csv-parse/sync';
 import { localDb } from '../src/storage.js';
+import { validateAccountHistory } from '../src/accounting.js';
 import { moneyToCent, isValidMoney } from '../src/money.js';
 
 const membersKey = 'hairstudio_members_v2';
@@ -27,6 +28,125 @@ beforeEach(() => {
 
 const newMember = (initialBalance = 100) => localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance });
 const backup = () => localDb.exportBackupData({ archiveSnapshot: false });
+
+test('restored padded phone numbers cannot be duplicated by creation or editing', () => {
+  const member = newMember(), other = localDb.createMember({ name: '另一客户', phone: '13900002222' });
+  const imported = JSON.parse(backup());
+  imported.data.members.find(item => item.id === member.id).phone = ' 13800001111 ';
+  localDb.importBackupData(JSON.stringify(imported));
+  const before = new Map(localStorage.values);
+  assert.throws(() => localDb.createMember({ name: '重复客户', phone: '13800001111' }), /已存在/);
+  assert.deepEqual(localStorage.values, before);
+  assert.throws(() => localDb.updateMember(other.id, { phone: '13800001111' }), /已被其他会员占用/);
+  assert.deepEqual(localStorage.values, before);
+  assert.doesNotThrow(() => localDb.init());
+  localDb.updateMember(member.id, { phone: ' 13800001111 ' });
+  assert.equal(localDb.getMemberById(member.id).phone, '13800001111');
+});
+
+test('history validation scans ledger membership a bounded number of times as customers grow', () => {
+  let reads = 0;
+  const members = Array.from({ length: 1000 }, (_, index) => ({ id: 'M' + index, name: '客户', balance: 0, total_recharge: 100, total_consume: 100 }));
+  const ledgers = members.flatMap(member => [
+    { id: member.id + '-C', type: 'CONSUME', changeAmount: -100, balanceBefore: 100, balanceAfter: 0 },
+    { id: member.id + '-R', type: 'RECHARGE', changeAmount: 100, balanceBefore: 0, balanceAfter: 100 }
+  ].map(record => ({ ...record, get memberId() { reads++; return member.id; } })));
+  validateAccountHistory(members, ledgers);
+  assert.ok(reads <= ledgers.length * 6, `Repeated full scans: ${reads}`);
+  ledgers[0].balanceBefore = 99;
+  assert.throws(() => validateAccountHistory(members, ledgers), /余额与流水不一致/);
+});
+
+for (const damaged of ['{broken', '', JSON.stringify({ version: 1, writes: [{ key: membersKey, previous: 123 }] })]) {
+  test(`damaged transaction journals remain exportable and permit preserved full restoration (${JSON.stringify(damaged)})`, t => {
+    t.mock.method(console, 'error', () => {});
+    const member = newMember(), validBackup = backup();
+    const journalKey = 'hairstudio_pending_write_v1';
+    localStorage.setItem(journalKey, damaged);
+    const before = new Map(localStorage.values);
+    const raw = localDb.readRecoveryState();
+    assert.equal(raw.pendingWrite, damaged);
+    assert.equal(raw.storage[membersKey], before.get(membersKey));
+    assert.equal(raw.data, null);
+    assert.ok(raw.dataError);
+    assert.deepEqual(localStorage.values, before);
+    assert.throws(() => localDb.importBackupData(validBackup, { mode: 'merge' }));
+    assert.deepEqual(localStorage.values, before);
+    localDb.importBackupData(validBackup, { mode: 'replace' });
+    assert.equal(localDb.getMemberById(member.id).balance, 10000);
+    assert.equal(localStorage.getItem(journalKey), null);
+    const preserved = JSON.parse(localStorage.getItem(safetyKey));
+    assert.equal(preserved.pendingWrite, damaged);
+    assert.equal(preserved.storage[membersKey], before.get(membersKey));
+  });
+}
+
+test('a malformed journal is validated entirely before any rollback changes', t => {
+  t.mock.method(console, 'error', () => {});
+  newMember();
+  const members = localStorage.getItem(membersKey);
+  localStorage.setItem('hairstudio_pending_write_v1', JSON.stringify({ version: 1, writes: [
+    { key: ledgersKey, previous: 123 }, { key: membersKey, previous: '[]' }
+  ] }));
+  assert.throws(() => localDb.init());
+  assert.equal(localStorage.getItem(membersKey), members);
+});
+
+test('failed full recovery restores the damaged journal and original account, then permits retry', t => {
+  t.mock.method(console, 'error', () => {});
+  const member = newMember(), validBackup = backup();
+  localDb.consume({ memberId: member.id, amount: 38 });
+  const originalMembers = localStorage.getItem(membersKey), originalLedgers = localStorage.getItem(ledgersKey);
+  const journalKey = 'hairstudio_pending_write_v1', damaged = '{broken';
+  localStorage.setItem(journalKey, damaged);
+  const before = new Map(localStorage.values);
+  localStorage.failKey = safetyKey;
+  assert.throws(() => localDb.importBackupData(validBackup));
+  assert.deepEqual(localStorage.values, before);
+  localStorage.failKey = ledgersKey;
+  assert.throws(() => localDb.importBackupData(validBackup), /回滚|恢复/);
+  assert.equal(localStorage.getItem(membersKey), originalMembers);
+  assert.equal(localStorage.getItem(ledgersKey), originalLedgers);
+  assert.equal(localStorage.getItem(journalKey), damaged);
+  assert.equal(JSON.parse(localStorage.getItem(safetyKey)).pendingWrite, damaged);
+  localStorage.failKey = null;
+  localDb.importBackupData(validBackup);
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+});
+
+test('explicit adoption of a cloud ledger preserves damaged journals and remains atomic', t => {
+  t.mock.method(console, 'error', () => {});
+  const member = newMember(), data = JSON.parse(backup()).data;
+  const journalKey = 'hairstudio_pending_write_v1', damaged = '{broken';
+  localStorage.setItem(journalKey, damaged);
+  assert.throws(() => localDb.applyCloudSnapshot(data, 'test-metadata', { revision: 1 }));
+  localStorage.failKey = safetyKey;
+  assert.throws(() => localDb.applyCloudSnapshot(data, 'test-metadata', { revision: 1 }, { allowRecovery: true }));
+  assert.equal(localStorage.getItem(journalKey), damaged);
+  localStorage.failKey = null;
+  localDb.applyCloudSnapshot(data, 'test-metadata', { revision: 1 }, { allowRecovery: true });
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+  assert.equal(JSON.parse(localStorage.getItem(safetyKey)).pendingWrite, damaged);
+  assert.equal(JSON.parse(localStorage.getItem('test-metadata')).revision, 1);
+});
+
+test('startup rolls back an interrupted full recovery and keeps the prior damaged journal', t => {
+  t.mock.method(console, 'error', () => {});
+  const member = newMember(), originalMembers = localStorage.getItem(membersKey);
+  const journalKey = 'hairstudio_pending_write_v1', damaged = '{broken';
+  const changedMembers = JSON.stringify([{ ...localDb.getMemberById(member.id), name: 'partial replacement' }]);
+  localStorage.setItem(journalKey, JSON.stringify({ version: 1, previousJournal: damaged, writes: [
+    { key: membersKey, value: changedMembers, previous: originalMembers },
+    { key: 'test-cloud-metadata', value: '{"revision":2}', previous: '{"revision":1}' }
+  ] }));
+  localStorage.setItem(membersKey, changedMembers);
+  localStorage.setItem('test-cloud-metadata', '{"revision":2}');
+  assert.throws(() => localDb.init(), /未完成的数据恢复/);
+  assert.equal(localStorage.getItem(membersKey), originalMembers);
+  assert.equal(localStorage.getItem('test-cloud-metadata'), '{"revision":1}');
+  assert.equal(localStorage.getItem(journalKey), damaged);
+  assert.equal(localDb.readRecoveryState().pendingWrite, damaged);
+});
 
 test('debt requires explicit acknowledgement and stays exact through more consumption and repayment', () => {
   const member = newMember('20.01');

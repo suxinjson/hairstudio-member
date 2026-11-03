@@ -1,10 +1,22 @@
 const financialFields = ['balance', 'total_recharge', 'total_consume'];
 
+export const normalizeMemberPhone = phone => phone.trim();
+
+function indexLedgers(records) {
+  const byId = new Map(), byMember = new Map();
+  for (const record of records) {
+    byId.set(record.id, record);
+    if (!byMember.has(record.memberId)) byMember.set(record.memberId, []);
+    byMember.get(record.memberId).push(record);
+  }
+  return { byId, byMember };
+}
+
 export function validateActiveMemberPhones(members) {
   const phones = new Set();
   for (const member of members) {
     if (member.isArchived) continue;
-    const phone = member.phone.trim();
+    const phone = normalizeMemberPhone(member.phone);
     if (!phone || phones.has(phone)) {
       throw new Error('账本包含空手机号或重复的在用会员手机号，请核对后恢复');
     }
@@ -38,15 +50,10 @@ export function normalizeRefunds(records) {
 export function restoreArchivedMembers(members, ledgers) {
   const restored = members.map(member => ({ ...member }));
   const ids = new Set(restored.map(member => member.id));
-  const missing = new Map();
-  for (const record of ledgers) {
-    if (!ids.has(record.memberId)) {
-      if (!missing.has(record.memberId)) missing.set(record.memberId, []);
-      missing.get(record.memberId).push(record);
-    }
-  }
-  for (const [id, history] of missing) {
-    const totals = ledgerEffects(history, ledgers);
+  const { byId, byMember } = indexLedgers(ledgers);
+  for (const [id, history] of byMember) {
+    if (ids.has(id)) continue;
+    const totals = ledgerEffects(history, byId);
     const latest = history[0];
     if (!id || latest.balanceAfter !== 0 || totals.balance !== 0 ||
         totals.total_recharge < 0 || totals.total_consume < 0) {
@@ -62,8 +69,7 @@ export function restoreArchivedMembers(members, ledgers) {
   return restored;
 }
 
-function ledgerEffects(records, allRecords) {
-  const byId = new Map(allRecords.map(record => [record.id, record]));
+function ledgerEffects(records, byId) {
   const result = { balance: 0, total_recharge: 0, total_consume: 0 };
   for (const record of records) {
     result.balance += record.changeAmount;
@@ -80,24 +86,24 @@ function ledgerEffects(records, allRecords) {
 }
 
 export function validateAccountHistory(members, ledgers) {
+  const { byId, byMember } = indexLedgers(ledgers);
   for (const member of members) {
     // 流水按写入顺序存储；手机时间回拨也不能改变资金变动顺序。
-    const history = ledgers.filter(record => record.memberId === member.id);
+    const history = byMember.get(member.id) || [];
     if (!history.length) continue; // 兼容旧版只有期初余额、尚无流水的档案。
-    const chronological = [...history].reverse();
-    const effects = ledgerEffects(history, ledgers);
+    const effects = ledgerEffects(history, byId);
     const openingRecharge = member.total_recharge - effects.total_recharge;
     const openingConsume = member.total_consume - effects.total_consume;
     if (member.balance !== history[0].balanceAfter || openingRecharge < 0 || openingConsume < 0 ||
-        openingRecharge - openingConsume !== chronological[0].balanceBefore ||
-        chronological.some((record, index) => index > 0 && record.balanceBefore !== chronological[index - 1].balanceAfter)) {
+        openingRecharge - openingConsume !== history.at(-1).balanceBefore ||
+        history.some((record, index) => index + 1 < history.length && record.balanceBefore !== history[index + 1].balanceAfter)) {
       throw new Error(`会员「${member.name}」的余额与流水不一致，请核对账本后恢复`);
     }
   }
 }
 
-function assertExtension(earlier, later, additions, history) {
-  const delta = ledgerEffects(additions, history);
+function assertExtension(earlier, later, additions, byId) {
+  const delta = ledgerEffects(additions, byId);
   if (financialFields.some(field => !Number.isSafeInteger(earlier[field] + delta[field]) ||
       earlier[field] + delta[field] !== later[field])) {
     throw new Error(`会员「${earlier.name}」的余额与流水不一致，无法自动合并；请核对两份账本`);
@@ -109,6 +115,7 @@ export function mergeAccounts(current, incoming) {
   const members = current.members.map(member => ({ ...member }));
   const ledgers = normalizeRefunds(current.ledgers);
   const backupLedgers = normalizeRefunds(incoming.ledgers);
+  const currentIndex = indexLedgers(ledgers), backupIndex = indexLedgers(backupLedgers);
   const idMap = new Map(members.map(member => [member.id, member]));
   // 先为整份备份保留固定 ID 匹配，避免复用的旧手机号抢占另一位会员。
   const incomingIds = new Set(incoming.members.map(member => member.id));
@@ -129,7 +136,7 @@ export function mergeAccounts(current, incoming) {
       throw new Error('备份中的多个会员指向同一档案，无法自动合并');
     }
     const finalId = currentMember?.id || backupMember.id;
-    const backupHistory = backupLedgers.filter(record => record.memberId === backupMember.id)
+    const backupHistory = (backupIndex.byMember.get(backupMember.id) || [])
       .map(record => ({ ...record, memberId: finalId }));
     for (const record of backupHistory) {
       const existing = ledgerMap.get(record.id);
@@ -148,7 +155,7 @@ export function mergeAccounts(current, incoming) {
     } else {
       usedCurrentIds.add(currentMember.id);
       const previousMember = { ...currentMember };
-      const currentHistory = ledgers.filter(record => record.memberId === currentMember.id);
+      const currentHistory = currentIndex.byMember.get(currentMember.id) || [];
       const currentIds = new Set(currentHistory.map(record => record.id));
       const backupIds = new Set(backupHistory.map(record => record.id));
       const newRecords = backupHistory.filter(record => !currentIds.has(record.id));
@@ -157,11 +164,11 @@ export function mergeAccounts(current, incoming) {
         throw new Error(`会员「${currentMember.name}」的两份账本都有独立交易，无法自动合并；请核对后选择完整账本恢复`);
       }
       if (newRecords.length) {
-        assertExtension(currentMember, backupMember, newRecords, backupHistory);
+        assertExtension(currentMember, backupMember, newRecords, backupIndex.byId);
         backupHistory.forEach((record, index) => historyOrder.set(record.id, index));
         for (const field of financialFields) currentMember[field] = backupMember[field];
       } else {
-        assertExtension(backupMember, currentMember, localOnly, currentHistory);
+        assertExtension(backupMember, currentMember, localOnly, currentIndex.byId);
       }
 
       const incomingTime = Date.parse(backupMember.updated_at);
@@ -200,9 +207,10 @@ export function mergeAccounts(current, incoming) {
   }
   // 任何重复冲正或缺失关联都会在写入前阻断。
   const mergedLedgers = normalizeRefunds(ledgers);
+  const mergedIndex = indexLedgers(mergedLedgers);
   const sortTimes = new Map();
   for (const member of members) {
-    const history = mergedLedgers.filter(record => record.memberId === member.id)
+    const history = (mergedIndex.byMember.get(member.id) || [])
       .sort((a, b) => historyOrder.get(b.id) - historyOrder.get(a.id));
     let lastTime = 0;
     for (const record of history) {

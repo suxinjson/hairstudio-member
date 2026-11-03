@@ -13,14 +13,18 @@ export async function publishRelease(pool, manifest, bytes, directory, expectedC
       typeof manifest.versionName !== 'string' || manifest.versionName.length > 64 ||
       digest(bytes) !== manifest.sha256 || bytes.length !== manifest.size) throw new Error('更新版本、文件校验或固定签名证书不匹配');
   const fileName = manifest.sha256 + '.apk';
-  await mkdir(directory, { recursive: true });
-  const temporary = join(resolve(directory), randomUUID() + '.part');
-  await writeFile(temporary, bytes);
-  await rename(temporary, join(resolve(directory), fileName));
   return transaction(pool, async client => {
     await client.query("SELECT pg_advisory_xact_lock(739185)");
-    const { rows: [latest] } = await client.query('SELECT version_code FROM releases ORDER BY version_code DESC LIMIT 1');
-    if (latest && latest.version_code >= manifest.versionCode) throw new Error('新版本号必须高于已发布版本');
+    const { rows: [latest] } = await client.query('SELECT * FROM releases ORDER BY version_code DESC LIMIT 1');
+    const sameRelease = latest?.version_code === manifest.versionCode && latest.sha256 === manifest.sha256 &&
+      latest.version_name === manifest.versionName && latest.app_id === manifest.appId && Number(latest.size) === manifest.size &&
+      latest.certificate_sha256 === certificate && latest.min_sdk === (manifest.minSdk || 24) && latest.notes === (manifest.notes || '');
+    if (latest && latest.version_code >= manifest.versionCode && !sameRelease) throw new Error('新版本号必须高于已发布版本，已有版本不能对应不同安装包或清单');
+    await mkdir(directory, { recursive: true });
+    const temporary = join(resolve(directory), randomUUID() + '.part');
+    await writeFile(temporary, bytes);
+    await rename(temporary, join(resolve(directory), fileName));
+    if (sameRelease) return { versionCode: manifest.versionCode, fileName, unchanged: true };
     await client.query('INSERT INTO releases(version_code,version_name,app_id,sha256,size,file_name,certificate_sha256,min_sdk,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
       [manifest.versionCode, manifest.versionName, manifest.appId, manifest.sha256, manifest.size, fileName, certificate, manifest.minSdk || 24, manifest.notes || '']);
     return { versionCode: manifest.versionCode, fileName };

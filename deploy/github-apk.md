@@ -81,3 +81,24 @@ Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路�
 成功后在该次运行页面 **Artifacts** 下载 `hairstudio-member-版本号`，解压获得 APK 和 `update-manifest.json`。安装包覆盖升级要求保持同一包名、签名密钥，并使用更高的 `versionCode`。
 
 仅使用网页版不需要 APK 签名；配置缺失不会影响已部署网站的账号登录和记账。需要向云服务器发布 APK 更新时，再按 [部署维护说明](README.md#发布-apk-更新)填写服务器 `.env` 中同一个 Android 签名指纹并发布安装包。
+
+## 6. 自动 SSH 部署的服务器主机密钥
+
+启用自动部署需要 Secrets `SERVER_SSH_KEY` 和 `SERVER_KNOWN_HOSTS`。后者用于确认连接的是自己的服务器；缺少配置或服务器主机密钥不匹配时，工作流会停止部署。原有 `SERVER_HOST`、`SERVER_USER`、`SERVER_PORT` 和 `SERVER_DEPLOY_PATH` 继续可用。
+
+通过云服务商控制台终端或已核验身份的 SSH 连接，在服务器执行：
+
+```bash
+sudo cat /etc/ssh/ssh_host_ed25519_key.pub
+sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+只复制公钥，按实际访问地址组成一行并填入 `SERVER_KNOWN_HOSTS`：
+
+```text
+124.70.184.136 ssh-ed25519 AAAA...服务器公钥的完整 Base64...
+```
+
+若 `SERVER_PORT` 为非默认端口，例如 2222，主机字段使用 `[124.70.184.136]:2222`；域名部署则使用实际 `SERVER_HOST`。可保存多行公钥。不要仅凭未经核验的 `ssh-keyscan` 结果建立信任，不要复制服务器私钥。更换服务器主机密钥后，需要核对新指纹并更新此 Secret。
+
+工作流按仓库串行发布，每次运行和重试使用独立的远程临时文件。服务器的 `deploy/install-update.sh` 在同一把锁内检查版本、安装代码、更新容器和发布 APK；旧版本任务会在覆盖代码前跳过。部署失败后可重试相同版本，同版且同内容的 APK 发布也可重试。

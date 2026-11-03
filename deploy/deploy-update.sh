@@ -9,6 +9,11 @@ elif [ -f "$SCRIPT_DIR/../compose.yaml" ]; then
   cd "$SCRIPT_DIR/.."
 fi
 
+if [ "${1:-}" != '--lock-held' ]; then
+  exec 9>"$PWD/.member-deploy.lock"
+fi
+flock 9
+
 echo "=========================================================="
 echo "  梦飞空间会员管家 - 服务器自动部署与 APK 发布更新"
 echo "=========================================================="
@@ -77,9 +82,15 @@ fi
 echo "✅ HTTPS 服务正常且证书有效！($HEALTH_URL 响应 200 OK)"
 
 echo ">>> [3/3] 正在自动发布最新安卓 APK 到云端更新库..."
-# 优先寻找 releases 目录下的最新 APK 与 manifest
-APK_FILE=$(ls -t releases/hairstudio-member-v*.apk 2>/dev/null | head -n 1 || true)
+# 按本次清单选取 APK，不能按修改时间误选其他运行留下的安装包。
 MANIFEST_FILE="releases/update-manifest.json"
+APK_FILE=''
+if [ -f "$MANIFEST_FILE" ]; then
+  VERSION_NAME=$(sed -nE 's/^[[:space:]]*"versionName"[[:space:]]*:[[:space:]]*"([a-zA-Z0-9._-]+)",?[[:space:]]*$/\1/p' "$MANIFEST_FILE")
+  if [ -z "$VERSION_NAME" ]; then echo '❌ 更新清单缺少有效版本名称，停止发布。'; exit 1; fi
+  APK_FILE="releases/hairstudio-member-v${VERSION_NAME}.apk"
+  if [ ! -f "$APK_FILE" ]; then echo '❌ 更新清单对应的 APK 不存在，停止发布。'; exit 1; fi
+fi
 
 if [ -n "$APK_FILE" ] && [ -f "$MANIFEST_FILE" ]; then
   echo "正在发布: $APK_FILE"
