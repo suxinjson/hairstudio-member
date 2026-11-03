@@ -12,7 +12,9 @@ const workflow = readFileSync(new URL('../.github/workflows/build-apk.yml', impo
 function stepScript(name) {
   const lines = workflow.split('\n');
   const step = lines.findIndex(line => line.includes(name));
-  const start = lines.findIndex((line, index) => index > step && line.trim() === 'run: |');
+  const start = lines.findIndex((line, index) => index > step && line.trim().startsWith('run: '));
+  assert.ok(step >= 0 && start > step, `Missing workflow step: ${name}`);
+  if (lines[start].trim() !== 'run: |') return 'set -e\n' + lines[start].trim().slice(5);
   const script = [];
   for (let index = start + 1; index < lines.length; index++) {
     if (lines[index] && !lines[index].startsWith('        ')) break;
@@ -60,6 +62,40 @@ test('release signing accepts only a valid fixed certificate fingerprint', { ski
   const result = run(script, directory, configured);
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(readFileSync(join(directory, 'hairstudio-release.jks'), 'utf8'), 'fixture key');
+});
+
+test('signing configuration keeps passwords out of later step environments and logs', { skip: !bashAvailable }, t => {
+  const { directory, env } = fixture(t);
+  const configured = { ...env, SIGNING_KEYSTORE_BASE64: Buffer.from('fixture private signing key').toString('base64'),
+    RELEASE_STORE_PASSWORD: 'store-secret\nUNEXPECTED_ENV=injected', RELEASE_KEY_ALIAS: 'release-alias',
+    RELEASE_KEY_PASSWORD: 'key-secret', RELEASE_CERT_SHA256: 'a'.repeat(64) };
+  const result = run(stepScript('6. 配置发布签名'), directory, configured);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const exported = readFileSync(join(directory, 'github-env'), 'utf8');
+  const entries = exported.trim().split('\n');
+  assert.equal(entries.length, 1);
+  assert.match(entries[0], /^RELEASE_STORE_FILE=.*\/hairstudio-release\.jks$/);
+  for (const secret of [configured.RELEASE_STORE_PASSWORD, configured.RELEASE_KEY_PASSWORD, configured.SIGNING_KEYSTORE_BASE64]) {
+    assert.ok(!exported.includes(secret));
+    assert.ok(!(result.stdout + result.stderr).includes(secret));
+  }
+  assert.ok(!exported.includes('UNEXPECTED_ENV'));
+});
+
+test('credential cleanup removes signing and deployment keys and is safe to retry', { skip: !bashAvailable }, t => {
+  const { directory, env } = fixture(t);
+  for (const name of ['hairstudio-release.jks', 'member-deploy-key', 'member-deploy-known-hosts', 'unrelated']) {
+    writeFileSync(join(directory, name), 'fixture');
+  }
+  const cleanup = stepScript('清理发布签名临时文件') + '\n' + stepScript('清理 SSH 部署临时凭据');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = run(cleanup, directory, env);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    for (const name of ['hairstudio-release.jks', 'member-deploy-key', 'member-deploy-known-hosts']) {
+      assert.equal(existsSync(join(directory, name)), false);
+    }
+    assert.equal(readFileSync(join(directory, 'unrelated'), 'utf8'), 'fixture');
+  }
 });
 
 test('APK certificate mismatch prevents publication', { skip: !bashAvailable }, t => {

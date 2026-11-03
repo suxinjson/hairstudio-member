@@ -181,6 +181,25 @@ test('SSH deployment requires a matching pinned host and uses strict checking wi
   assert.ok(calls.split('\n').filter(Boolean).every(line => line.includes('StrictHostKeyChecking=yes')));
   assert.match(calls, /member-update-100-1\.tar\.gz/); assert.match(calls, /member-update-100-2\.tar\.gz/);
   assert.ok(!calls.includes('eval echo'));
+  await mkdir(join(directory, 'deploy'));
+  await writeFile(join(directory, 'deploy/ssh_known_hosts'), '124.70.184.136 ssh-ed25519 AAAA\n');
+  const missingDefault = run(command, directory, { ...env, SERVER_HOST: '124.70.184.136', SERVER_PORT: '22' });
+  assert.notEqual(missingDefault.status, 0);
+  assert.match(missingDefault.stdout, /Missing SERVER_KNOWN_HOSTS/);
+  assert.equal(await readFile(join(directory, 'ssh.log'), 'utf8'), calls);
+  const defaultSecret = { ...env, SERVER_HOST: '124.70.184.136', SERVER_PORT: '22',
+    SERVER_KNOWN_HOSTS: '124.70.184.136 ssh-ed25519 AAAA', GITHUB_RUN_ATTEMPT: '3' };
+  const configured = run(command, directory, defaultSecret);
+  assert.equal(configured.status, 0, configured.stdout + configured.stderr);
+  assert.equal(await readFile(join(directory, 'member-deploy-known-hosts'), 'utf8'), defaultSecret.SERVER_KNOWN_HOSTS + '\n');
+  const beforeRejected = await readFile(join(directory, 'ssh.log'), 'utf8');
+  const customServer = run(command, directory, env);
+  assert.notEqual(customServer.status, 0);
+  assert.match(customServer.stdout, /Missing SERVER_KNOWN_HOSTS/);
+  assert.equal(await readFile(join(directory, 'ssh.log'), 'utf8'), beforeRejected);
+  const badOverride = run(command, directory, { ...env, SERVER_HOST: '124.70.184.136', SERVER_PORT: '22', SERVER_KNOWN_HOSTS: 'other.example.com ssh-ed25519 AAAA' });
+  assert.notEqual(badOverride.status, 0);
+  assert.equal(await readFile(join(directory, 'ssh.log'), 'utf8'), beforeRejected);
 });
 
 test('IPv4 deployment consistently loads the IP certificate configuration', { skip: !bashAvailable }, async t => {

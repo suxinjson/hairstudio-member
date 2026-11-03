@@ -6,6 +6,8 @@
 
 没有域名时，可使用 [公网 IP HTTPS 部署方案](ip-https.md)，通过 Certbot 申请公开信任的 IP 证书并自动续期。接口权限与防护的检查结果见 [接口安全审查](security-review.md)。
 
+GitHub 账号、自动部署和服务器的安全配置步骤见 [安全配置说明](security-configuration.md)。
+
 ## 首次启动
 
 1. 将域名 A/AAAA 记录指向服务器，开放 TCP 80/443；80 用于 HTTPS 证书申请和跳转。
@@ -33,7 +35,7 @@ App 的默认云服务器地址已设为 `https://124.70.184.136`。使用 IP �
 
 自动更新脚本 `bash deploy/deploy-update.sh` 按 `.env` 中的 `PUBLIC_DOMAIN` 选择证书配置：IPv4 地址使用 `deploy/compose.ip.yaml`，域名使用标准配置。宿主机的其他 Certbot 目录不会改变此选择。Caddy 配置必须校验通过，HTTPS 健康接口须在最多 12 次探测内返回 200（每次最多等待 15 秒，失败间隔 5 秒），否则脚本返回非零状态并停止 APK 发布。持续失败时先检查输出的 Web/API 日志，再重新部署。
 
-自动 SSH 部署还须配置已核验的 `SERVER_KNOWN_HOSTS`，步骤见 [GitHub 部署主机密钥配置](github-apk.md#6-自动-ssh-部署的服务器主机密钥)。更新包通过 `bash deploy/install-update.sh ~/member 更新包.tar.gz` 安装，使用 `flock`（Ubuntu 的 util-linux 提供）锁定版本检查、解压及发布全过程。旧版本在替换代码前跳过；失败后可重试相同或更新版本。`.member-deployment-version` 记录已开始部署的版本下限，请保留该文件；普通 `deploy-update.sh` 也使用同一把锁。
+自动 SSH 部署从 GitHub Actions Secrets 读取 `SERVER_SSH_KEY` 和 `SERVER_KNOWN_HOSTS`，服务器主机公钥不再从仓库文件加载；缺少公钥时停止部署。配置名称和值见 [GitHub 部署主机密钥配置](github-apk.md#6-自动-ssh-部署的服务器主机密钥)。更新包通过 `bash deploy/install-update.sh ~/member 更新包.tar.gz` 安装，使用 `flock`（Ubuntu 的 util-linux 提供）锁定版本检查、解压及发布全过程。旧版本在替换代码前跳过；失败后可重试相同或更新版本。`.member-deployment-version` 记录已开始部署的版本下限，请保留该文件；普通 `deploy-update.sh` 也使用同一把锁。
 
 ## 权限与离线边界
 

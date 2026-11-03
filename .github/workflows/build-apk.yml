@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: member-release-${{ github.repository }}
   cancel-in-progress: false
@@ -16,20 +19,22 @@ jobs:
     env:
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: 1.0.${{ github.run_number }}
-      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SERVER_DEPLOY_ENABLED: ${{ secrets.SERVER_SSH_KEY != '' }}
 
     steps:
     - name: 1. 拉取项目源码
-      uses: actions/checkout@v5
+      uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      with:
+        persist-credentials: false
 
     - name: 2. 安装 Node.js 22
-      uses: actions/setup-node@v5
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
       with:
         node-version: 22
         cache: 'npm'
 
     - name: 3. 安装 Java 21 (Capacitor 7 官方要求)
-      uses: actions/setup-java@v5
+      uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
       with:
         distribution: 'temurin'
         java-version: '21'
@@ -66,9 +71,6 @@ jobs:
         printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
         chmod 600 "$KEYSTORE_PATH"
         echo "RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
-        echo "RELEASE_STORE_PASSWORD=$RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
-        echo "RELEASE_KEY_ALIAS=$RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
-        echo "RELEASE_KEY_PASSWORD=$RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
 
     - name: 7. 接受 Android SDK 协议与修复执行权限
       run: |
@@ -77,9 +79,17 @@ jobs:
         chmod +x ./android/gradlew
 
     - name: 8. 执行 Gradle 编译生成 APK
+      env:
+        RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
       run: |
         cd android
         ./gradlew validateReleaseSigning assembleRelease --no-daemon --stacktrace
+
+    - name: 清理发布签名临时文件
+      if: ${{ always() }}
+      run: rm -f -- "$RUNNER_TEMP/hairstudio-release.jks"
 
     - name: 9. 校验 APK 签名
       env:
@@ -117,15 +127,16 @@ jobs:
         tar -czf "output_apk/server-update-v${VERSION_NAME}.tar.gz" -C deploy_bundle .
 
     - name: 12. 上传安装包与服务端更新产物供备用下载
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
         name: hairstudio-member-${{ env.VERSION_NAME }}
         path: output_apk/*
         retention-days: 30
 
     - name: 13. [方案B] 自动 SSH 远程部署到云服务器并发布新版 APK
-      if: ${{ env.SERVER_SSH_KEY != '' }}
+      if: ${{ env.SERVER_DEPLOY_ENABLED == 'true' }}
       env:
+        SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
         SERVER_HOST: ${{ secrets.SERVER_HOST || '124.70.184.136' }}
         SERVER_USER: ${{ secrets.SERVER_USER || 'ubuntu' }}
         SERVER_PORT: ${{ secrets.SERVER_PORT || '22' }}
@@ -146,7 +157,7 @@ jobs:
         chmod 600 "$KNOWN_HOSTS"
         HOST_MATCH="$SERVER_HOST"
         if [ "$SERVER_PORT" != '22' ]; then HOST_MATCH="[$SERVER_HOST]:$SERVER_PORT"; fi
-        ssh-keygen -F "$HOST_MATCH" -f "$KNOWN_HOSTS" > /dev/null || { echo "::error::SERVER_KNOWN_HOSTS has no verified key for $HOST_MATCH"; exit 1; }
+        ssh-keygen -F "$HOST_MATCH" -f "$KNOWN_HOSTS" > /dev/null || { echo "::error::No pinned SSH host key for $HOST_MATCH; configure SERVER_KNOWN_HOSTS (see deploy/github-apk.md)"; exit 1; }
 
         SSH_OPTS=(-i "$SSH_KEY_PATH" -p "$SERVER_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS" -o BatchMode=yes -o ConnectTimeout=30)
         SCP_OPTS=(-i "$SSH_KEY_PATH" -P "$SERVER_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS" -o BatchMode=yes -o ConnectTimeout=30)
@@ -165,3 +176,7 @@ jobs:
         printf -v CLEANUP_COMMAND 'rm -f -- %q %q' "$REMOTE_INSTALLER" "$REMOTE_BUNDLE"
         ssh "${SSH_OPTS[@]}" "$SERVER_USER@$SERVER_HOST" "$CLEANUP_COMMAND"
         echo ">>> 🎉 云服务器自动部署及 APK 发布成功完成！手机端已可检查更新！"
+
+    - name: 清理 SSH 部署临时凭据
+      if: ${{ always() }}
+      run: rm -f -- "$RUNNER_TEMP/member-deploy-key" "$RUNNER_TEMP/member-deploy-known-hosts"

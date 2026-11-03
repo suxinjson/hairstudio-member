@@ -4,6 +4,8 @@
 
 当前工作流固定使用 Ubuntu 24.04、Node.js 22 和 Java 21，采用运行在 Node.js 24 上的 checkout v5、setup-node v5、setup-java v5、upload-artifact v6。Actions 自身的 Node.js 版本与用于编译项目的 Node.js 版本分别配置。
 
+这些 Actions 固定到完整提交 SHA，Dependabot 每周检查更新。工作流令牌仅授予 `contents: read`，checkout 不保留 Git 访问凭据。SSH 私钥只注入部署步骤，签名密码只注入签名配置和 Gradle 编译步骤；临时签名文件和 SSH 凭据在对应步骤结束后清理，失败时也执行清理。
+
 ## 1. 确认是否已有签名文件
 
 如果以前使用固定发布签名生成过此应用的 APK，请找到原来的 `.jks` 或 `.keystore`、别名和密码，直接从第 3 步继续。覆盖升级必须使用同一签名；生成新密钥不能恢复原签名。
@@ -84,7 +86,41 @@ Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路�
 
 ## 6. 自动 SSH 部署的服务器主机密钥
 
-启用自动部署需要 Secrets `SERVER_SSH_KEY` 和 `SERVER_KNOWN_HOSTS`。后者用于确认连接的是自己的服务器；缺少配置或服务器主机密钥不匹配时，工作流会停止部署。原有 `SERVER_HOST`、`SERVER_USER`、`SERVER_PORT` 和 `SERVER_DEPLOY_PATH` 继续可用。
+启用自动部署需要两个 repository Secrets：`SERVER_SSH_KEY` 和 `SERVER_KNOWN_HOSTS`。两者均从 GitHub Actions 读取，服务器公钥不再从仓库文件加载。此前构建已通过签名和产物上传，只因缺少 `SERVER_KNOWN_HOSTS` 停止部署；已有签名 Secrets、SSH 私钥和证书 Variable 应沿用。
+
+在 [仓库 Actions Secrets 设置](https://github.com/suxinjson/hairstudio-member/settings/secrets/actions) 点击 **New repository secret**。自动构建并部署需保存以下六项 Secrets（已存在的保留原值）：
+
+| Secret 名称 | 填入的值 |
+| --- | --- |
+| `SIGNING_KEYSTORE_BASE64` | 原 APK 发布 keystore 文件的单行 Base64，沿用现有值 |
+| `RELEASE_STORE_PASSWORD` | 原 keystore 文件密码，沿用现有值 |
+| `RELEASE_KEY_ALIAS` | 原发布密钥别名，沿用现有值；仅按本文示例创建的密钥使用 `hairstudio-release` |
+| `RELEASE_KEY_PASSWORD` | 原发布密钥密码，沿用现有值 |
+| `SERVER_SSH_KEY` | 服务器部署用户已授权的客户端私钥全文，包含首尾标记和换行；沿用现有可用值 |
+| `SERVER_KNOWN_HOSTS` | 下方完整的一行服务器主机公钥 |
+
+对于默认服务器 `124.70.184.136:22`，`SERVER_KNOWN_HOSTS` 的值是：
+
+```text
+124.70.184.136 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINOiEfqESq838P+gsV4bkFIdfXr/PjFV236dgVtdWI7X
+```
+
+这行是公钥，来源为本机已有 SSH 信任记录；主机公钥在本次 SSH 连接中匹配，但本机默认客户端私钥未获服务器登录授权，不应据此覆盖现有 `SERVER_SSH_KEY`。主机公钥指纹为 `SHA256:xYhtiUEX0Pa4qAt3qCBO7dJpGXXGrQf0gy4pMlG3UYg`；Secret 填完整公钥行，不能只填指纹。
+
+以下四项也是 repository Secrets，但可不创建；未设置时使用表中默认值。已有覆盖配置按实际值保留，尤其是 SSH 用户名和项目路径：
+
+| Secret 名称 | 当前默认值 |
+| --- | --- |
+| `SERVER_HOST` | `124.70.184.136` |
+| `SERVER_USER` | `ubuntu` |
+| `SERVER_PORT` | `22` |
+| `SERVER_DEPLOY_PATH` | `~/member` |
+
+在 [仓库 Actions Variables 设置](https://github.com/suxinjson/hairstudio-member/settings/variables/actions) 保留 `RELEASE_CERT_SHA256`。本机保存的 `1.0.27` 发布清单记录为 `da28115caa57eedb2e6adf802a8348209e5190d91b5b6767bb6a3119ad6a0041`；优先沿用当前已成功构建的 Variable 值。该值是 APK 签名证书指纹，与 SSH 主机指纹不同。
+
+`GITHUB_TOKEN` 由 GitHub 自动生成，不用手动创建 Secret。数据库密码仍保存在服务器 `.env` 中，当前工作流不读取它们。配置保存后提交并推送本次代码，再发起新的工作流；Secrets 无法反向读取明文，未知私钥和密码应从原始安全备份取回，不能从名称推算。
+
+主机没有对应的固定公钥或实际密钥不匹配时，工作流会停止部署。SSH/SCP 始终使用 `StrictHostKeyChecking=yes`。自定义服务器或端口时，按以下方式核对并设置公钥。
 
 通过云服务商控制台终端或已核验身份的 SSH 连接，在服务器执行：
 
