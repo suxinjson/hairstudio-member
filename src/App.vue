@@ -610,25 +610,27 @@
     <div 
       v-if="consumingMember" 
       class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
-      @click.self="consumingMember = null"
+      @click.self="closeConsumeModal"
     >
-      <div class="bg-white rounded-t-[32px] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
-        <!-- 弹窗把手 -->
-        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
+      <div class="bg-white rounded-t-[32px] max-h-[92vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full overflow-hidden">
+        <!-- 弹窗把手 (固定顶部) -->
+        <div class="pt-2.5 pb-1 flex-shrink-0">
+          <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto"></div>
+        </div>
 
-        <!-- 弹窗顶栏 -->
-        <div class="modal-header px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+        <!-- 弹窗顶栏 (固定顶部) -->
+        <div class="modal-header px-5 py-2.5 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
           <div class="modal-header-copy">
             <div class="modal-title font-black text-xl text-slate-900 flex items-center space-x-2">
               <span>✂️ 剪发扣款</span>
-              <span class="text-indigo-600">— {{ consumingMember.name }}</span>
+              <span class="text-indigo-600 truncate max-w-[170px]">— {{ consumingMember.name }}</span>
             </div>
             <div class="text-sm text-slate-500 font-semibold mt-0.5">
               卡内可用余额：<strong class="text-indigo-600 text-lg font-black tabular-nums">¥ {{ formatCent(consumingMember.balance) }}</strong>
             </div>
           </div>
           <button 
-            @click="consumingMember = null" 
+            @click="closeConsumeModal" 
             class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold active:bg-slate-200 btn-press"
           >
             ✕
@@ -636,58 +638,154 @@
         </div>
 
         <!-- 顾客发型习惯便签 -->
-        <div v-if="consumingMember.notes" class="px-5 py-2.5 bg-amber-50 border-b border-amber-100 text-xs text-amber-900 font-bold flex items-center space-x-1.5">
+        <div v-if="consumingMember.notes" class="px-5 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-900 font-bold flex items-center space-x-1.5 flex-shrink-0">
           <span>💇 发型偏好：</span>
-          <span>{{ consumingMember.notes }}</span>
+          <span class="truncate">{{ consumingMember.notes }}</span>
         </div>
 
-        <!-- 金额展示区 (超大数字) -->
-        <div class="p-4 bg-slate-50/90 text-center border-b border-slate-200">
-          <div class="text-xs font-black text-slate-400 uppercase tracking-wider">本次扣款金额 (元)</div>
-          <div class="text-5xl font-black text-slate-900 tracking-tight tabular-nums mt-1 flex items-center justify-center">
-            <span class="text-3xl mr-1.5 text-slate-400">¥</span>
-            <span>{{ consumeAmountStr || '0.00' }}</span>
+        <!-- ===== 中间可滚动区域 (包含金额卡片、服务快捷选择、备注输入) ===== -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-3.5 min-h-0">
+          <!-- 金额展示卡片 (点击调出键盘，支持直接修改金额，高亮焦点态) -->
+          <div 
+            @click="openConsumeKeypad"
+            class="p-4 rounded-2xl border-2 transition-all cursor-pointer select-none"
+            :class="showConsumeKeypad ? 'border-indigo-500/70 bg-indigo-50/40 shadow-sm ring-2 ring-indigo-200/50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100/70'"
+          >
+            <div class="flex items-center justify-between">
+              <div class="text-xs font-black uppercase tracking-wider" :class="showConsumeKeypad ? 'text-indigo-600' : 'text-slate-500'">
+                本次扣款金额 (元)
+              </div>
+              <div class="flex items-center space-x-2">
+                <span v-if="showConsumeKeypad" class="text-xs font-bold text-indigo-500 flex items-center space-x-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-ping"></span>
+                  <span>可尾部修改</span>
+                </span>
+                <button 
+                  v-if="consumeAmountStr" 
+                  @click.stop="clearConsumeAmount"
+                  type="button"
+                  class="text-xs text-slate-500 hover:text-slate-800 bg-slate-200/80 hover:bg-slate-300 px-2 py-0.5 rounded-full font-bold transition"
+                  title="清空金额"
+                >
+                  ✕ 清空
+                </button>
+              </div>
+            </div>
+
+            <!-- 超大数字显示 (尾部修改光标指示) -->
+            <div class="text-5xl font-black text-slate-900 tracking-tight tabular-nums mt-1 flex items-center justify-center py-1">
+              <span class="text-3xl mr-1.5 text-slate-400 font-bold">¥</span>
+              <span>{{ consumeAmountStr || '0.00' }}</span>
+              <!-- 输入光标效果 (处于激活编辑态时在末尾闪烁，表明在尾部直接修改) -->
+              <span 
+                v-if="showConsumeKeypad" 
+                class="w-1 h-9 bg-indigo-600 ml-1.5 rounded-full animate-pulse"
+              ></span>
+            </div>
+
+            <!-- 余额不足红字警示 -->
+            <div v-if="isConsumeOverBalance" class="text-center mt-2">
+              <div class="text-xs text-rose-600 font-black bg-rose-50 border border-rose-200 py-1 px-3 rounded-xl inline-block">
+                ⚠️ 扣款金额超过当前卡内余额（¥{{ formatCent(consumingMember.balance) }}），无法扣费！
+              </div>
+            </div>
+            
+            <div v-else class="text-center mt-1.5">
+              <span class="text-[11px] font-bold" :class="showConsumeKeypad ? 'text-indigo-500' : 'text-slate-400'">
+                💡 点击此处数字或下方服务价格可唤起数字键盘直接修改
+              </span>
+            </div>
           </div>
 
-          <!-- 余额不足红字警示 -->
-          <div v-if="isConsumeOverBalance" class="text-xs text-rose-600 font-black mt-2 bg-rose-50 border border-rose-200 py-1.5 px-3.5 rounded-xl inline-block">
-            ⚠️ 扣款金额超过当前卡内余额，无法扣费！
+          <!-- 常用理发服务一键快捷带入 (点击带入项目金额并弹出键盘) -->
+          <div>
+            <div class="text-xs font-black text-slate-500 mb-2 flex items-center justify-between">
+              <span>点击一键带入常用项目与金额：</span>
+              <span class="text-[11px] text-slate-400">点击自动调出键盘可改金额</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button 
+                v-for="item in hairServices" 
+                :key="item.id"
+                @click="setConsumePreset(item)"
+                type="button"
+                class="h-11 px-3.5 rounded-2xl border-2 font-black text-sm btn-press flex items-center transition"
+                :class="consumeSummary === item.name && consumeAmountStr === item.price.toString() 
+                  ? 'border-indigo-600 bg-indigo-50 text-indigo-900 shadow-sm ring-1 ring-indigo-300' 
+                  : 'border-slate-200 bg-slate-50 active:bg-indigo-50 active:border-indigo-400 text-slate-800'"
+              >
+                {{ item.name }} (¥{{ item.price }})
+              </button>
+            </div>
           </div>
-        </div>
 
-        <!-- 常用理发服务一键快捷带入 (放大按钮) -->
-        <div class="p-4 bg-white border-b border-slate-100">
-          <div class="text-xs font-black text-slate-500 mb-2.5">点击一键带入常用项目与金额：</div>
-          <div class="flex flex-wrap gap-2.5">
-            <button 
-              v-for="item in hairServices" 
-              :key="item.id"
-              @click="setConsumePreset(item)"
-              class="h-11 px-4 rounded-2xl border-2 border-slate-200 bg-slate-50 active:bg-indigo-50 active:border-indigo-400 text-slate-800 font-black text-sm btn-press flex items-center"
-            >
-              {{ item.name }} (¥{{ item.price }})
-            </button>
-          </div>
-
-          <!-- 备注输入框 (放大到50px高度) -->
-          <div class="mt-3">
+          <!-- 备注输入框 -->
+          <div>
+            <div class="text-xs font-black text-slate-500 mb-1.5">项目明细备注：</div>
             <input 
               v-model="consumeSummary" 
               type="text" 
               placeholder="项目明细备注 (如：精致洗剪吹 + 护发素)..." 
-              class="w-full h-13 text-base px-4 bg-slate-50 rounded-2xl border-2 border-slate-200/90 focus:border-indigo-500 focus:bg-white outline-none font-bold"
+              class="w-full h-12 text-sm px-4 bg-slate-50 rounded-2xl border-2 border-slate-200/90 focus:border-indigo-500 focus:bg-white outline-none font-bold"
             />
           </div>
         </div>
 
-        <!-- 手机专属大按键数字软键盘 (64px高度大按键) -->
-        <Keypad 
-          v-model="consumeAmountStr" 
-          confirmText="确认扣除" 
-          theme="danger"
-          :disabled="isConsumeOverBalance || isSubmittingConsume || !canCloudWrite('consume')"
-          @confirm="submitConsume" 
-        />
+        <!-- ===== 底部固定下方数字键盘区 (flex-shrink-0，固定下方，绝不随页面滚动) ===== -->
+        <div class="flex-shrink-0 bg-slate-100 border-t border-slate-200/90 z-20">
+          <!-- 键盘顶端轻量控制条 -->
+          <div class="px-4 py-1.5 bg-slate-200/60 border-b border-slate-200/60 flex items-center justify-between text-xs text-slate-600 font-bold select-none">
+            <div class="flex items-center space-x-1.5">
+              <span class="text-slate-500">⌨️ 数字键盘</span>
+              <span class="text-[11px] text-slate-400 font-normal">| 随时修改金额</span>
+            </div>
+            <button 
+              type="button"
+              @click="showConsumeKeypad = !showConsumeKeypad"
+              class="text-indigo-600 hover:text-indigo-800 font-bold flex items-center space-x-1 px-2 py-0.5 rounded-lg active:bg-slate-300 transition"
+            >
+              <span>{{ showConsumeKeypad ? '收起键盘' : '展开键盘' }}</span>
+              <span class="text-[10px]">{{ showConsumeKeypad ? '▼' : '▲' }}</span>
+            </button>
+          </div>
+
+          <!-- 展开状态下的软键盘 -->
+          <div v-show="showConsumeKeypad">
+            <Keypad 
+              v-model="consumeAmountStr" 
+              confirmText="确认扣除" 
+              theme="danger"
+              :disabled="isConsumeOverBalance || isSubmittingConsume || !canCloudWrite('consume')"
+              @confirm="requestConsumeConfirmation" 
+            />
+          </div>
+
+          <!-- 收起键盘后的吸底紧凑条 -->
+          <div v-show="!showConsumeKeypad" class="p-3 bg-white flex items-center gap-3 pb-gesture-safe">
+            <button 
+              type="button"
+              @click="openConsumeKeypad"
+              class="flex-1 h-13 bg-slate-100 border-2 border-slate-200 hover:border-indigo-300 rounded-2xl flex items-center justify-between px-4 text-slate-700 font-bold active:bg-slate-200 transition"
+            >
+              <span class="flex items-center space-x-2">
+                <span class="text-xl">⌨️</span>
+                <span class="text-sm">点击弹出数字键盘修改</span>
+              </span>
+              <span class="text-rose-600 font-black tabular-nums text-lg">
+                ¥ {{ consumeAmountStr || '0.00' }}
+              </span>
+            </button>
+
+            <button 
+              type="button"
+              @click="requestConsumeConfirmation"
+              :disabled="isConsumeOverBalance || isSubmittingConsume || !canSubmitConsume || !canCloudWrite('consume')"
+              class="h-13 px-6 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 active:from-rose-700 text-white font-black text-base rounded-2xl shadow-md shadow-rose-500/20 disabled:opacity-50 disabled:shadow-none btn-press flex items-center justify-center whitespace-nowrap"
+            >
+              确认扣除
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -825,6 +923,44 @@
         <div class="mt-6 grid grid-cols-2 gap-3">
           <button @click="rechargeConfirmation = null" class="h-14 rounded-xl border-2 border-slate-300 text-base font-bold text-slate-700 btn-press">返回修改</button>
           <button @click="confirmRecharge" :disabled="isSubmittingRecharge || !canCloudWrite('recharge')" class="h-14 rounded-xl bg-emerald-700 text-base font-black text-white btn-press disabled:opacity-60">确认充值</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- 消费金额确认框 (二次防误触核对，先弹出消费金额确认框) -->
+    <div
+      v-if="consumeConfirmation"
+      class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-5 animate-fade-in backdrop-blur-xs"
+      @click.self="consumeConfirmation = null"
+    >
+      <section 
+        class="feedback-dialog w-full max-w-sm bg-white text-center shadow-2xl" 
+        role="dialog" 
+        aria-modal="true" 
+        aria-labelledby="consume-confirm-title"
+      >
+        <div class="feedback-icon mx-auto text-3xl font-black bg-rose-100 text-rose-600">✂️</div>
+        <h2 id="consume-confirm-title" class="mt-4 text-2xl font-black text-slate-900">请核对扣款金额</h2>
+        <p class="mt-2 text-base text-slate-700">确认后将立即从 {{ consumeConfirmation.memberName }} 会员卡中扣款。</p>
+        <div class="feedback-amount mt-5 rounded-xl px-4 py-4 text-left">
+          <div class="flex justify-between gap-3 text-base"><span>消费会员</span><strong class="text-slate-900">{{ consumeConfirmation.memberName }}</strong></div>
+          <div class="mt-2 flex justify-between gap-3 text-base"><span>服务项目</span><strong class="text-slate-800 max-w-[170px] truncate text-right">{{ consumeConfirmation.itemsSummary }}</strong></div>
+          <div class="mt-2 flex justify-between gap-3 text-base"><span>当前卡内余额</span><strong>¥{{ (consumeConfirmation.currentBalance / 100).toFixed(2) }}</strong></div>
+          <div class="mt-3 border-t border-rose-200 pt-3 flex justify-between items-baseline gap-3 text-xl font-black text-rose-700">
+            <span>扣款金额</span>
+            <strong class="text-2xl tabular-nums">¥{{ consumeConfirmation.amount.toFixed(2) }}</strong>
+          </div>
+          <div class="mt-2.5 border-t border-dashed border-rose-200/80 pt-2 flex justify-between gap-3 text-sm text-slate-600 font-semibold">
+            <span>扣款后卡内剩余</span>
+            <strong class="text-indigo-600 font-black tabular-nums">¥{{ (consumeConfirmation.balanceAfter / 100).toFixed(2) }}</strong>
+          </div>
+        </div>
+        <div class="mt-6 grid grid-cols-2 gap-3">
+          <button @click="consumeConfirmation = null" class="h-14 rounded-xl border-2 border-slate-300 text-base font-bold text-slate-700 btn-press">返回修改</button>
+          <button @click="confirmConsume" :disabled="isSubmittingConsume || !canCloudWrite('consume')" class="h-14 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 active:from-rose-800 text-base font-black text-white btn-press disabled:opacity-60 flex items-center justify-center space-x-1.5 shadow-md shadow-rose-600/30">
+            <span v-if="isSubmittingConsume">扣款中...</span>
+            <span v-else>确认扣款</span>
+          </button>
         </div>
       </section>
     </div>
@@ -1380,6 +1516,8 @@ const consumingMember = ref(null);
 const consumeAmountStr = ref('');
 const consumeSummary = ref('精致洗剪吹');
 const isSubmittingConsume = ref(false);
+const showConsumeKeypad = ref(true);
+const consumeConfirmation = ref(null);
 
 // 储值充值抽屉
 const rechargingMember = ref(null);
@@ -1678,18 +1816,35 @@ function confirmRecharge() {
   }
 }
 
-// 扣款
+// 扣款相关
 function openConsumeModal(m) {
   consumingMember.value = m;
+  consumeConfirmation.value = null;
   isSubmittingConsume.value = false;
   consumeAmountStr.value = '';
   const first = hairServices.value[0];
   consumeSummary.value = first ? first.name : '精致洗剪吹';
+  showConsumeKeypad.value = true;
+}
+
+function closeConsumeModal() {
+  consumingMember.value = null;
+  consumeConfirmation.value = null;
+}
+
+function openConsumeKeypad() {
+  showConsumeKeypad.value = true;
+}
+
+function clearConsumeAmount() {
+  consumeAmountStr.value = '';
+  showConsumeKeypad.value = true;
 }
 
 function setConsumePreset(item) {
   consumeAmountStr.value = item.price.toString();
   consumeSummary.value = item.name;
+  showConsumeKeypad.value = true;
 }
 
 const isConsumeOverBalance = computed(() => {
@@ -1698,23 +1853,60 @@ const isConsumeOverBalance = computed(() => {
   return moneyToCent(consumeAmountStr.value) > consumingMember.value.balance;
 });
 
-function submitConsume() {
+const canSubmitConsume = computed(() => {
+  if (!consumingMember.value) return false;
+  if (!consumeAmountStr.value) return false;
+  if (!isValidMoney(consumeAmountStr.value)) return false;
+  const num = parseFloat(consumeAmountStr.value);
+  if (num <= 0) return false;
+  return moneyToCent(consumeAmountStr.value) <= consumingMember.value.balance;
+});
+
+function requestConsumeConfirmation() {
   if (!consumingMember.value || isSubmittingConsume.value) return;
+  if (!consumeAmountStr.value || !isValidMoney(consumeAmountStr.value)) {
+    showFeedback('请输入有效的扣款金额。');
+    return;
+  }
   const amountNum = parseFloat(consumeAmountStr.value);
-  if (!amountNum || amountNum <= 0) {
+  if (amountNum <= 0) {
     showFeedback('请输入大于 0 的有效扣款金额。');
     return;
   }
+  const amountCent = moneyToCent(consumeAmountStr.value);
+  if (amountCent > consumingMember.value.balance) {
+    showFeedback('扣款金额超过当前卡内余额，无法扣除！', 'error');
+    return;
+  }
 
+  consumeConfirmation.value = {
+    memberId: consumingMember.value.id,
+    memberName: consumingMember.value.name,
+    memberPhone: consumingMember.value.phone,
+    currentBalance: consumingMember.value.balance,
+    amount: amountNum,
+    amountCent,
+    balanceAfter: consumingMember.value.balance - amountCent,
+    itemsSummary: consumeSummary.value.trim() || '精致洗剪吹'
+  };
+}
+
+function confirmConsume() {
+  const conf = consumeConfirmation.value;
+  if (!conf || isSubmittingConsume.value) return;
   isSubmittingConsume.value = true;
   try {
     const result = localDb.consume({
-      memberId: consumingMember.value.id,
-      amount: amountNum,
-      itemsSummary: consumeSummary.value
+      memberId: conf.memberId,
+      amount: conf.amount,
+      itemsSummary: conf.itemsSummary
     });
 
-    const memberName = consumingMember.value.name;
+    const memberName = conf.memberName;
+    const deductedCent = result.deductedAmount;
+    const balanceAfterCent = result.balanceAfter;
+
+    consumeConfirmation.value = null;
     consumingMember.value = null;
 
     refreshAll();
@@ -1723,9 +1915,9 @@ function submitConsume() {
     }
     showFeedback('本次服务已记入会员账本。', 'success', {
       title: '消费成功',
-      amount: (result.deductedAmount / 100).toFixed(2),
+      amount: (deductedCent / 100).toFixed(2),
       memberName,
-      balance: (result.balanceAfter / 100).toFixed(2)
+      balance: (balanceAfterCent / 100).toFixed(2)
     });
   } catch (err) {
     showFeedback(err.message, 'error', { title: '扣款失败' });
@@ -2070,9 +2262,10 @@ function closeTopLayer() {
   if (backupRestoreRequest.value) { backupRestoreRequest.value = null; return true; }
   if (showServiceModal.value) { showServiceModal.value = false; return true; }
   if (showMemberModal.value) { showMemberModal.value = false; return true; }
+  if (consumeConfirmation.value) { consumeConfirmation.value = null; return true; }
   if (rechargeConfirmation.value) { rechargeConfirmation.value = null; return true; }
   if (rechargingMember.value) { rechargingMember.value = null; return true; }
-  if (consumingMember.value) { consumingMember.value = null; return true; }
+  if (consumingMember.value) { closeConsumeModal(); return true; }
   if (selectedMember.value) { selectedMember.value = null; return true; }
   if (activeTab.value === 'settings' && settingsPath.value.length && !cloudLocked.value) { backInSettings(); return true; }
   if (activeTab.value !== 'home' && !cloudLocked.value) { activeTab.value = 'home'; return true; }

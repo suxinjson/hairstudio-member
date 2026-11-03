@@ -442,6 +442,7 @@ test('a cached signed-in cloud account records a charge and its pending operatio
   button('剪发扣款').click(); await nextTick();
   button('精致洗剪吹 (').click(); await nextTick();
   button('确认扣除').click(); await nextTick();
+  button('确认扣款').click(); await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, 6200);
   assert.equal(getCloudState().outbox.length, 1);
   assert.equal(getCloudState().outbox[0].method, 'consume');
@@ -622,6 +623,7 @@ test('native cached account remains usable when secure credentials cannot be rea
   button('剪发扣款').click(); await nextTick();
   button('精致洗剪吹 (').click(); await nextTick();
   button('确认扣除').click(); await nextTick();
+  button('确认扣款').click(); await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, 6200);
   assert.equal(getCloudState().outbox[0].actorId, 'test-user');
   button('知道了').click(); await nextTick();
@@ -650,4 +652,76 @@ test('ordinary long-press menus are suppressed while input menus remain availabl
   assert.deepEqual(copied, ['13800001111']);
   assert.equal(document.querySelector('[class*="z-40"]'), null);
   assert.ok(document.body.textContent.includes('手机号已复制'));
+});
+
+test('haircut consume keypad stays docked, pops up on clicking amount or preset, allows direct amount modification and confirms with popup', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const member = localDb.createMember({ name: '李四', phone: '13900002222', initialBalance: 100 });
+  await mount();
+
+  // 1. 打开剪发扣款抽屉
+  button('剪发扣款').click();
+  await nextTick();
+
+  // 键盘默认展开显示
+  assert.ok(button('收起键盘'));
+  assert.ok(button('确认扣除'));
+
+  // 2. 点击收起键盘
+  button('收起键盘').click();
+  await nextTick();
+  assert.ok(button('展开键盘'));
+  assert.ok(button('点击弹出数字键盘修改'));
+
+  // 3. 点击金额卡片数字区域 -> 重新弹出展开键盘
+  const amountCard = document.querySelector('.modal-title').closest('.bg-white').querySelector('.cursor-pointer');
+  assert.ok(amountCard);
+  amountCard.click();
+  await nextTick();
+  assert.ok(button('收起键盘'));
+
+  // 4. 再次收起后点击服务预设按钮 -> 弹出数字键盘并带入金额
+  button('收起键盘').click();
+  await nextTick();
+  button('精致洗剪吹 (').click();
+  await nextTick();
+  assert.ok(button('收起键盘'));
+  assert.ok(amountCard.textContent.includes('38'));
+
+  // 5. 带入数字后不要清空数字，而是尾部修改：
+  // 此时金额为 38，点击退格键删除末尾 8 -> 变为 3
+  const backspaceBtn = document.querySelector('.keypad-confirm').parentElement.querySelector('svg').closest('button');
+  backspaceBtn.click();
+  await nextTick();
+  assert.ok(amountCard.textContent.includes('3'));
+  assert.equal(amountCard.textContent.includes('38'), false);
+
+  // 点击数字 5 -> 尾部追加 5，变为 35
+  const keyBtn = text => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === text);
+  keyBtn('5').click();
+  await nextTick();
+  assert.ok(amountCard.textContent.includes('35'));
+
+  // 6. 点击确认扣除 -> 先弹出消费金额确认框，核对 35 元，并未立即扣款
+  button('确认扣除').click();
+  await nextTick();
+  assert.ok(document.body.textContent.includes('请核对扣款金额'));
+  assert.ok(document.body.textContent.includes('李四'));
+  assert.ok(document.body.textContent.includes('35.00'));
+  assert.ok(button('返回修改'));
+  assert.ok(button('确认扣款'));
+  assert.equal(localDb.getMemberById(member.id).balance, 10000); // 余额未扣除
+
+  // 7. 点击返回修改 -> 确认框关闭，扣款抽屉仍保留，余额仍未变
+  button('返回修改').click();
+  await nextTick();
+  assert.equal(document.body.textContent.includes('请核对扣款金额'), false);
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+
+  // 8. 再次点击确认扣除并点击确认扣款 -> 正式扣除 35 元 (10000 - 3500 = 6500)
+  button('确认扣除').click();
+  await nextTick();
+  button('确认扣款').click();
+  await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 6500);
 });

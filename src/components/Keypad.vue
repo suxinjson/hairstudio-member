@@ -5,6 +5,7 @@
       <button 
         v-for="k in ['1', '2', '3']" 
         :key="k"
+        type="button"
         @click="append(k)"
         class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
       >
@@ -13,6 +14,7 @@
 
       <!-- 退格键 ⌫ -->
       <button 
+        type="button"
         @click="backspace"
         class="h-16 bg-slate-300/80 text-slate-800 font-black rounded-2xl flex items-center justify-center btn-press active:bg-slate-400/80 border border-slate-300 shadow-sm"
       >
@@ -25,6 +27,7 @@
       <button 
         v-for="k in ['4', '5', '6']" 
         :key="k"
+        type="button"
         @click="append(k)"
         class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
       >
@@ -33,6 +36,7 @@
 
       <!-- 清空键 C -->
       <button 
+        type="button"
         @click="clear"
         class="h-16 bg-slate-300/80 text-slate-700 font-black text-lg rounded-2xl flex items-center justify-center btn-press active:bg-slate-400/80 border border-slate-300 shadow-sm"
       >
@@ -43,6 +47,7 @@
       <button 
         v-for="k in ['7', '8', '9']" 
         :key="k"
+        type="button"
         @click="append(k)"
         class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
       >
@@ -51,7 +56,8 @@
 
       <!-- 确认大按键 (跨两行) -->
       <button 
-        @click="$emit('confirm')"
+        type="button"
+        @click="handleConfirm"
         :disabled="disabled || !isValidAmount"
         class="keypad-confirm row-span-2 rounded-2xl font-black text-white flex flex-col items-center justify-center transition-all btn-press shadow-md tracking-wider"
         :class="disabled || !isValidAmount ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none' : confirmColorClass"
@@ -62,6 +68,7 @@
 
       <!-- 点号 . -->
       <button 
+        type="button"
         @click="append('.')"
         class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
       >
@@ -70,6 +77,7 @@
 
       <!-- 0 -->
       <button 
+        type="button"
         @click="append('0')"
         class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
       >
@@ -78,6 +86,7 @@
 
       <!-- 00 -->
       <button 
+        type="button"
         @click="append('00')"
         class="h-16 bg-white text-2xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
       >
@@ -122,7 +131,16 @@ const confirmColorClass = computed(() => {
     : 'bg-gradient-to-b from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 shadow-indigo-500/30';
 });
 
+function triggerHaptic() {
+  try {
+    if (typeof navigator !== 'undefined' && navigator?.vibrate) {
+      navigator.vibrate(10);
+    }
+  } catch (_) {}
+}
+
 function append(char) {
+  triggerHaptic();
   let val = props.modelValue || '';
   if (char === '.') {
     if (val.includes('.')) return;
@@ -144,6 +162,7 @@ function append(char) {
 }
 
 function backspace() {
+  triggerHaptic();
   let val = props.modelValue || '';
   if (val.length > 0) {
     val = val.slice(0, -1);
@@ -152,6 +171,12 @@ function backspace() {
 }
 
 function clear() {
+  triggerHaptic();
   emit('update:modelValue', '');
+}
+
+function handleConfirm() {
+  triggerHaptic();
+  emit('confirm');
 }
 </script>
