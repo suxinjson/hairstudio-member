@@ -1,13 +1,13 @@
 <template>
-  <div class="bg-slate-100 border-t border-slate-200/90 select-none pb-gesture-safe">
-    <div class="grid grid-cols-4 gap-2.5 p-3 bg-slate-200/70">
+  <div class="keypad select-none">
+    <div class="keypad-grid grid grid-cols-4">
       <!-- 1, 2, 3 -->
       <button 
         v-for="k in ['1', '2', '3']" 
         :key="k"
         type="button"
         @click="append(k)"
-        class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
+        class="keypad-key flex items-center justify-center btn-press"
       >
         {{ k }}
       </button>
@@ -16,7 +16,8 @@
       <button 
         type="button"
         @click="backspace"
-        class="h-16 bg-slate-300/80 text-slate-800 font-black rounded-2xl flex items-center justify-center btn-press active:bg-slate-400/80 border border-slate-300 shadow-sm"
+        aria-label="删除最后一位金额"
+        class="keypad-key keypad-function flex items-center justify-center btn-press"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z" />
@@ -29,7 +30,7 @@
         :key="k"
         type="button"
         @click="append(k)"
-        class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
+        class="keypad-key flex items-center justify-center btn-press"
       >
         {{ k }}
       </button>
@@ -38,7 +39,8 @@
       <button 
         type="button"
         @click="clear"
-        class="h-16 bg-slate-300/80 text-slate-700 font-black text-lg rounded-2xl flex items-center justify-center btn-press active:bg-slate-400/80 border border-slate-300 shadow-sm"
+        aria-label="清空扣款金额"
+        class="keypad-key keypad-function flex items-center justify-center btn-press"
       >
         清空
       </button>
@@ -49,7 +51,7 @@
         :key="k"
         type="button"
         @click="append(k)"
-        class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
+        class="keypad-key flex items-center justify-center btn-press"
       >
         {{ k }}
       </button>
@@ -70,7 +72,7 @@
       <button 
         type="button"
         @click="append('.')"
-        class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
+        class="keypad-key flex items-center justify-center btn-press"
       >
         .
       </button>
@@ -79,7 +81,7 @@
       <button 
         type="button"
         @click="append('0')"
-        class="h-16 bg-white text-3xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
+        class="keypad-key flex items-center justify-center btn-press"
       >
         0
       </button>
@@ -88,7 +90,7 @@
       <button 
         type="button"
         @click="append('00')"
-        class="h-16 bg-white text-2xl font-black rounded-2xl shadow-sm text-slate-800 flex items-center justify-center btn-press active:bg-slate-100 border border-slate-200/60"
+        class="keypad-key flex items-center justify-center btn-press"
       >
         00
       </button>

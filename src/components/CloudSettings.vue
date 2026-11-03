@@ -97,7 +97,7 @@ const sectionTitles = { account: '☁️ 账号与同步', users: '账号管理'
 const isNativeApp = Capacitor.isNativePlatform();
 const roles = { owner: '店主', clerk: '店员', viewer: '只读' };
 const statuses = { local: '仅本机账本', pending: '等待同步', synced: '同步完成', conflict: '需要核对', 'login-required': '需要登录', 'needs-bootstrap': '等待初始迁移', 'needs-choice': '等待选择账本' };
-const eventNames = { login: '登录', online: '联网', offline: '断网', bootstrap: '初始迁移', createMember: '新增会员', updateMember: '修改会员', deleteMember: '注销会员', recharge: '充值', consume: '消费', refundLedger: '撤销', saveService: '修改服务', deleteService: '删除服务', importBackupData: '恢复备份', user_created: '创建账号', user_permissions_changed: '修改权限', sync_conflict_resolved: '处理同步冲突' };
+const eventNames = { login: '登录', online: '联网', offline: '断网', bootstrap: '初始迁移', createMember: '新增会员', updateMember: '修改会员', deleteMember: '注销会员', recharge: '充值', consume: '消费', refundLedger: '撤销', saveService: '修改服务', deleteService: '删除服务', saveRechargeSettings: '修改充值赠送规则', importBackupData: '恢复备份', user_created: '创建账号', user_permissions_changed: '修改权限', sync_conflict_resolved: '处理同步冲突' };
 const state = ref(cloudClient.snapshot());
 const canRequest = computed(() => Boolean(state.value.user && !state.value.syncLoginRequired && state.value.online));
 const unsubscribe = cloudClient.subscribe(value => { state.value = value; });

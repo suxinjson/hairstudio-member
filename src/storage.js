@@ -1,5 +1,6 @@
 // 手机本地单机存储引擎 (企业级强一致性 + 离线容灾 + 误操作冲正撤销)
 import { moneyToCent } from './money.js';
+import { normalizeRechargeSettings } from './recharge-settings.js';
 import { DATA_LIMITS, byteLength, assertJsonBudget, assertAccountLimits, validateMutationArgs, DataLimitError } from './data-limits.js';
 import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones, normalizeMemberPhone } from './accounting.js';
 
@@ -8,6 +9,7 @@ export const STORAGE_KEYS = {
   LEDGERS: 'hairstudio_ledgers_v2',
   SERVICES: 'hairstudio_services_v2',
   RECHARGE_PLANS: 'hairstudio_plans_v2',
+  RECHARGE_SETTINGS: 'hairstudio_recharge_settings_v1',
   SNAPSHOTS: 'hairstudio_local_snapshots_v1',
   SAFETY_SNAPSHOT: 'hairstudio_pre_restore_safety_snapshot'
 };
@@ -42,7 +44,9 @@ function load(key, defaultVal = []) {
   if (raw === null) return defaultVal;
   try {
     const data = JSON.parse(raw);
-    if (!Array.isArray(data)) throw new Error('数据结构不是数组');
+    if (key === STORAGE_KEYS.RECHARGE_SETTINGS) {
+      if (data !== null) normalizeRechargeSettings(data);
+    } else if (!Array.isArray(data)) throw new Error('数据结构不是数组');
     return data;
   } catch (e) {
     console.error('读取存储异常:', e);
@@ -51,7 +55,7 @@ function load(key, defaultVal = []) {
 }
 
 function save(key, data) {
-  if (mutation && Object.values(STORAGE_KEYS).slice(0, 4).includes(key)) return saveBatch({ [key]: data });
+  if (mutation && Object.values(STORAGE_KEYS).slice(0, 5).includes(key)) return saveBatch({ [key]: data });
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch (e) {
@@ -65,8 +69,9 @@ function saveBatch(entries, { replaceJournal = false } = {}) {
   const previousJournal = replaceJournal ? localStorage.getItem(PENDING_WRITE_KEY) : null;
   if (mutation) assertAccountLimits(Object.fromEntries([
     ['members', STORAGE_KEYS.MEMBERS], ['ledgers', STORAGE_KEYS.LEDGERS],
-    ['services', STORAGE_KEYS.SERVICES], ['rechargePlans', STORAGE_KEYS.RECHARGE_PLANS]
-  ].map(([field, key]) => [field, entries[key] ?? load(key)])));
+    ['services', STORAGE_KEYS.SERVICES], ['rechargePlans', STORAGE_KEYS.RECHARGE_PLANS],
+    ['rechargeSettings', STORAGE_KEYS.RECHARGE_SETTINGS]
+  ].map(([field, key]) => [field, Object.hasOwn(entries, key) ? entries[key] : load(key, key === STORAGE_KEYS.RECHARGE_SETTINGS ? null : [])])));
   if (mutation && options.beforeWrite) entries = options.beforeWrite(entries, JSON.parse(JSON.stringify(mutation)));
   const writes = Object.entries(entries).map(([key, value]) => ({
     key,
@@ -125,7 +130,7 @@ function recoverPendingWrite() {
 function rawRecoveryState() {
   return {
     storage: Object.fromEntries([
-      STORAGE_KEYS.MEMBERS, STORAGE_KEYS.LEDGERS, STORAGE_KEYS.SERVICES, STORAGE_KEYS.RECHARGE_PLANS
+      STORAGE_KEYS.MEMBERS, STORAGE_KEYS.LEDGERS, STORAGE_KEYS.SERVICES, STORAGE_KEYS.RECHARGE_PLANS, STORAGE_KEYS.RECHARGE_SETTINGS
     ].map(key => [key, localStorage.getItem(key)])),
     pendingWrite: localStorage.getItem(PENDING_WRITE_KEY)
   };
@@ -355,13 +360,14 @@ const db = {
   },
 
   // --- 充值记账 (强事务原子性) ---
-  recharge({ memberId, actualPay, giftAmount = 0, payMethod = '微信支付', remark = '' }) {
+  recharge({ memberId, actualPay, giftAmount = 0, payMethod = '', remark = '' }) {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === memberId);
     if (!m || m.isArchived) throw new Error('会员不存在或已注销');
 
     const actualCent = moneyToCent(actualPay || 0, '实收充值金额');
     const giftCent = moneyToCent(giftAmount || 0, '额外赠送额度');
+    if (giftCent > 0 && !this.getRechargeSettings().giftEnabled) throw new Error('充值赠送已关闭，不可赠送金额');
     const totalCredit = checkedSum(actualCent, giftCent);
     if (totalCredit <= 0) throw new Error('充值总额必须大于0');
 
@@ -372,9 +378,10 @@ const db = {
     m.total_recharge = checkedSum(m.total_recharge || 0, totalCredit);
     m.updated_at = nowISO();
 
-    const remarkText = giftCent > 0 
-      ? `实充¥${(actualCent/100).toFixed(2)}，送¥${(giftCent/100).toFixed(2)} [${payMethod}]${remark ? ' ' + remark : ''}`
-      : `充值¥${(actualCent/100).toFixed(2)} [${payMethod}]${remark ? ' ' + remark : ''}`;
+    const channel = payMethod.trim() ? ` [${payMethod.trim()}]` : '';
+    const remarkText = giftCent > 0
+      ? `实充¥${(actualCent/100).toFixed(2)}，送¥${(giftCent/100).toFixed(2)}${channel}${remark ? ' ' + remark : ''}`
+      : `充值¥${(actualCent/100).toFixed(2)}${channel}${remark ? ' ' + remark : ''}`;
 
     const ledger = this.makeLedger({
       member: m,
@@ -561,6 +568,16 @@ const db = {
     return load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS);
   },
 
+  getRechargeSettings() {
+    return normalizeRechargeSettings(load(STORAGE_KEYS.RECHARGE_SETTINGS, null) ?? undefined);
+  },
+
+  saveRechargeSettings(settings) {
+    const validated = normalizeRechargeSettings(settings);
+    save(STORAGE_KEYS.RECHARGE_SETTINGS, validated);
+    return validated;
+  },
+
   saveService(item) {
     const services = this.getServices();
     if (!item.name || !item.name.trim()) throw new Error('项目名称必填');
@@ -653,6 +670,7 @@ const db = {
     let ledgers = parsed.data.ledgers ?? [];
     const services = parsed.data.services ?? DEFAULT_SERVICES;
     const rechargePlans = parsed.data.rechargePlans ?? DEFAULT_RECHARGE_PLANS;
+    const rechargeSettings = parsed.data.rechargeSettings === undefined ? undefined : normalizeRechargeSettings(parsed.data.rechargeSettings);
     if (!Array.isArray(ledgers) || !Array.isArray(services) || !Array.isArray(rechargePlans)) {
       throw new Error('备份文件中的流水、服务项目或充值档位格式不正确');
     }
@@ -722,15 +740,17 @@ const db = {
       version: parsed.version || '2.0',
       exportedAt: parsed.exportedAt || null,
       appName: parsed.appName || '梦飞空间会员管家',
-      data: { members, ledgers, services, rechargePlans }
+      data: { members, ledgers, services, rechargePlans, ...(rechargeSettings === undefined ? {} : { rechargeSettings }) }
     };
   },
 
   readBackupState() {
+    const rechargeSettings = load(STORAGE_KEYS.RECHARGE_SETTINGS, null);
     return this.parseAndValidateBackup(JSON.stringify({ data: {
       members: load(STORAGE_KEYS.MEMBERS), ledgers: load(STORAGE_KEYS.LEDGERS),
       services: load(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES),
-      rechargePlans: load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS)
+      rechargePlans: load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS),
+      ...(rechargeSettings === null ? {} : { rechargeSettings })
     } })).data;
   },
 
@@ -757,6 +777,7 @@ const db = {
     saveBatch({
       [STORAGE_KEYS.MEMBERS]: validated.members, [STORAGE_KEYS.LEDGERS]: validated.ledgers,
       [STORAGE_KEYS.SERVICES]: validated.services, [STORAGE_KEYS.RECHARGE_PLANS]: validated.rechargePlans,
+      [STORAGE_KEYS.RECHARGE_SETTINGS]: validated.rechargeSettings ?? null,
       [metadataKey]: metadata
     }, { replaceJournal });
   },
@@ -889,7 +910,7 @@ const db = {
           version: '2.0',
           exportedAt: now,
           appName: '梦飞空间会员管家',
-          data: { members, ledgers, services, rechargePlans }
+          data
         }, null, 2)
       };
 
@@ -926,20 +947,20 @@ const db = {
 
   // --- 微信/本地一键备份导出 ---
   exportBackupData({ archiveSnapshot = true } = {}) {
-    const { members, ledgers, services, rechargePlans } = this.readBackupState();
+    const data = this.readBackupState();
 
     const now = nowISO();
     const backup = {
       version: '2.0',
       exportedAt: now,
       appName: '梦飞空间会员管家',
-      data: { members, ledgers, services, rechargePlans }
+      data
     };
     const content = JSON.stringify(backup, null, 2);
 
     // 导出时自动在应用内生成一份备份快照，方便在App界面即时看到检测到的备份文件
     if (archiveSnapshot) {
-      this.saveLocalSnapshot('导出生成快照', '用户执行一键备份导出', { members, ledgers, services, rechargePlans });
+      this.saveLocalSnapshot('导出生成快照', '用户执行一键备份导出', data);
     }
 
     return content;
@@ -975,7 +996,8 @@ const db = {
         }
       }
 
-      next = { members: summary.members, ledgers: summary.ledgers, services: currentServices, rechargePlans: currentPlans };
+      next = { members: summary.members, ledgers: summary.ledgers, services: currentServices, rechargePlans: currentPlans,
+        ...(current.rechargeSettings === undefined ? {} : { rechargeSettings: current.rechargeSettings }) };
     }
 
     // 保留原始文本，损坏的 JSON 也可以在全量恢复后取回。保存失败则禁止覆盖。
@@ -984,7 +1006,8 @@ const db = {
     save(STORAGE_KEYS.SAFETY_SNAPSHOT, { timestamp: nowISO(), storage: recovery.storage, pendingWrite: recovery.pendingWrite, dataError: recovery.dataError });
     saveBatch({
       [STORAGE_KEYS.MEMBERS]: next.members, [STORAGE_KEYS.LEDGERS]: next.ledgers,
-      [STORAGE_KEYS.SERVICES]: next.services, [STORAGE_KEYS.RECHARGE_PLANS]: next.rechargePlans
+      [STORAGE_KEYS.SERVICES]: next.services, [STORAGE_KEYS.RECHARGE_PLANS]: next.rechargePlans,
+      [STORAGE_KEYS.RECHARGE_SETTINGS]: next.rechargeSettings ?? null
     }, { replaceJournal: Boolean(recovery.dataError && recovery.pendingWrite !== null) });
     let snapshotSaved = true;
     try {
@@ -1018,7 +1041,7 @@ const db = {
 };
 
 for (const method of ['createMember', 'updateMember', 'deleteMember', 'recharge', 'consume',
-  'refundLedger', 'recordLedger', 'saveService', 'deleteService', 'importBackupData']) {
+  'refundLedger', 'recordLedger', 'saveService', 'deleteService', 'saveRechargeSettings', 'importBackupData']) {
   const implementation = db[method];
   db[method] = function (...args) {
     if (mutation) throw new Error('不能嵌套执行账本变更');

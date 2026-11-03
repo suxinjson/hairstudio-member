@@ -1,4 +1,5 @@
 // Shared limits for local writes, backups and the cloud API. Never truncate history.
+import { normalizeRechargeSettings } from './recharge-settings.js';
 export const DATA_LIMITS = Object.freeze({
   name: 128, phone: 64, notes: 2000, remark: 4096, id: 128,
   members: 20000, ledgers: 50000, services: 500, rechargePlans: 200,
@@ -45,6 +46,7 @@ export function assertJsonBudget(value, maxBytes, maxString = 16384) {
 }
 export function assertAccountLimits(data) {
   assertJsonBudget(data, DATA_LIMITS.accountBytes);
+  if (data.rechargeSettings != null) normalizeRechargeSettings(data.rechargeSettings);
   for (const field of ['members', 'ledgers', 'services', 'rechargePlans']) {
     if (!Array.isArray(data[field])) throw new Error('账本列表格式无效');
     if (data[field].length > DATA_LIMITS[field]) throw new DataLimitError(field + ' 记录数量超出限制');
@@ -72,6 +74,7 @@ export function validateMutationArgs(method, args) {
     return;
   }
   assertJsonBudget(args, 64 * 1024);
+  if (method === 'saveRechargeSettings') normalizeRechargeSettings(args[0]);
   const id = value => boundedText(value, DATA_LIMITS.id, '单号', true);
   const object = value => { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('操作参数格式无效'); return value; };
   const labels = { name: '会员姓名', phone: '手机号码', notes: '会员备注', remark: '备注', payMethod: '付款方式', itemsSummary: '消费项目' };

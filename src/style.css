@@ -17,6 +17,12 @@ html {
   --app-canvas: #f3f6f6;
 }
 
+/* Android 已在原生窗口预留状态栏、刘海和导航栏，只保留按钮边缘间距。 */
+html.native-system-insets {
+  --safe-top: 0px;
+  --safe-bottom: 12px;
+}
+
 * {
   box-sizing: border-box;
   /* 间距重置交给 Tailwind base 层，避免覆盖各页面的间距工具类。 */
@@ -608,6 +614,100 @@ body {
 .app-shell .balance-debt { color: #b42318 !important; font-weight: 800; }
 .app-shell .consume-submit { background: #167c68; }
 .app-shell .consume-submit-debt { background: #b42318; }
+.consume-backdrop { padding-top: max(var(--safe-top), 12px); }
+.app-shell .consume-sheet {
+  width: min(100%, 560px);
+  height: min(92dvh, 860px);
+  max-height: calc(100dvh - max(var(--safe-top), 12px));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -8px 40px rgb(0 0 0 / 12%);
+}
+.consume-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 14px 16px 10px; }
+.consume-header-copy { flex: 1; min-width: 0; }
+.consume-header .modal-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: nowrap; padding: 0; font-size: 19px; font-weight: 800; }
+.consume-header .modal-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; color: #52646b; }
+.consume-header p { margin-top: 3px; font-size: 14px; color: #637278; }
+.consume-header p strong { margin-left: 5px; color: #116a57; font-size: 16px; font-variant-numeric: tabular-nums; }
+.consume-close { flex: none; width: 44px; height: 44px; border-radius: 50%; color: #52646b; background: #f1f5f4; font-size: 18px; }
+.consume-amount-panel { flex: none; margin: 0 12px 10px; padding: 2px 12px 10px; border: 1px solid #dce9e3; border-radius: 15px; background: #f3f8f5; }
+.consume-amount-heading { display: flex; align-items: center; justify-content: space-between; color: #52646b; font-size: 14px; font-weight: 600; min-height: 32px; }
+.consume-clear { min-height: 32px; padding: 0 4px 0 12px; color: #647575; font-size: 14px; }
+.consume-amount-edit { display: flex; align-items: baseline; gap: 5px; width: 100%; text-align: left; color: #116a57; font-variant-numeric: tabular-nums; }
+.consume-amount-edit strong { min-width: 0; overflow-wrap: anywhere; font-size: clamp(26px, 8vw, 38px); font-weight: 850; line-height: 1.2; }
+.consume-currency { font-size: 22px; font-weight: 700; }
+.consume-edit-hint { flex: none; margin-left: auto; color: #526c60; font-size: 13px; }
+.consume-amount-active { border-color: #167c68; box-shadow: 0 0 0 2px #dcefe6; }
+.app-shell .consume-amount-debt { box-shadow: none; }
+.consume-amount-debt .consume-amount-edit { color: #b42318; }
+.consume-sheet .consume-debt-warning { margin-top: 6px; padding: 0; gap: 2px; border: 0; border-radius: 0; background: transparent; font-size: 13px; }
+.consume-sheet .consume-debt-warning strong { font-size: 14px; }
+.consume-content { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 12px 12px; scrollbar-width: thin; }
+.consume-preference { display: flex; gap: 8px; padding: 8px 10px; margin-bottom: 10px; color: #81613d; background: #fff8e8; border-radius: 10px; font-size: 13px; line-height: 1.45; }
+.consume-preference strong { flex: none; }
+.consume-preference span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.consume-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.consume-section-heading h3 { font-size: 15px; font-weight: 800; }
+.consume-section-heading > span { color: #6e7b80; font-size: 12px; }
+.consume-presets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.consume-preset { min-width: 0; min-height: 57px; padding: 7px 8px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; border: 1px solid #e0e7e4; border-radius: 11px; background: #fff; text-align: left; }
+.consume-preset-name { width: 100%; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; line-height: 1.25; font-weight: 650; color: #42544d; }
+.consume-preset strong { font-size: 16px; line-height: 1.2; color: #116a57; font-variant-numeric: tabular-nums; }
+.consume-preset[aria-pressed="true"] { border-color: #167c68; background: #eaf5ef; box-shadow: inset 0 0 0 1px #167c68; }
+.consume-description { display: grid; gap: 6px; margin-top: 12px; color: #52646b; font-size: 14px; font-weight: 600; }
+.consume-description input { min-width: 0; width: 100%; height: 44px; padding: 0 10px; border: 1px solid #dce5e1; border-radius: 10px; background: #f7f9f8; color: #202a36; outline: none; }
+.consume-description input:focus { border-color: #167c68; background: white; }
+.consume-empty { padding: 12px 0; color: #6e7b80; font-size: 14px; }
+.consume-content .consume-recharge-link { margin-top: 10px; border-radius: 10px; }
+.consume-footer { flex: none; padding: 0 10px max(var(--safe-bottom), 12px); border-top: 1px solid #dce5e1; background: #f3f6f4; }
+.consume-footer-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; }
+.consume-result { font-size: 13px; color: #5c6c63; font-variant-numeric: tabular-nums; }
+.consume-result strong { color: #116a57; font-size: 15px; }
+.consume-result.balance-debt strong { color: #b42318; }
+.consume-keypad-toggle { flex: none; min-height: 40px; padding: 4px 2px 4px 10px; font-size: 14px; font-weight: 700; color: #116a57; }
+.consume-keypad-toggle span { margin-left: 2px; }
+.consume-payment { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
+.consume-payment-amount { flex: 1; min-width: 0; font-size: clamp(20px, 6vw, 26px); overflow-wrap: anywhere; color: #116a57; font-variant-numeric: tabular-nums; }
+.consume-change-amount { flex: none; min-height: 48px; padding: 0 8px; color: #536b5e; font-size: 14px; font-weight: 700; }
+.consume-payment .consume-submit { flex: none; min-height: 50px; min-width: 104px; padding: 0 14px; border-radius: 12px; color: white; font-size: 16px; font-weight: 800; }
+.consume-payment .consume-submit:disabled { opacity: .45; }
+.consume-sheet .keypad { padding: 0; border: 0; background: transparent; }
+.consume-sheet .keypad-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; padding: 0; }
+.consume-sheet .keypad-key { min-width: 0; min-height: 44px; height: 56px; padding: 0; border: 1px solid #dce5df; border-radius: 12px; background: white; font-size: 25px; font-weight: 750; color: #253b30; }
+.consume-sheet .keypad-key:active { background: #dcefe4; }
+.consume-sheet .keypad-function { background: #e5ece8; font-size: 16px; }
+.consume-sheet .keypad-confirm { grid-row: span 2; min-width: 0; padding: 8px 4px; border-radius: 12px; letter-spacing: 0; }
+.consume-sheet .keypad-confirm > span:first-child { max-width: 2em; font-size: 18px; line-height: 1.4; }
+.consume-sheet .keypad-confirm > span:last-child { font-size: 11px; }
+@media (max-width: 360px) {
+  .consume-header { padding-left: 12px; padding-right: 12px; }
+  .consume-header .modal-title { gap: 6px; font-size: 18px; }
+}
+@media (max-width: 300px) {
+  .consume-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-height: 640px) {
+  .consume-header { padding-top: 8px; padding-bottom: 6px; }
+  .consume-amount-panel { margin-bottom: 7px; padding-bottom: 7px; }
+  .consume-amount-edit strong { font-size: 28px; }
+  .consume-footer-controls { min-height: 36px; }
+  .consume-keypad-toggle { min-height: 36px; }
+  .consume-sheet .keypad-key { height: 44px; font-size: 23px; }
+  .consume-sheet .keypad-function { font-size: 16px; }
+  .consume-sheet .keypad-grid { gap: 6px; }
+  .consume-preset { min-height: 51px; padding: 5px 8px; }
+}
+@media (min-width: 560px) and (max-height: 600px) {
+  .app-shell .consume-sheet { width: min(100%, 860px); height: calc(100dvh - 12px); display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 38%); grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "header header" "amount footer" "content footer"; }
+  .consume-header { grid-area: header; }
+  .consume-amount-panel { grid-area: amount; }
+  .consume-content { grid-area: content; }
+  .consume-footer { grid-area: footer; display: flex; flex-direction: column; justify-content: flex-end; border-top: 0; border-left: 1px solid #dce5e1; }
+  .consume-presets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .consume-sheet .keypad-confirm:not(:disabled) { background: #167c68; box-shadow: none; }
 .consume-sheet-debt .keypad-confirm:not(:disabled) { background: #b42318; }
 .member-detail-header-copy > .w-13 { background: #e2f1ea; background-image: none; color: #167c68; box-shadow: none; }
@@ -650,6 +750,81 @@ body {
   .customer-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .customer-avatar { display: none; }
   .customer-row { grid-template-columns: minmax(0, 1fr) 88px; }
+}
+
+/* 充值抽屉：独立滚动表单，底部始终留出系统安全区。 */
+.recharge-backdrop { padding-top: max(var(--safe-top), 12px); }
+.app-shell .recharge-sheet {
+  width: min(100%, 560px); height: min(92dvh, 820px);
+  max-height: calc(100dvh - max(var(--safe-top), 12px));
+  margin: 0 auto; display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 22px 22px 0 0; box-shadow: 0 -8px 40px rgb(0 0 0 / 12%);
+}
+.recharge-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid #e4ebe7; }
+.recharge-header-copy { flex: 1; min-width: 0; }
+.recharge-header .modal-title { display: flex; align-items: baseline; gap: 10px; font-size: 19px; font-weight: 800; }
+.recharge-header .modal-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; color: #52646b; }
+.recharge-header p { margin-top: 4px; color: #637278; font-size: 14px; }
+.recharge-header p strong { margin-left: 6px; font-size: 16px; color: #116a57; font-variant-numeric: tabular-nums; }
+.recharge-content { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px; scrollbar-width: thin; }
+.recharge-debt-note { margin-bottom: 12px; padding: 10px; border-radius: 10px; background: #fff1eb; color: #962717; font-size: 14px; }
+.recharge-section-heading, .recharge-channel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.recharge-section-heading h3, .recharge-channel-heading h3 { color: #354940; font-size: 15px; font-weight: 750; }
+.recharge-section-heading > span, .recharge-channel-heading > span { color: #637278; font-size: 12px; }
+.recharge-sheet .recharge-plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.recharge-plans button { min-width: 0; min-height: 56px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; padding: 8px 10px; border: 1px solid #dce5e1; border-radius: 11px; text-align: left; }
+.recharge-plans strong { font-size: 18px; color: #116a57; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.recharge-plans button span { font-size: 13px; color: #637278; }
+.recharge-plans button[aria-pressed="true"], .recharge-channels button[aria-pressed="true"] { border-color: #167c68; background: #eaf5ef; color: #116a57; box-shadow: inset 0 0 0 1px #167c68; }
+.recharge-amounts { margin: 16px 0; padding: 12px; border: 1px solid #dce9e3; border-radius: 14px; background: #f3f8f5; }
+.recharge-amounts label, .recharge-remark { font-size: 14px; font-weight: 650; color: #42544d; }
+.recharge-amounts label > span, .recharge-remark > span { color: #637278; font-weight: 400; margin-left: 4px; }
+.recharge-pay-input { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: #116a57; }
+.recharge-pay-input > span { font-size: 24px; font-weight: 700; }
+.recharge-sheet input { min-width: 0; width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid #ccdcd2; border-radius: 10px; background: white; color: #253b30; outline: none; font-size: 16px; }
+.recharge-sheet input:focus { border-color: #167c68; box-shadow: 0 0 0 2px #dcefe6; }
+.recharge-pay-input input { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.recharge-gift-field { margin-top: 12px; }
+.recharge-gift-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 3px 8px; margin-bottom: 6px; }
+.recharge-gift-heading > span { color: #637278; font-size: 12px; }
+.recharge-channels { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.recharge-channels button { min-width: 0; min-height: 44px; border: 1px solid #dce5e1; border-radius: 10px; padding: 8px 2px; color: #52646b; font-size: 15px; font-weight: 650; white-space: nowrap; }
+.recharge-remark { display: block; margin-top: 16px; }
+.recharge-remark input { display: block; margin-top: 6px; }
+.recharge-footer { flex: none; padding: 12px 16px max(var(--safe-bottom), 12px); border-top: 1px solid #dce5e1; background: #f3f8f5; }
+.recharge-credit-preview { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 15px; color: #42544d; }
+.recharge-credit-preview strong { min-width: 0; overflow-wrap: anywhere; font-size: 26px; font-weight: 800; color: #116a57; font-variant-numeric: tabular-nums; }
+.recharge-balance-preview { margin-top: 2px; color: #637278; font-size: 13px; font-variant-numeric: tabular-nums; }
+.recharge-review-button { width: 100%; min-height: 52px; margin-top: 10px; padding: 10px; border-radius: 12px; background: #167c68; color: white; font-size: 18px; font-weight: 800; }
+.recharge-review-button:disabled, .recharge-settings-save:disabled { opacity: .45; }
+.app-shell .recharge-confirm-dialog { max-height: calc(100dvh - max(var(--safe-top), 16px) - max(var(--safe-bottom), 16px)); overflow-y: auto; overscroll-behavior: contain; }
+.recharge-settings-card { margin-top: 16px; padding: 18px; background: white; border: 1px solid #dce5e1; border-radius: 18px; }
+.recharge-setting-heading { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+.recharge-setting-heading h3 { font-size: 18px; font-weight: 800; color: #253b30; }
+.recharge-setting-heading p { margin-top: 4px; font-size: 14px; color: #637278; }
+.recharge-setting-switch { display: flex; align-items: center; gap: 8px; min-height: 44px; color: #42544d; font-size: 15px; font-weight: 650; cursor: pointer; }
+.recharge-setting-switch input { appearance: none; width: 44px; height: 26px; padding: 3px; border-radius: 20px; background: #a3b1aa; flex: none; cursor: pointer; }
+.recharge-setting-switch input::before { content: ''; display: block; width: 20px; height: 20px; border-radius: 50%; background: white; transition: transform .15s; }
+.recharge-setting-switch input:checked { background: #167c68; }
+.recharge-setting-switch input:checked::before { transform: translateX(18px); }
+.recharge-setting-switch input:focus-visible { outline: 2px solid #167c68; outline-offset: 3px; }
+.recharge-setting-switch input:disabled { opacity: .5; cursor: default; }
+.recharge-rate-label { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; color: #42544d; font-size: 15px; font-weight: 650; }
+.recharge-rate-label > div { display: flex; align-items: center; gap: 8px; }
+.recharge-rate-label input { width: 110px; min-height: 44px; padding: 8px 10px; border: 1px solid #ccdcd2; border-radius: 10px; font-size: 18px; background: #f7f9f8; }
+.recharge-rate-example { margin-top: 8px; color: #637278; font-size: 14px; }
+.recharge-settings-save { width: 100%; min-height: 48px; margin-top: 14px; padding: 10px; border-radius: 11px; background: #e2f1eb; color: #116a57; font-size: 16px; font-weight: 750; }
+@media (max-width: 350px) {
+  .recharge-header, .recharge-content, .recharge-footer { padding-left: 12px; padding-right: 12px; }
+  .recharge-plans button { padding-left: 8px; padding-right: 6px; }
+  .recharge-gift-heading > span { font-size: 11px; }
+}
+@media (max-height: 620px) {
+  .app-shell .recharge-sheet { height: calc(100dvh - max(var(--safe-top), 12px)); }
+  .recharge-header { padding-top: 8px; padding-bottom: 8px; }
+  .recharge-content { padding-top: 12px; padding-bottom: 12px; }
+  .recharge-footer { padding-top: 8px; }
+  .recharge-review-button { margin-top: 6px; }
 }
 
 /* 输入框与按钮微交互 */

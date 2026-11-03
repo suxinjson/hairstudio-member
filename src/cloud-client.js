@@ -1,6 +1,7 @@
 import { localDb, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from './storage.js';
 import { getCloudState, saveCloudState, installCloudRecording, replayOperation } from './cloud-storage.js';
 import { CLOUD_STATE_KEY, canonicalJSON, newId, canWrite, mutationPrecondition, validateOperation, selectSyncBatch } from './sync-protocol.js';
+import { DEFAULT_RECHARGE_SETTINGS, normalizeRechargeSettings } from './recharge-settings.js';
 
 export function normalizeServerUrl(value) {
   const url = new URL(value);
@@ -172,7 +173,8 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
           return;
         }
         const hasCustomSettings = canonicalJSON(local.services) !== canonicalJSON(DEFAULT_SERVICES) ||
-          canonicalJSON(local.rechargePlans) !== canonicalJSON(DEFAULT_RECHARGE_PLANS);
+          canonicalJSON(local.rechargePlans) !== canonicalJSON(DEFAULT_RECHARGE_PLANS) ||
+          canonicalJSON(normalizeRechargeSettings(local.rechargeSettings)) !== canonicalJSON(DEFAULT_RECHARGE_SETTINGS);
         if (!local.members.length && !local.ledgers.length && !hasCustomSettings) {
           setState({ ...getCloudState(), binding: { storeId: session.user.storeId }, status: 'synced' });
           await accept(remote);

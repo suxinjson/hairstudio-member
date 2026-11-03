@@ -45,13 +45,17 @@ export function installCloudRecording(onChange = () => {}) {
 
 export function replayOperation(data, operation) {
   validateOperation(operation);
-  if (canonicalJSON(mutationPrecondition(data, operation.method, operation.args)) !== canonicalJSON(operation.precondition)) {
+  const current = mutationPrecondition(data, operation.method, operation.args);
+  // 旧版待办没有赠送设置前置条件；仅在门店还未设置新规则时继续兼容。
+  if (operation.method === 'recharge' && !Object.hasOwn(operation.precondition, 'rechargeSettings') && data.rechargeSettings === undefined) delete current.rechargeSettings;
+  if (canonicalJSON(current) !== canonicalJSON(operation.precondition)) {
     throw new Error('该会员或设置已被其他设备修改，需要核对账本后处理同步冲突');
   }
   const values = new Map(Object.entries({
     [STORAGE_KEYS.MEMBERS]: data.members, [STORAGE_KEYS.LEDGERS]: data.ledgers,
     [STORAGE_KEYS.SERVICES]: data.services, [STORAGE_KEYS.RECHARGE_PLANS]: data.rechargePlans
   }).map(([key, value]) => [key, JSON.stringify(value)]));
+  if (data.rechargeSettings !== undefined) values.set(STORAGE_KEYS.RECHARGE_SETTINGS, JSON.stringify(data.rechargeSettings));
   const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
   const ids = [...operation.generated.ids];
   const times = [...operation.generated.times];

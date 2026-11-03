@@ -74,6 +74,7 @@ async function login(username, deviceId = randomUUID()) {
 function localDatabase(data) {
   const storage = new MemoryStorage();
   for (const [field, key] of [['members', STORAGE_KEYS.MEMBERS], ['ledgers', STORAGE_KEYS.LEDGERS], ['services', STORAGE_KEYS.SERVICES], ['rechargePlans', STORAGE_KEYS.RECHARGE_PLANS]]) storage.setItem(key, JSON.stringify(data[field]));
+  if (data.rechargeSettings !== undefined) storage.setItem(STORAGE_KEYS.RECHARGE_SETTINGS, JSON.stringify(data.rechargeSettings));
   return storage;
 }
 function operation(data, session, method, args) {
@@ -571,6 +572,7 @@ for (const role of ['owner', 'clerk', 'viewer']) {
       ['refundLedger', [initial.data.ledgers[0].id]],
       ['saveService', [{ name: '测试护理', price: 20 }]],
       ['deleteService', ['s1']],
+      ['saveRechargeSettings', [{ giftEnabled: false, giftRate: 12.5 }]],
       ['importBackupData', [JSON.stringify({ data: prepared.data }), { mode: 'replace' }]]
     ];
     for (const [method, args] of cases) {
@@ -590,6 +592,51 @@ for (const role of ['owner', 'clerk', 'viewer']) {
     }
   });
 }
+test('gift rules sync and reject stale or forged recharge operations without changing the account', async () => {
+  const initial = await initialAccount();
+  const charge = operation(initial.data, owner, 'recharge', [{ memberId: initial.member.id, actualPay: 100, giftAmount: 10 }]);
+  const settings = operation(initial.data, owner, 'saveRechargeSettings', [{ giftEnabled: false, giftRate: 12.5 }]);
+  const configured = await service.sync(owner.identity, [settings.operation]);
+  assert.deepEqual(configured.data.rechargeSettings, { giftEnabled: false, giftRate: 12.5 });
+  await assert.rejects(service.sync(owner.identity, [charge.operation]), { status: 409 });
+  const forged = structuredClone(charge.operation);
+  forged.precondition = mutationPrecondition(configured.data, 'recharge', forged.args);
+  await assert.rejects(service.sync(owner.identity, [forged]), { status: 409 });
+  delete forged.precondition.rechargeSettings;
+  await assert.rejects(service.sync(owner.identity, [forged]), { status: 409 });
+  const unchanged = await service.account(owner.identity);
+  assert.deepEqual(unchanged.data, configured.data);
+  assert.equal(unchanged.revision, configured.revision);
+  assert.equal(unchanged.integrity, configured.integrity);
+  const allowed = operation(configured.data, owner, 'recharge', [{ memberId: initial.member.id, actualPay: 100 }]);
+  const final = await service.sync(owner.identity, [allowed.operation]);
+  assert.equal(final.data.members[0].balance, 20000);
+  assert.deepEqual(final.data.rechargeSettings, configured.data.rechargeSettings);
+});
+
+test('old queued recharge operations remain compatible until explicit gift settings are saved', async () => {
+  const initial = await initialAccount();
+  const charge = operation(initial.data, owner, 'recharge', [{ memberId: initial.member.id, actualPay: 100, giftAmount: 10 }]);
+  delete charge.operation.precondition.rechargeSettings;
+  const result = await service.sync(owner.identity, [charge.operation]);
+  assert.equal(result.data.members[0].balance, 21000);
+  assert.equal(Object.hasOwn(result.data, 'rechargeSettings'), false);
+});
+
+test('offline gift settings are captured and replayed to the cloud', async () => {
+  await initialAccount(); let online = false;
+  const client = await connectedClient({ online: () => online });
+  localDb.saveRechargeSettings({ giftEnabled: true, giftRate: 25 });
+  const member = localDb.getMembers()[0];
+  localDb.recharge({ memberId: member.id, actualPay: 100, giftAmount: 25 });
+  assert.equal(getCloudState().outbox.length, 2);
+  online = true; await client.sync();
+  assert.equal(getCloudState().outbox.length, 0);
+  const account = await service.account(owner.identity);
+  assert.deepEqual(account.data.rechargeSettings, { giftEnabled: true, giftRate: 25 });
+  assert.equal(account.data.members[0].balance, 22500);
+});
+
 test('connection event retries are deduplicated', async () => {
   const events = [{ id: randomUUID(), type: 'offline', at: new Date().toISOString(), actorId: owner.identity.id, deviceId: owner.deviceId }];
   await service.activity(owner.identity, events); await service.activity(owner.identity, events);

@@ -204,6 +204,80 @@ test('the recharge form accepts decimals and credits the exact confirmed total',
   assert.equal(localDb.getMemberById(member.id).balance, 2006);
 });
 
+async function openRecharge() {
+  document.querySelector('.customer-open').click(); await nextTick();
+  button('额度充值').click(); await nextTick();
+}
+async function inputValue(selector, value) {
+  const input = document.querySelector(selector); assert.ok(input, selector);
+  input.value = value; input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await nextTick();
+}
+
+test('recharge calculates the configured gift, preserves manual edits and allows deselecting a channel', async () => {
+  const member = localDb.createMember({ name: '赠送客户', phone: '13800005002' });
+  localDb.saveRechargeSettings({ giftEnabled: true, giftRate: 12.5 });
+  await mount(); await openRecharge();
+  assert.ok([...document.querySelectorAll('.recharge-channels button')].every(el => el.getAttribute('aria-pressed') === 'false'));
+  await inputValue('#recharge-pay', '19.99');
+  assert.equal(document.querySelector('#recharge-gift').value, '2.5');
+  await inputValue('#recharge-gift', '0.07');
+  // Unrelated account refreshes must not overwrite a cashier's manual gift amount.
+  window.dispatchEvent(new dom.window.Event('focus')); await nextTick();
+  assert.equal(document.querySelector('#recharge-gift').value, '0.07');
+  const channel = document.querySelector('.recharge-channels button');
+  channel.click(); await nextTick(); assert.equal(channel.getAttribute('aria-pressed'), 'true');
+  channel.click(); await nextTick(); assert.equal(channel.getAttribute('aria-pressed'), 'false');
+  button('核对充值信息').click(); await nextTick();
+  assert.equal(document.querySelector('.recharge-confirm-dialog').textContent.includes('收款方式'), false);
+  button('确认充值').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 2006);
+  assert.equal(localDb.getLedgers()[0].remark.includes('微信'), false);
+});
+
+test('disabled gifts are hidden in the drawer and confirmation and only actual pay is credited', async () => {
+  const member = localDb.createMember({ name: '普通客户', phone: '13800005003' });
+  localDb.saveRechargeSettings({ giftEnabled: false, giftRate: 20 });
+  await mount(); await openRecharge();
+  assert.equal(document.querySelector('#recharge-gift'), null);
+  assert.equal(document.querySelector('.recharge-plans').textContent.includes('送'), false);
+  document.querySelector('.recharge-plans button').click(); await nextTick();
+  assert.equal(document.querySelector('.recharge-credit-preview strong').textContent, '¥200.00');
+  button('核对充值信息').click(); await nextTick();
+  assert.equal(document.querySelector('.recharge-confirm-dialog').textContent.includes('赠送'), false);
+  button('确认充值').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 20000);
+});
+
+test('a gift policy changed during confirmation requires a second review', async () => {
+  const member = localDb.createMember({ name: '核对规则客户', phone: '13800005004' });
+  await mount(); await openRecharge(); await inputValue('#recharge-pay', '100');
+  button('核对充值信息').click(); await nextTick();
+  assert.ok(document.querySelector('.recharge-confirm-dialog').textContent.includes('110.00'));
+  localDb.saveRechargeSettings({ giftEnabled: false, giftRate: 10 });
+  button('确认充值').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 0);
+  assert.equal(document.querySelector('#recharge-gift'), null);
+  assert.equal(document.querySelector('.recharge-confirm-dialog').textContent.includes('赠送'), false);
+  assert.ok(document.body.textContent.includes('规则已变化'));
+  button('确认充值').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+});
+
+test('service settings validate gift rates and allow switching off after an invalid entry', async () => {
+  await mount(); await settings('services');
+  await inputValue('#recharge-gift-rate', '12.5');
+  button('保存赠送设置').click(); await nextTick();
+  assert.deepEqual(localDb.getRechargeSettings(), { giftEnabled: true, giftRate: 12.5 });
+  await inputValue('#recharge-gift-rate', '101');
+  assert.equal(button('保存赠送设置').disabled, true);
+  document.querySelector('[role="switch"]').click(); await nextTick();
+  assert.equal(document.querySelector('#recharge-gift-rate'), null);
+  assert.equal(button('保存赠送设置').disabled, false);
+  button('保存赠送设置').click(); await nextTick();
+  assert.deepEqual(localDb.getRechargeSettings(), { giftEnabled: false, giftRate: 12.5 });
+});
+
 test('conflicting backup disables merge but still permits canceling the preview', async () => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   const base = localDb.exportBackupData({ archiveSnapshot: false });
@@ -499,7 +573,7 @@ test('a cached signed-in cloud account records a charge and its pending operatio
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   cloudProfile('owner', t); await mount();
   button('扣款').click(); await nextTick();
-  button('精致洗剪吹 (').click(); await nextTick();
+  document.querySelector('[aria-label="精致洗剪吹 (¥38)"]').click(); await nextTick();
   button('确认扣除').click(); await nextTick();
   button('确认扣款').click(); await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, 6200);
@@ -683,7 +757,7 @@ test('native cached account remains usable when secure credentials cannot be rea
   assert.ok(document.querySelector('.customer-row'));
   assert.equal(button('扣款').disabled, false);
   button('扣款').click(); await nextTick();
-  button('精致洗剪吹 (').click(); await nextTick();
+  document.querySelector('[aria-label="精致洗剪吹 (¥38)"]').click(); await nextTick();
   button('确认扣除').click(); await nextTick();
   button('确认扣款').click(); await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, 6200);
@@ -736,19 +810,19 @@ test('haircut consume keypad stays docked, opens for editing and stays collapsed
   button('收起键盘').click();
   await nextTick();
   assert.ok(button('展开键盘'));
-  assert.ok(button('点击弹出数字键盘修改'));
+  assert.ok(button('改金额'));
 
   // 3. 点击金额卡片数字区域 -> 重新弹出展开键盘
-  const amountCard = document.querySelector('.modal-title').closest('.bg-white').querySelector('.cursor-pointer');
+  const amountCard = document.querySelector('.consume-amount-edit');
   assert.ok(amountCard);
   amountCard.click();
   await nextTick();
   assert.ok(button('收起键盘'));
 
-  // 4. 再次收起后点击服务预设按钮 -> 弹出数字键盘并带入金额
+  // 4. 再次收起后点击服务预设按钮 -> 保持键盘收起并带入金额
   button('收起键盘').click();
   await nextTick();
-  button('精致洗剪吹 (').click();
+  document.querySelector('[aria-label="精致洗剪吹 (¥38)"]').click();
   await nextTick();
   assert.ok(button('展开键盘'));
   assert.ok(amountCard.textContent.includes('38'));
@@ -783,6 +857,15 @@ test('haircut consume keypad stays docked, opens for editing and stays collapsed
   await nextTick();
   assert.equal(document.body.textContent.includes('请核对扣款金额'), false);
   assert.equal(localDb.getMemberById(member.id).balance, 10000);
+
+  // 编辑文字说明时收起金额键盘；回到改价时失焦，避免同时打开系统输入法。
+  const description = document.querySelector('.consume-description input');
+  description.focus(); await nextTick();
+  assert.equal(document.activeElement, description);
+  assert.ok(button('展开键盘'));
+  button('展开键盘').click(); await nextTick();
+  assert.notEqual(document.activeElement, description);
+  assert.ok(amountCard.textContent.includes('35'));
 
   // 8. 再次点击确认扣除并点击确认扣款 -> 正式扣除 35 元 (10000 - 3500 = 6500)
   button('确认扣除').click();
@@ -829,7 +912,7 @@ test('haircut consume confirmation back button first closes confirmation, then c
   button('扣款').click();
   await nextTick();
   button('展开键盘').click(); await nextTick();
-  button('精致洗剪吹 (').click();
+  document.querySelector('[aria-label="精致洗剪吹 (¥38)"]').click();
   await nextTick();
   button('展开键盘').click(); await nextTick();
 

@@ -29,12 +29,75 @@ const membersKey = 'hairstudio_members_v2';
 const ledgersKey = 'hairstudio_ledgers_v2';
 const servicesKey = 'hairstudio_services_v2';
 const plansKey = 'hairstudio_plans_v2';
+const rechargeSettingsKey = 'hairstudio_recharge_settings_v1';
+const { rechargeGiftCent, normalizeRechargeSettings } = await import('../src/recharge-settings.js');
 
 function resetStorage() {
   localStorage.values.clear();
   localStorage.failKey = null;
   localStorage.failOnce = false;
 }
+
+test('gift rates round to cents and reject invalid configuration', () => {
+  assert.equal(rechargeGiftCent(19.99, { giftEnabled: true, giftRate: 12.5 }), 250);
+  assert.equal(rechargeGiftCent(0.05, { giftEnabled: true, giftRate: 10 }), 1);
+  assert.equal(rechargeGiftCent(200, { giftEnabled: false, giftRate: 10 }), 0);
+  for (const giftRate of [-1, 100.01, 10.001, '', Infinity]) {
+    assert.throws(() => normalizeRechargeSettings({ giftEnabled: true, giftRate }));
+  }
+  assert.throws(() => normalizeRechargeSettings({ giftEnabled: 'false', giftRate: 10 }));
+});
+
+test('disabled gifts reject direct writes without changing the account and channels are optional', () => {
+  resetStorage(); localDb.init();
+  const member = localDb.createMember({ name: '规则客户', phone: '13800005001' });
+  localDb.saveRechargeSettings({ giftEnabled: false, giftRate: 12.5 });
+  const before = localDb.readBackupState();
+  assert.throws(() => localDb.recharge({ memberId: member.id, actualPay: 100, giftAmount: 10 }), /已关闭/);
+  assert.deepEqual(localDb.readBackupState(), before);
+  localDb.recharge({ memberId: member.id, actualPay: 100 });
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+  assert.equal(localDb.getLedgers()[0].remark, '充值¥100.00');
+  localDb.recharge({ memberId: member.id, actualPay: 1, payMethod: '现金' });
+  assert.match(localDb.getLedgers()[0].remark, /\[现金\]/);
+});
+
+test('gift settings survive backup snapshots and merges while legacy replacement restores defaults', () => {
+  resetStorage(); localDb.init();
+  const legacy = localDb.exportBackupData({ archiveSnapshot: false });
+  assert.equal(Object.hasOwn(JSON.parse(legacy).data, 'rechargeSettings'), false);
+  const policy = { giftEnabled: false, giftRate: 12.5 };
+  localDb.saveRechargeSettings(policy);
+  const backup = localDb.exportBackupData();
+  assert.deepEqual(JSON.parse(backup).data.rechargeSettings, policy);
+  assert.deepEqual(JSON.parse(localDb.getLocalSnapshots()[0].content).data.rechargeSettings, policy);
+  localDb.importBackupData(legacy, { mode: 'merge' });
+  assert.deepEqual(localDb.getRechargeSettings(), policy);
+  localDb.importBackupData(legacy, { mode: 'replace' });
+  assert.deepEqual(localDb.getRechargeSettings(), { giftEnabled: true, giftRate: 10 });
+  assert.equal(Object.hasOwn(localDb.readBackupState(), 'rechargeSettings'), false);
+  localDb.importBackupData(backup, { mode: 'replace' });
+  assert.deepEqual(localDb.getRechargeSettings(), policy);
+  localDb.applyCloudSnapshot(JSON.parse(legacy).data, 'qa-metadata', {});
+  assert.deepEqual(localDb.getRechargeSettings(), { giftEnabled: true, giftRate: 10 });
+  localDb.applyCloudSnapshot(JSON.parse(backup).data, 'qa-metadata', {});
+  assert.deepEqual(localDb.getRechargeSettings(), policy);
+});
+
+test('gift settings save rolls back on quota failure and corrupt settings can be recovered', () => {
+  resetStorage(); localDb.init();
+  const policy = { giftEnabled: false, giftRate: 25 };
+  localDb.saveRechargeSettings(policy);
+  const backup = localDb.exportBackupData({ archiveSnapshot: false });
+  localStorage.failKey = rechargeSettingsKey; localStorage.failOnce = true;
+  assert.throws(() => localDb.saveRechargeSettings({ giftEnabled: true, giftRate: 20 }));
+  assert.deepEqual(localDb.getRechargeSettings(), policy);
+  localStorage.setItem(rechargeSettingsKey, '{broken');
+  const recovery = localDb.readRecoveryState();
+  assert.equal(recovery.storage[rechargeSettingsKey], '{broken');
+  localDb.importBackupData(backup, { mode: 'replace' });
+  assert.deepEqual(localDb.getRechargeSettings(), policy);
+});
 
 test('first initialization creates an empty ledger, not demo customers', () => {
   resetStorage();

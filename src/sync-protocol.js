@@ -1,10 +1,11 @@
 import { DEFAULT_SERVICES } from './storage.js';
+import { normalizeRechargeSettings } from './recharge-settings.js';
 import { DATA_LIMITS, byteLength, assertJsonBudget, validateMutationArgs, assertAccountLimits } from './data-limits.js';
 
 export const CLOUD_STATE_KEY = 'hairstudio_cloud_state_v1';
 export const WRITE_METHODS = ['createMember', 'updateMember', 'deleteMember', 'recharge', 'consume',
-  'refundLedger', 'saveService', 'deleteService', 'importBackupData'];
-export const OWNER_METHODS = ['deleteMember', 'refundLedger', 'saveService', 'deleteService', 'importBackupData', 'bootstrap'];
+  'refundLedger', 'saveService', 'deleteService', 'saveRechargeSettings', 'importBackupData'];
+export const OWNER_METHODS = ['deleteMember', 'refundLedger', 'saveService', 'deleteService', 'saveRechargeSettings', 'importBackupData', 'bootstrap'];
 
 export function newId() {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -34,9 +35,11 @@ export function mutationPrecondition(data, method, args) {
     const member = data.members.find(item => item.id === memberId);
     if (!member) return { member: null };
     return { member: Object.fromEntries(['id', 'name', 'phone', 'balance', 'total_recharge', 'total_consume',
-      'notes', 'created_at', 'updated_at'].map(field => [field, member[field] ?? ''])), isArchived: Boolean(member.isArchived) };
+      'notes', 'created_at', 'updated_at'].map(field => [field, member[field] ?? ''])), isArchived: Boolean(member.isArchived),
+      ...(method === 'recharge' ? { rechargeSettings: normalizeRechargeSettings(data.rechargeSettings) } : {}) };
   }
   if (['saveService', 'deleteService'].includes(method)) return { services: data.services };
+  if (method === 'saveRechargeSettings') return { rechargeSettings: normalizeRechargeSettings(data.rechargeSettings) };
   if (method === 'importBackupData') return { snapshot: data };
   return {};
 }
