@@ -103,7 +103,9 @@ const canRequest = computed(() => Boolean(state.value.user && !state.value.syncL
 const unsubscribe = cloudClient.subscribe(value => { state.value = value; });
 onUnmounted(unsubscribe);
 const browserOrigin = /^https?:$/.test(globalThis.location?.protocol || '') ? globalThis.location.origin : '';
-const fixedServerUrl = isNativeApp ? DEFAULT_CLOUD_SERVER_URL : browserOrigin || DEFAULT_CLOUD_SERVER_URL;
+const loginServerUrl = computed(() => isNativeApp
+  ? state.value.serverUrl || DEFAULT_CLOUD_SERVER_URL
+  : browserOrigin || DEFAULT_CLOUD_SERVER_URL);
 const form = ref({ username: isNativeApp ? state.value.user?.username || '' : '', password: '' });
 const loginHint = computed(() => isNativeApp
   ? 'App 可不登录离线记账；登录后会检测本机数据并安全同步到云端。'
@@ -121,7 +123,7 @@ async function perform(action) { message.value = ''; try { await action(); } cat
 async function copyIdentity(text, label) { await perform(async () => { await copyToClipboard(text); message.value = label + '已复制'; }); }
 async function login() {
   await perform(async () => {
-    await cloudClient.login(fixedServerUrl, form.value.username, form.value.password, { autoBootstrap: isNativeApp });
+    await cloudClient.login(loginServerUrl.value, form.value.username, form.value.password, { autoBootstrap: isNativeApp });
     form.value.password = '';
     // App 首次登录且云端为空时，自动把本机离线账本迁移到云端。
     if (isNativeApp && cloudClient.snapshot().status === 'needs-bootstrap') await cloudClient.bootstrap();

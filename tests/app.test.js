@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { JSDOM } from 'jsdom';
 
 const dom = new JSDOM('<div id="app"></div>', { url: 'https://localhost' });
-for (const key of ['window', 'document', 'Document', 'Element', 'HTMLElement', 'SVGElement', 'Node', 'FileReader']) {
+for (const key of ['window', 'document', 'Document', 'Element', 'HTMLElement', 'SVGElement', 'Node', 'FileReader', 'location']) {
   globalThis[key] = dom.window[key];
 }
 Object.defineProperty(globalThis, 'navigator', { value: dom.window.navigator, configurable: true });
@@ -43,6 +43,7 @@ await compileComponent(new URL('../src/components/CloudSettings.vue', import.met
 const appPath = join(directory, 'app.mjs');
 await compileComponent(new URL('../src/App.vue', import.meta.url), appPath, pathToFileURL(keypadPath).href);
 const { default: App } = await import(pathToFileURL(appPath).href);
+const { default: CloudSettings } = await import(pathToFileURL(cloudSettingsPath).href);
 const { createApp, nextTick } = await import(vueUrl);
 const { localDb } = await import('../src/storage.js');
 const { saveCloudState, getCloudState } = await import('../src/cloud-storage.js');
@@ -426,6 +427,31 @@ test('a native app can read its local ledger after logout while cloud writes req
   await settings('account');
   assert.ok(document.body.textContent.includes('安全登录'));
 });
+
+for (const native of [true, false]) {
+  test(`login uses ${native ? 'the saved native server' : 'the browser origin'} when an older server address is cached`, async t => {
+    Capacitor.isNativePlatform = () => native;
+    cloudProfile(null);
+    const pending = [{ id: 'pending-charge', actorId: 'test-user' }];
+    saveCloudState({ ...getCloudState(), outbox: pending });
+    const login = t.mock.method(cloudClient, 'login', async () => {});
+    t.mock.method(cloudClient, 'sync', async () => {});
+    app = createApp(CloudSettings);
+    app.mount('#app');
+    await nextTick();
+    for (const [selector, value] of [['input[autocomplete="username"]', 'owner'], ['input[type="password"]', 'correct-password']]) {
+      const input = document.querySelector(selector);
+      input.value = value;
+      input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    }
+    document.querySelector('form').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(login.mock.callCount(), 1);
+    assert.equal(login.mock.calls[0].arguments[0], native ? 'https://member.example.com' : 'https://localhost');
+    assert.equal(login.mock.calls[0].arguments[1], 'owner');
+    assert.deepEqual(getCloudState().outbox, pending);
+  });
+}
 test('read-only cloud accounts cannot initiate a charge or change service prices', async t => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   cloudProfile('viewer', t);

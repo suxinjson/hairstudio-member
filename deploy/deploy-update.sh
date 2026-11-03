@@ -34,19 +34,13 @@ fi
 PUBLIC_DOMAIN=$(grep -E '^PUBLIC_DOMAIN=' .env | cut -d '=' -f2- | tr -d '\r"' | tr -d "'" || true)
 PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-124.70.184.136}"
 
-# 判断是否需要加载 IP HTTPS 证书配置 (124.70.184.136 特别支持)
+# 仅公网地址为 IPv4 时加载 IP 证书配置，宿主机其他网站的 Certbot 目录不参与判断。
 COMPOSE_ARGS=("-f" "compose.yaml")
-IS_IP_DEPLOY=0
-
-if [ -f "deploy/compose.ip.yaml" ]; then
-  if [[ "$PUBLIC_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    IS_IP_DEPLOY=1
-  elif [ -d "/etc/letsencrypt" ] || $SUDO test -d "/etc/letsencrypt" 2>/dev/null; then
-    IS_IP_DEPLOY=1
+if [[ "$PUBLIC_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if [ ! -f "deploy/compose.ip.yaml" ]; then
+    echo "❌ 错误: IP HTTPS 部署缺少 deploy/compose.ip.yaml，停止更新。"
+    exit 1
   fi
-fi
-
-if [ "$IS_IP_DEPLOY" -eq 1 ]; then
   echo "🔒 检测到 IP HTTPS 证书环境 ($PUBLIC_DOMAIN)，自动挂载 deploy/compose.ip.yaml 和宿主机证书"
   COMPOSE_ARGS+=("-f" "deploy/compose.ip.yaml")
 else
@@ -57,17 +51,30 @@ echo ">>> [1/3] 正在重新构建并平滑重启服务容器 (Web & API)..."
 $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d --build
 
 echo ">>> [2/3] 正在验证 HTTPS 与反向代理服务状态..."
-# 校验 Caddy 配置语法并探测 HTTPS 健康接口
-$SUDO docker compose "${COMPOSE_ARGS[@]}" exec -T web caddy validate --config /etc/caddy/Caddyfile || true
+# 配置校验失败时保留日志并停止发布。
+if ! $SUDO docker compose "${COMPOSE_ARGS[@]}" exec -T web caddy validate --config /etc/caddy/Caddyfile; then
+  echo "❌ Caddy 配置校验失败，停止 APK 发布。"
+  $SUDO docker compose "${COMPOSE_ARGS[@]}" logs --tail=50 web api || true
+  exit 1
+fi
 
 HEALTH_URL="https://${PUBLIC_DOMAIN}/api/health"
 echo "正在探测健康接口: $HEALTH_URL"
-if curl -fsS --connect-timeout 8 --max-time 15 "$HEALTH_URL" >/dev/null 2>&1; then
-  echo "✅ HTTPS 服务正常且证书有效！($HEALTH_URL 响应 200 OK)"
-else
-  echo "⚠️ 提示: HTTPS 探测暂时未返回 200，打印 Web 容器最新日志以供排查："
-  $SUDO docker compose "${COMPOSE_ARGS[@]}" logs --tail=25 web || true
+HTTPS_READY=0
+for attempt in {1..12}; do
+  if HEALTH_STATUS=$(curl -fsS --connect-timeout 8 --max-time 15 -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null) && [ "$HEALTH_STATUS" = "200" ]; then
+    HTTPS_READY=1
+    break
+  fi
+  echo "等待 HTTPS 服务就绪 ($attempt/12)..."
+  if [ "$attempt" -lt 12 ]; then sleep 5; fi
+done
+if [ "$HTTPS_READY" -ne 1 ]; then
+  echo "❌ HTTPS 健康检查持续失败，停止 APK 发布。"
+  $SUDO docker compose "${COMPOSE_ARGS[@]}" logs --tail=50 web api || true
+  exit 1
 fi
+echo "✅ HTTPS 服务正常且证书有效！($HEALTH_URL 响应 200 OK)"
 
 echo ">>> [3/3] 正在自动发布最新安卓 APK 到云端更新库..."
 # 优先寻找 releases 目录下的最新 APK 与 manifest
@@ -88,6 +95,6 @@ fi
 echo "=========================================================="
 echo "🎉 自动部署与发布已顺利完成！"
 echo "• 服务端 Web 与 API 容器已更新至最新版本"
-echo "• HTTPS (Let's Encrypt IP 证书) 保持生效"
+echo "• HTTPS 证书与健康接口检查已通过"
 echo "• 手机端现已可打开 App 点击【检查更新】下载新版本！"
 echo "=========================================================="

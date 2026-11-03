@@ -22,12 +22,16 @@ docker compose run --rm --no-deps -e ADMIN_USERNAME -e ADMIN_PASSWORD migrate no
 unset ADMIN_USERNAME ADMIN_PASSWORD
 ```
 
-5. 在 App 设置中填写 `https://你的域名`，使用店主账号登录。本机有会员、流水或自定义服务定价、充值档位时，新云端为空则选择“上传本机初始账本”；云端已有账本时，先导出本机备份，再决定是否采用云端账本。只有本机没有会员和流水且使用默认设置时，才会自动采用云端账本。
+5. 为新安装的 App 配置下述默认服务器地址，在 App 设置中使用店主账号登录。本机有会员、流水或自定义服务定价、充值档位时，新云端为空则选择“上传本机初始账本”；云端已有账本时，先导出本机备份，再决定是否采用云端账本。只有本机没有会员和流水且使用默认设置时，才会自动采用云端账本。
 6. 店主可在设置中建立店员或只读账号。每个账号属于一个门店；服务器通过登录会话确定门店，忽略客户端自称的角色和门店。
 
-App 的默认云服务器地址已设为 `https://124.70.184.136`。使用 IP 直连需要该 IP 的有效、受设备信任的 HTTPS 证书。若服务器使用域名证书，将域名解析到 `124.70.184.136`，在 App 登录页面填写该 HTTPS 域名，并将部署的 `PUBLIC_DOMAIN` 设为该域名。首次登录成功并完成账本选择后才会绑定设备。
+App 的默认云服务器地址已设为 `https://124.70.184.136`。使用 IP 直连需要该 IP 的有效、受设备信任的 HTTPS 证书。若服务器使用域名证书，将域名解析到 `124.70.184.136`，通过下述 `VITE_CLOUD_SERVER_URL` 配置 App 的默认地址，并将部署的 `PUBLIC_DOMAIN` 设为该域名。首次登录成功并完成账本选择后才会绑定设备。
 
-本地构建可在 `.env` 中设置 `VITE_CLOUD_SERVER_URL` 后运行 `npm run build`，更改新设备的默认地址；已有设备保留原地址。Docker 前端构建同样读取 `VITE_CLOUD_SERVER_URL`，未设置时使用 `https://124.70.184.136`。
+本地构建可在 `.env` 中设置 `VITE_CLOUD_SERVER_URL` 后运行 `npm run build`，更改新设备的默认地址；已有 Android 设备重新登录时优先使用保存的原地址。Docker 前端构建同样读取 `VITE_CLOUD_SERVER_URL`，未设置时使用 `https://124.70.184.136`。
+
+服务器使用 `npm run build:web` 构建网页，不执行 Android 资源同步。Actions 的服务器更新包包含网页入口、Vite 配置和 `.dockerignore`，可从完整更新包独立构建 Docker 镜像。Android APK 仍使用 `npm run build` 和 Gradle 构建。
+
+自动更新脚本 `bash deploy/deploy-update.sh` 按 `.env` 中的 `PUBLIC_DOMAIN` 选择证书配置：IPv4 地址使用 `deploy/compose.ip.yaml`，域名使用标准配置。宿主机的其他 Certbot 目录不会改变此选择。Caddy 配置必须校验通过，HTTPS 健康接口须在最多 12 次探测内返回 200（每次最多等待 15 秒，失败间隔 5 秒），否则脚本返回非零状态并停止 APK 发布。持续失败时先检查输出的 Web/API 日志，再重新部署。
 
 ## 权限与离线边界
 

@@ -5,7 +5,7 @@ COPY server/package.json ./server/package.json
 RUN npm ci
 COPY . .
 ARG VITE_CLOUD_SERVER_URL=https://124.70.184.136
-RUN npm run build
+RUN npm run build:web
 
 FROM node:22-alpine AS api
 WORKDIR /app

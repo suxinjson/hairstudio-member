@@ -6,7 +6,8 @@
   "workspaces": ["server"],
   "scripts": {
     "dev": "vite",
-    "build": "vite build && npx cap sync android",
+    "build": "npm run build:web && npx cap sync android",
+    "build:web": "vite build",
     "test": "node --test",
     "sync": "npx cap sync android",
     "open:android": "npx cap open android",
