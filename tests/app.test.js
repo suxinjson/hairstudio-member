@@ -751,3 +751,110 @@ test('haircut consume keypad stays docked, pops up on clicking amount or preset,
   await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, 6500);
 });
+
+test('haircut consume modal back button first collapses keypad, second back closes modal', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const member = localDb.createMember({ name: '王五', phone: '13900003333', initialBalance: 100 });
+  const back = await nativeBackListener(t);
+
+  // 1. 打开剪发扣款抽屉
+  button('剪发扣款').click();
+  await nextTick();
+
+  // 键盘默认展开
+  assert.ok(button('收起键盘'));
+  assert.equal(document.body.textContent.includes('王五'), true);
+
+  // 2. 第一次返回：收起键盘，扣款抽屉仍保留
+  await back();
+  await nextTick();
+
+  assert.ok(button('展开键盘'));
+  assert.equal(document.body.textContent.includes('王五'), true);
+
+  // 3. 第二次返回：关闭扣款抽屉
+  await back();
+  await nextTick();
+
+  assert.equal(document.querySelector('.modal-title'), null);
+});
+
+test('haircut consume confirmation back button first closes confirmation, then collapses keypad, then closes drawer', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const member = localDb.createMember({ name: '赵六', phone: '13900004444', initialBalance: 100 });
+  const back = await nativeBackListener(t);
+
+  // 1. 打开剪发扣款抽屉并选服务
+  button('剪发扣款').click();
+  await nextTick();
+  button('精致洗剪吹 (').click();
+  await nextTick();
+
+  // 2. 点击确认扣除 -> 弹出消费确认框
+  button('确认扣除').click();
+  await nextTick();
+  assert.ok(document.body.textContent.includes('请核对扣款金额'));
+
+  // 3. 第一次返回：关闭确认框，回到扣款抽屉
+  await back();
+  await nextTick();
+  assert.equal(document.body.textContent.includes('请核对扣款金额'), false);
+  assert.equal(document.body.textContent.includes('赵六'), true);
+  assert.ok(button('收起键盘'));
+
+  // 4. 第二次返回：收起数字键盘
+  await back();
+  await nextTick();
+  assert.ok(button('展开键盘'));
+  assert.equal(document.body.textContent.includes('赵六'), true);
+
+  // 5. 第三次返回：关闭扣款抽屉
+  await back();
+  await nextTick();
+  assert.equal(document.querySelector('.modal-title'), null);
+});
+
+test('clicking haircut modal backdrop first collapses the keypad, next click closes the drawer', async t => {
+  t.mock.method(console, 'warn', () => {});
+  localDb.createMember({ name: '孙七', phone: '13900005555', initialBalance: 100 });
+  await mount();
+
+  button('剪发扣款').click();
+  await nextTick();
+
+  const backdrop = document.querySelector('.modal-title').closest('.fixed.inset-0');
+  assert.ok(backdrop);
+  assert.ok(button('收起键盘'));
+
+  // 点击背景遮罩第一次：收起键盘
+  backdrop.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  await nextTick();
+  assert.ok(button('展开键盘'));
+  assert.equal(document.body.textContent.includes('孙七'), true);
+
+  // 点击背景遮罩第二次：关闭抽屉
+  backdrop.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  await nextTick();
+  assert.equal(document.querySelector('.modal-title'), null);
+});
+
+test('pressing Escape on keyboard follows the layered back hierarchy', async t => {
+  t.mock.method(console, 'warn', () => {});
+  localDb.createMember({ name: '周八', phone: '13900006666', initialBalance: 100 });
+  await mount();
+
+  button('剪发扣款').click();
+  await nextTick();
+  assert.ok(button('收起键盘'));
+
+  // 按 Escape 键第一次：收起键盘
+  window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await nextTick();
+  assert.ok(button('展开键盘'));
+  assert.equal(document.body.textContent.includes('周八'), true);
+
+  // 按 Escape 键第二次：关闭扣款抽屉
+  window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await nextTick();
+  assert.equal(document.querySelector('.modal-title'), null);
+});

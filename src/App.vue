@@ -610,7 +610,7 @@
     <div 
       v-if="consumingMember" 
       class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
-      @click.self="closeConsumeModal"
+      @click.self="handleConsumeModalBack"
     >
       <div class="bg-white rounded-t-[32px] max-h-[92vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full overflow-hidden">
         <!-- 弹窗把手 (固定顶部) -->
@@ -1827,6 +1827,14 @@ function openConsumeModal(m) {
   showConsumeKeypad.value = true;
 }
 
+function handleConsumeModalBack() {
+  if (showConsumeKeypad.value) {
+    showConsumeKeypad.value = false;
+    return;
+  }
+  closeConsumeModal();
+}
+
 function closeConsumeModal() {
   consumingMember.value = null;
   consumeConfirmation.value = null;
@@ -2237,6 +2245,12 @@ async function handleBackButton() {
   exitResetTimer = setTimeout(resetExitSequence, 2000);
 }
 
+function handleWindowKeydown(e) {
+  if (e.key === 'Escape') {
+    handleBackButton();
+  }
+}
+
 function scheduleDailyRefresh() {
   clearTimeout(dailyRefreshTimer);
   const now = new Date();
@@ -2265,7 +2279,14 @@ function closeTopLayer() {
   if (consumeConfirmation.value) { consumeConfirmation.value = null; return true; }
   if (rechargeConfirmation.value) { rechargeConfirmation.value = null; return true; }
   if (rechargingMember.value) { rechargingMember.value = null; return true; }
-  if (consumingMember.value) { closeConsumeModal(); return true; }
+  if (consumingMember.value) {
+    if (showConsumeKeypad.value) {
+      showConsumeKeypad.value = false;
+      return true;
+    }
+    closeConsumeModal();
+    return true;
+  }
   if (selectedMember.value) { selectedMember.value = null; return true; }
   if (activeTab.value === 'settings' && settingsPath.value.length && !cloudLocked.value) { backInSettings(); return true; }
   if (activeTab.value !== 'home' && !cloudLocked.value) { activeTab.value = 'home'; return true; }
@@ -2278,6 +2299,7 @@ onMounted(async () => {
   document.addEventListener('visibilitychange', handleVisibilityChange);
   window.addEventListener('focus', refreshOnResume);
   window.addEventListener('cloud-data-updated', refreshAll);
+  window.addEventListener('keydown', handleWindowKeydown);
   cloudClient.start().then(stop => { if (isUnmounted) stop(); else stopCloud = stop; }).catch(error => showFeedback(error.message, 'error', { title: '云端连接未启动' }));
   if (isNativeApp) {
     try {
@@ -2307,6 +2329,7 @@ onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('focus', refreshOnResume);
   window.removeEventListener('cloud-data-updated', refreshAll);
+  window.removeEventListener('keydown', handleWindowKeydown);
   stopCloud?.(); stopCloudSubscription();
   appStateListener?.remove().catch(error => console.warn('应用状态监听清理失败:', error));
   backButtonListener?.remove().catch(error => console.warn('返回键监听清理失败:', error));
