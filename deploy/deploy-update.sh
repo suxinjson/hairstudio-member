@@ -30,18 +30,47 @@ if ! docker info >/dev/null 2>&1; then
   fi
 fi
 
-# 判断 compose 配置文件参数 (检测是否使用 IP HTTPS 证书)
+# 提取当前 PUBLIC_DOMAIN
+PUBLIC_DOMAIN=$(grep -E '^PUBLIC_DOMAIN=' .env | cut -d '=' -f2- | tr -d '\r"' | tr -d "'" || true)
+PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-124.70.184.136}"
+
+# 判断是否需要加载 IP HTTPS 证书配置 (124.70.184.136 特别支持)
 COMPOSE_ARGS=("-f" "compose.yaml")
-if [ -f "deploy/compose.ip.yaml" ] && [ -d "/etc/letsencrypt" ]; then
-  echo "ℹ️ 检测到 IP HTTPS 部署环境，自动载入 deploy/compose.ip.yaml"
-  COMPOSE_ARGS+=("-f" "deploy/compose.ip.yaml")
+IS_IP_DEPLOY=0
+
+if [ -f "deploy/compose.ip.yaml" ]; then
+  if [[ "$PUBLIC_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    IS_IP_DEPLOY=1
+  elif [ -d "/etc/letsencrypt" ] || $SUDO test -d "/etc/letsencrypt" 2>/dev/null; then
+    IS_IP_DEPLOY=1
+  fi
 fi
 
-echo ">>> [1/2] 正在重新构建并重启服务容器 (Web & API)..."
+if [ "$IS_IP_DEPLOY" -eq 1 ]; then
+  echo "🔒 检测到 IP HTTPS 证书环境 ($PUBLIC_DOMAIN)，自动挂载 deploy/compose.ip.yaml 和宿主机证书"
+  COMPOSE_ARGS+=("-f" "deploy/compose.ip.yaml")
+else
+  echo "🌐 检测到标准域名环境 ($PUBLIC_DOMAIN)，使用标准 compose 启动"
+fi
+
+echo ">>> [1/3] 正在重新构建并平滑重启服务容器 (Web & API)..."
 $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d --build
 
-echo ">>> [2/2] 正在自动发布最新安卓 APK 到云端更新库..."
-# 优先寻找 releases 目录下的最新 APK
+echo ">>> [2/3] 正在验证 HTTPS 与反向代理服务状态..."
+# 校验 Caddy 配置语法并探测 HTTPS 健康接口
+$SUDO docker compose "${COMPOSE_ARGS[@]}" exec -T web caddy validate --config /etc/caddy/Caddyfile || true
+
+HEALTH_URL="https://${PUBLIC_DOMAIN}/api/health"
+echo "正在探测健康接口: $HEALTH_URL"
+if curl -fsS --connect-timeout 8 --max-time 15 "$HEALTH_URL" >/dev/null 2>&1; then
+  echo "✅ HTTPS 服务正常且证书有效！($HEALTH_URL 响应 200 OK)"
+else
+  echo "⚠️ 提示: HTTPS 探测暂时未返回 200，打印 Web 容器最新日志以供排查："
+  $SUDO docker compose "${COMPOSE_ARGS[@]}" logs --tail=25 web || true
+fi
+
+echo ">>> [3/3] 正在自动发布最新安卓 APK 到云端更新库..."
+# 优先寻找 releases 目录下的最新 APK 与 manifest
 APK_FILE=$(ls -t releases/hairstudio-member-v*.apk 2>/dev/null | head -n 1 || true)
 MANIFEST_FILE="releases/update-manifest.json"
 
@@ -59,5 +88,6 @@ fi
 echo "=========================================================="
 echo "🎉 自动部署与发布已顺利完成！"
 echo "• 服务端 Web 与 API 容器已更新至最新版本"
+echo "• HTTPS (Let's Encrypt IP 证书) 保持生效"
 echo "• 手机端现已可打开 App 点击【检查更新】下载新版本！"
 echo "=========================================================="
