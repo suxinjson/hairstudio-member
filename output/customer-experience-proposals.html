@@ -1,0 +1,202 @@
+<div id="mf-customer-proposals" class="viz-carousel viz-dotted-background" aria-label="客户与收银交互方案" data-previous-label="上一个方案" data-next-label="下一个方案">
+  <section data-variant="统一客户入口" aria-label="统一客户入口">
+    <div class="mf-stage"><div class="mf-phone" data-design="unified" aria-label="统一客户入口预览"></div></div>
+  </section>
+  <section data-variant="收银与档案分工" aria-label="收银与档案分工" hidden>
+    <div class="mf-stage"><div class="mf-phone" data-design="split" aria-label="收银与档案分工预览"></div></div>
+  </section>
+  <section data-variant="服务优先开单" aria-label="服务优先开单" hidden>
+    <div class="mf-stage"><div class="mf-phone" data-design="service" aria-label="服务优先开单预览"></div></div>
+  </section>
+</div>
+<style>
+  #mf-customer-proposals .mf-stage { min-height: 720px; display: flex; justify-content: center; align-items: start; padding: 18px 10px; }
+  #mf-customer-proposals .mf-phone { --mf-bg: light-dark(#f3f6f6, #172023); --mf-surface: light-dark(#ffffff, #222e32); --mf-ink: light-dark(#202a36, #eef3f3); --mf-muted: light-dark(#65737a, #b3c1c4); --mf-line: light-dark(#e4e9ed, #3c4c52); --mf-accent: light-dark(#167c68, #77d8bc); --mf-soft: light-dark(#e5f4ee, #243f37); --mf-action: light-dark(#167c68, #77d8bc); --mf-on-action: light-dark(#ffffff, #12382c); --mf-amber: light-dark(#875415, #f2ca85); --mf-amber-bg: light-dark(#fff4de, #3f3425); --mf-overlay: light-dark(#14262c99, #03090bbb); width: min(100%, 414px); min-height: 680px; border: 1px solid var(--mf-line); border-radius: 26px; background: var(--mf-bg); color: var(--mf-ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 15px; line-height: 1.5; position: relative; display: flex; flex-direction: column; box-sizing: border-box; isolation: isolate; }
+  #mf-customer-proposals .mf-phone * { box-sizing: border-box; }
+  #mf-customer-proposals .mf-phone button, #mf-customer-proposals .mf-phone input { font: inherit; color: inherit; }
+  #mf-customer-proposals .mf-phone button { background: transparent; border: 0; padding: 0; }
+  #mf-customer-proposals .mf-phone button:disabled { opacity: .45; }
+  #mf-customer-proposals .mf-header { padding: 20px 18px 12px; background: var(--mf-surface); border-radius: 26px 26px 0 0; }
+  #mf-customer-proposals .mf-topline, #mf-customer-proposals .mf-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #mf-customer-proposals .mf-brand { font-size: 20px; font-weight: 500; }
+  #mf-customer-proposals .mf-subtle { font-size: 12px; color: var(--mf-muted); }
+  #mf-customer-proposals .mf-topline > button { color: var(--mf-accent); min-height: 44px; flex: none; }
+  #mf-customer-proposals .mf-search { display: flex; gap: 8px; align-items: center; background: var(--mf-bg); border: 1px solid var(--mf-line); border-radius: 13px; padding: 0 12px; margin-top: 14px; }
+  #mf-customer-proposals .mf-search input { border: 0; background: transparent; width: 100%; min-width: 0; padding: 12px 0; font-size: 16px; }
+  #mf-customer-proposals .mf-search input::placeholder { color: var(--mf-muted); }
+  #mf-customer-proposals .mf-search > i { color: var(--mf-muted); }
+  #mf-customer-proposals .mf-main { flex: 1; padding: 16px; }
+  #mf-customer-proposals .mf-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  #mf-customer-proposals .mf-chips button { padding: 8px 13px; min-height: 44px; border-radius: 12px; color: var(--mf-muted); }
+  #mf-customer-proposals .mf-chips button[aria-pressed="true"] { background: var(--mf-soft); color: var(--mf-accent); font-weight: 500; }
+  #mf-customer-proposals .mf-label { margin: 0 0 12px; font-size: 14px; font-weight: 500; }
+  #mf-customer-proposals .mf-list { background: var(--mf-surface); border: 1px solid var(--mf-line); border-radius: 18px; padding: 0 12px; }
+  #mf-customer-proposals .mf-row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 14px 0; }
+  #mf-customer-proposals .mf-row + .mf-row { border-top: 1px solid var(--mf-line); }
+  #mf-customer-proposals .mf-person { min-width: 0; display: flex; align-items: center; gap: 10px; text-align: left; min-height: 48px; }
+  #mf-customer-proposals .mf-person-copy { min-width: 0; }
+  #mf-customer-proposals .mf-person-copy strong { font-weight: 500; }
+  #mf-customer-proposals .mf-avatar { width: 40px; height: 40px; border-radius: 13px; color: var(--mf-accent); background: var(--mf-soft); display: grid; place-items: center; flex: none; font-weight: 500; }
+  #mf-customer-proposals .mf-phone-number { color: var(--mf-muted); font-size: 12px; display: block; }
+  #mf-customer-proposals .mf-trailing { text-align: right; }
+  #mf-customer-proposals .mf-balance { white-space: nowrap; font-weight: 500; }
+  #mf-customer-proposals .mf-row .mf-quick { color: var(--mf-accent); background: var(--mf-soft); padding: 7px 14px; border-radius: 10px; min-height: 44px; margin-top: 5px; }
+  #mf-customer-proposals .mf-empty { padding: 25px 12px; color: var(--mf-muted); text-align: center; }
+  #mf-customer-proposals .mf-section-gap { margin-top: 20px; }
+  #mf-customer-proposals .mf-primary { width: 100%; min-height: 52px; border-radius: 14px; background: var(--mf-action) !important; color: var(--mf-on-action) !important; font-weight: 500; padding: 10px 12px !important; }
+  #mf-customer-proposals .mf-secondary { min-height: 48px; border-radius: 13px; border: 1px solid var(--mf-line) !important; padding: 10px 15px !important; background: var(--mf-surface) !important; }
+  #mf-customer-proposals .mf-nav { display: flex; border-top: 1px solid var(--mf-line); background: var(--mf-surface); border-radius: 0 0 26px 26px; padding: 9px 8px 14px; gap: 4px; }
+  #mf-customer-proposals .mf-nav button { flex: 1; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 12px; color: var(--mf-muted); }
+  #mf-customer-proposals .mf-nav button[aria-current="page"] { color: var(--mf-accent); }
+  #mf-customer-proposals .mf-services { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  #mf-customer-proposals .mf-services button { text-align: left; padding: 14px; min-height: 78px; background: var(--mf-surface); border: 1px solid var(--mf-line); border-radius: 14px; }
+  #mf-customer-proposals .mf-services button[aria-pressed="true"] { border-color: var(--mf-accent); background: var(--mf-soft); }
+  #mf-customer-proposals .mf-services button span { display: block; margin-top: 5px; color: var(--mf-accent); font-weight: 500; }
+  #mf-customer-proposals .mf-selected { background: var(--mf-surface); border: 1px solid var(--mf-line); border-radius: 18px; padding: 14px; }
+  #mf-customer-proposals .mf-selected .mf-change { color: var(--mf-accent); min-height: 44px; }
+  #mf-customer-proposals .mf-note { background: var(--mf-amber-bg); color: var(--mf-amber); border-radius: 10px; padding: 9px 11px; margin-top: 12px; font-size: 13px; }
+  #mf-customer-proposals .mf-selected .mf-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  #mf-customer-proposals .mf-recent { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+  #mf-customer-proposals .mf-recent button { background: var(--mf-surface); border: 1px solid var(--mf-line); border-radius: 14px; padding: 12px 4px; min-height: 64px; }
+  #mf-customer-proposals .mf-recent span { display: block; color: var(--mf-muted); font-size: 12px; margin-top: 2px; }
+  #mf-customer-proposals .mf-order-footer { margin-top: 18px; }
+  #mf-customer-proposals .mf-order-footer .mf-between { margin-bottom: 10px; }
+  #mf-customer-proposals .mf-money-large { font-size: 26px; font-weight: 500; }
+  #mf-customer-proposals .mf-sheet-wrap { position: absolute; inset: 0; z-index: 2; background: var(--mf-overlay); border-radius: 26px; display: flex; flex-direction: column; justify-content: end; padding-top: 26px; }
+  #mf-customer-proposals .mf-sheet { background: var(--mf-surface); border-radius: 24px 24px 26px 26px; padding: 18px; }
+  #mf-customer-proposals .mf-sheet-title { font-size: 19px; font-weight: 500; }
+  #mf-customer-proposals .mf-close { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; }
+  #mf-customer-proposals .mf-sheet .mf-list { margin-top: 12px; }
+  #mf-customer-proposals .mf-sheet .mf-note { margin-bottom: 16px; }
+  #mf-customer-proposals .mf-detail-total { background: var(--mf-soft); color: var(--mf-accent); border-radius: 16px; padding: 16px; margin-top: 14px; }
+  #mf-customer-proposals .mf-detail-total .mf-subtle { color: var(--mf-accent); }
+  #mf-customer-proposals .mf-detail-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+  #mf-customer-proposals .mf-record { padding: 12px 0; border-bottom: 1px solid var(--mf-line); }
+  #mf-customer-proposals .mf-amount-input { display: flex; align-items: center; gap: 10px; margin: 16px 0; padding: 14px; border: 1px solid var(--mf-line); border-radius: 14px; }
+  #mf-customer-proposals .mf-amount-input input { width: 100%; min-width: 0; font-size: 26px; background: transparent; border: 0; }
+  #mf-customer-proposals .mf-message { padding: 12px 0; font-size: 13px; color: var(--mf-accent); }
+  #mf-customer-proposals .mf-danger { color: var(--mf-amber); }
+  @media(max-width: 380px) { #mf-customer-proposals .mf-stage { min-height: 740px; padding: 8px 0; } #mf-customer-proposals .mf-main { padding: 12px; } #mf-customer-proposals .mf-header { padding-left: 14px; padding-right: 14px; } #mf-customer-proposals .mf-row { gap: 6px; } }
+</style>
+<script>
+(() => {
+  const root = document.getElementById('mf-customer-proposals');
+  const people = [
+    { id: 'lin', name: '林女士', phone: '138 0012 0826', balance: 286, total: 714, note: '两侧别推太短，喜欢自然蓬松', recent: '今天 10:25' },
+    { id: 'chen', name: '陈先生', phone: '139 0018 6639', balance: 162, total: 338, note: '寸头，保留顶部长度', recent: '昨天 16:10' },
+    { id: 'zhou', name: '周女士', phone: '136 0025 1972', balance: 28, total: 472, note: '发色偏好板栗色', recent: '10 月 28 日' },
+    { id: 'li', name: '李先生', phone: '137 0056 2180', balance: 420, total: 80, note: '不喜欢推子贴皮', recent: '10 月 26 日' }
+  ];
+  const services = [{ name: '精致洗剪吹', price: 38 }, { name: '寸头快剪', price: 25 }, { name: '单人洗吹', price: 20 }, { name: '植物染发', price: 158 }];
+  const money = value => Number(value).toFixed(2);
+  const icon = name => '<i data-lucide="' + name + '" aria-hidden="true"></i>';
+  const escape = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const saved = globalThis.openai?.widgetState?.privateContent || {};
+  const states = {};
+  function remember() {
+    globalThis.openai?.setWidgetState?.({ modelContent: { selectedCustomers: Object.fromEntries(Object.entries(states).map(([key,s]) => [key, people.find(p => p.id === s.customer)?.name || null])) }, privateContent: states })?.catch(() => {});
+  }
+  function icons() { globalThis.lucide?.createIcons({ attrs: { width: 18, height: 18 } }); }
+  function person(p, action='detail') {
+    return '<button class="mf-person" data-action="'+action+'" data-person="'+p.id+'" aria-label="'+(action==='detail'?'查看':'选择')+p.name+'，手机尾号'+p.phone.slice(-4)+'"><span class="mf-avatar">'+p.name[0]+'</span><span class="mf-person-copy"><strong>'+p.name+'</strong><span class="mf-phone-number">'+p.phone+'</span></span></button>';
+  }
+  function rows(items, quick=false, select=false) {
+    return '<div class="mf-list">'+(items.length?items.map(p => '<div class="mf-row">'+person(p,select?'choose':'detail')+'<div class="mf-trailing"><div class="mf-balance">¥'+money(p.balance)+'</div>'+(quick?'<button class="mf-quick" data-action="consume" data-person="'+p.id+'">扣款</button>':'<div class="mf-subtle">'+(p.balance<50?'余额较低':select?'可用余额':'累计消费 ¥'+money(p.total))+'</div>')+'</div></div>').join(''):'<div class="mf-empty">未找到客户</div>')+'</div>';
+  }
+  function serviceGrid(s, action='preset') {
+    return '<div class="mf-services">'+services.map((item,i)=>'<button data-action="'+action+'" data-preset="'+i+'" aria-pressed="'+(s.preset===i)+'">'+item.name+'<span>¥'+item.price+'</span></button>').join('')+'</div>';
+  }
+  function filtered(s) {
+    const q=s.query.replace(/\s/g,'');
+    return people.filter(p => (!q || p.name.includes(q) || p.phone.replace(/\s/g,'').includes(q)) && (s.filter!=='low' || p.balance<50));
+  }
+  function render(phone) {
+    const design=phone.dataset.design, s=states[design], selected=people.find(p=>p.id===s.customer), items=filtered(s);
+    const customerPage=s.page==='customers';
+    const pageLabel=customerPage?'客户':s.page==='ledger'?'账单流水':s.page==='settings'?'设置备份':'收银台';
+    phone.innerHTML='<header class="mf-header"><div class="mf-topline"><div><div class="mf-brand">梦飞空间</div><div class="mf-subtle">会员管家 · '+pageLabel+'</div></div><button data-action="new">＋ 新客户</button></div>'+((customerPage||design==='split'&&s.page==='cashier')?'<label class="mf-search">'+icon('search')+'<input data-search type="search" aria-label="查找客户" placeholder="姓名 / 手机号 / 尾号" value="'+escape(s.query)+'"></label>':'')+'</header><main class="mf-main" data-main></main>'+nav(design,s);
+    const main=phone.querySelector('[data-main]');
+    if(customerPage) {
+      main.innerHTML='<div class="mf-chips" aria-label="客户范围"><button data-action="filter" data-filter="recent" aria-pressed="'+(s.filter==='recent')+'">最近来店</button><button data-action="filter" data-filter="all" aria-pressed="'+(s.filter==='all')+'">全部客户</button><button data-action="filter" data-filter="low" aria-pressed="'+(s.filter==='low')+'">低余额</button></div>'+rows(s.filter==='recent'?items.slice(0,3):items,design==='unified')+'<div class="mf-message" aria-live="polite">'+escape(s.message||'')+'</div>';
+    } else if(s.page==='cashier'&&design==='split') {
+      main.innerHTML='<h2 class="mf-label">'+(s.query?'选择客户':'当前客户')+'</h2>'+(s.query?rows(items,false,true):'<div class="mf-selected"><div class="mf-between">'+person(selected)+'<button class="mf-change" data-action="picker">换客户</button></div><div class="mf-between mf-section-gap"><span class="mf-subtle">可用余额</span><span class="mf-balance">¥'+money(selected.balance)+'</span></div><div class="mf-note">'+selected.note+'</div><div class="mf-actions"><button class="mf-primary" data-action="consume" data-person="'+selected.id+'">扣款</button><button class="mf-secondary" data-action="recharge" data-person="'+selected.id+'">充值</button></div></div><div class="mf-section-gap"><h2 class="mf-label">最近服务客户</h2><div class="mf-recent">'+people.slice(0,3).map(p=>'<button data-action="choose" data-person="'+p.id+'">'+p.name+'<span>尾号 '+p.phone.slice(-4)+'</span></button>').join('')+'</div></div>');
+    } else if(s.page==='cashier'&&design==='service') {
+      main.innerHTML='<h2 class="mf-label">选择服务</h2>'+serviceGrid(s)+'<div class="mf-section-gap"><h2 class="mf-label">本次服务客户</h2><div class="mf-selected">'+(selected?'<div class="mf-between">'+person(selected)+'<button class="mf-change" data-action="picker">更换</button></div><div class="mf-note">'+selected.note+'</div>':'<button class="mf-secondary" style="width:100%" data-action="picker">'+icon('user-round-search')+' 选择会员客户</button>')+'</div></div><div class="mf-order-footer"><div class="mf-between"><span>本次扣款</span><span class="mf-money-large">¥'+money(services[s.preset].price)+'</span></div><button class="mf-primary" data-action="review">'+(selected?'确认客户与金额':'下一步 · 选择客户')+'</button></div>';
+    } else if(s.page==='ledger') {
+      main.innerHTML='<h2 class="mf-label">近期账单 · 示例</h2><div class="mf-list"><div class="mf-record mf-between"><div>林女士 · 精致洗剪吹<div class="mf-subtle">今天 10:25 · 消费</div></div><span>− ¥38.00</span></div><div class="mf-record mf-between"><div>陈先生 · 会员充值<div class="mf-subtle">昨天 16:10 · 充值</div></div><span>＋ ¥200.00</span></div></div>';
+    } else {
+      main.innerHTML='<h2 class="mf-label">设置与备份</h2><div class="mf-list"><div class="mf-record">云端账号与同步</div><div class="mf-record">常用服务与价格</div><div class="mf-record">备份与恢复</div></div>';
+    }
+    if(s.sheet) phone.insertAdjacentHTML('beforeend',sheet(s));
+    phone.querySelectorAll('button').forEach(button=>button.classList.add('cursor-interaction'));
+    icons();
+  }
+  function nav(design,s) {
+    const tabs=design==='unified'?[['customers','users-round','客户'],['ledger','receipt-text','流水'],['settings','settings','设置']]:[['cashier','store','收银'],['customers','users-round','客户'],['ledger','receipt-text','流水'],['settings','settings','设置']];
+    return '<nav class="mf-nav" aria-label="主导航">'+tabs.map(([page,i,label])=>'<button data-action="nav" data-page="'+page+'"'+(s.page===page?' aria-current="page"':'')+'>'+icon(i)+'<span>'+label+'</span></button>').join('')+'</nav>';
+  }
+  function sheet(s) {
+    const p=people.find(p=>p.id===s.sheetPerson), title={ detail:'客户档案',consume:'会员扣款',recharge:'会员充值',picker:'选择服务客户',new:'登记新客户',done:'操作预览' }[s.sheet];
+    let content='';
+    if(s.sheet==='detail') content='<div class="mf-between">'+person(p)+'<button class="mf-secondary" data-action="edit">编辑</button></div><div class="mf-detail-total"><div class="mf-subtle">可用余额</div><div class="mf-money-large">¥'+money(p.balance)+'</div><div class="mf-subtle">累计消费 ¥'+money(p.total)+'</div></div><div class="mf-note">'+p.note+'</div><h2 class="mf-label mf-section-gap">最近来店</h2><div class="mf-record mf-between"><span>精致洗剪吹<div class="mf-subtle">'+p.recent+'</div></span><span>− ¥38.00</span></div><div class="mf-detail-actions"><button class="mf-primary" data-action="consume" data-person="'+p.id+'">扣款</button><button class="mf-secondary" data-action="recharge" data-person="'+p.id+'">充值</button></div>';
+    if(s.sheet==='consume'||s.sheet==='recharge') {
+      const amount=Number(s.amount), valid=Number.isFinite(amount)&&amount>0&&(s.sheet==='recharge'||amount<=p.balance);
+      content='<div class="mf-between">'+person(p)+'<div class="mf-trailing"><div class="mf-subtle">可用余额</div><div class="mf-balance">¥'+money(p.balance)+'</div></div></div><div class="mf-note">'+p.note+'</div>'+(s.sheet==='consume'?serviceGrid(s,'amountPreset'):'<div class="mf-chips"><button data-action="rechargePreset" data-recharge-amount="200">充 ¥200</button><button data-action="rechargePreset" data-recharge-amount="300">充 ¥300</button><button data-action="rechargePreset" data-recharge-amount="500">充 ¥500</button></div>')+'<label class="mf-amount-input"><span>¥</span><input data-amount type="number" min="0.01" step="0.01" inputmode="decimal" aria-label="'+(s.sheet==='consume'?'扣款':'充值')+'金额" value="'+escape(s.amount)+'"></label><div class="mf-message'+(valid?'':' mf-danger')+'" role="'+(valid?'status':'alert')+'">'+(valid?(s.sheet==='consume'?'扣款后余额 ¥'+money(p.balance-amount):'充值后余额 ¥'+money(p.balance+amount)):amount>p.balance&&s.sheet==='consume'?'余额不足，请调整金额或充值':'请输入有效金额')+'</div><button class="mf-primary" data-action="finish" '+(valid?'':'disabled')+'>'+ (s.sheet==='consume'?'确认扣款':'确认充值')+' ¥'+(Number.isFinite(amount)?money(amount):'0.00')+'</button>';
+    }
+    if(s.sheet==='picker') content=rows(people,false,true);
+    if(s.sheet==='new') content='<label class="mf-search"><input aria-label="客户姓名" placeholder="客户姓名"></label><label class="mf-search"><input aria-label="手机号" inputmode="tel" placeholder="手机号"></label><div class="mf-section-gap"><button class="mf-primary" data-action="newDone">保存客户</button></div>';
+    if(s.sheet==='done') content='<div class="mf-message" aria-live="polite">'+escape(s.message)+'</div><button class="mf-primary" data-action="close">完成</button>';
+    return '<div class="mf-sheet-wrap"><section class="mf-sheet" role="dialog" aria-modal="true" aria-label="'+title+'"><div class="mf-between"><div class="mf-sheet-title">'+title+'</div><button class="mf-close" data-action="close" aria-label="关闭">'+icon('x')+'</button></div>'+content+'</section></div>';
+  }
+  root.querySelectorAll('[data-design]').forEach(phone=>{
+    const design=phone.dataset.design, prior=saved[design]||{};
+    states[design]={ page: design==='unified'?'customers':'cashier',filter:'recent',query:'',customer:design==='split'?'lin':null,preset:0,amount:'38',sheet:null,sheetPerson:null,message:'',...prior };
+    const s=states[design];
+    if(!['customers','cashier','ledger','settings'].includes(s.page))s.page=design==='unified'?'customers':'cashier';
+    if(!people.some(p=>p.id===s.customer))s.customer=design==='split'?'lin':null;
+    if(!Number.isInteger(s.preset)||!services[s.preset])s.preset=0;
+    if(typeof s.query!=='string')s.query='';
+    s.sheet=null;
+    phone.addEventListener('click',event=>{
+      const button=event.target.closest('button[data-action]'); if(!button||button.disabled)return;
+      const a=button.dataset.action,p=button.dataset.person;
+      if(a==='nav'){s.page=button.dataset.page;s.query='';s.sheet=null;}
+      if(a==='filter')s.filter=button.dataset.filter;
+      if(a==='detail'){s.sheet='detail';s.sheetPerson=p;}
+      if(a==='consume'||a==='recharge'){s.sheet=a;s.sheetPerson=p;s.amount=a==='consume'?String(services[s.preset].price):'200';}
+      if(a==='close'){s.sheet=null;}
+      if(a==='picker')s.sheet='picker';
+      if(a==='choose'){s.customer=p;s.query='';s.sheet=null;}
+      if(a==='preset')s.preset=Number(button.dataset.preset);
+      if(a==='amountPreset'){s.preset=Number(button.dataset.preset);s.amount=String(services[s.preset].price);}
+      if(a==='rechargePreset')s.amount=button.dataset.rechargeAmount;
+      if(a==='review'){if(!s.customer)s.sheet='picker';else{s.sheet='consume';s.sheetPerson=s.customer;s.amount=String(services[s.preset].price);}}
+      if(a==='finish'){const member=people.find(p=>p.id===s.sheetPerson);s.message=member.name+' · '+(s.sheet==='consume'?'扣款':'充值')+' ¥'+money(s.amount)+'。这是交互示意，未写入账本。';s.sheet='done';}
+      if(a==='new')s.sheet='new';
+      if(a==='newDone'){s.message='已展示新客户建档流程。示例资料未保存。';s.sheet='done';}
+      if(a==='edit'){s.message='编辑姓名、手机号与发型偏好；历史账单在同一客户档案中查看。';s.sheet='done';}
+      render(phone);remember();
+      if(s.sheet)phone.querySelector('[role="dialog"] button')?.focus();
+    });
+    phone.addEventListener('input',event=>{
+      if(event.target.matches('[data-search]')){
+        s.query=event.target.value;const caret=event.target.selectionStart;render(phone);const input=phone.querySelector('[data-search]');input.focus();try{input.setSelectionRange(caret,caret);}catch{}remember();
+      }
+      if(event.target.matches('[data-amount]')){
+        s.amount=event.target.value;const member=people.find(p=>p.id===s.sheetPerson),amount=Number(s.amount),valid=Number.isFinite(amount)&&amount>0&&(s.sheet==='recharge'||amount<=member.balance),status=phone.querySelector('.mf-sheet .mf-message'),finish=phone.querySelector('[data-action="finish"]');
+        status.textContent=valid?(s.sheet==='consume'?'扣款后余额 ¥'+money(member.balance-amount):'充值后余额 ¥'+money(member.balance+amount)):amount>member.balance&&s.sheet==='consume'?'余额不足，请调整金额或充值':'请输入有效金额';status.classList.toggle('mf-danger',!valid);status.setAttribute('role',valid?'status':'alert');finish.disabled=!valid;finish.textContent=(s.sheet==='consume'?'确认扣款':'确认充值')+' ¥'+(Number.isFinite(amount)?money(amount):'0.00');remember();
+      }
+    });
+    phone.addEventListener('keydown',event=>{
+      if(event.key==='Escape'&&s.sheet){s.sheet=null;render(phone);remember();return;}
+      if(event.key==='Tab'&&s.sheet){const controls=[...phone.querySelectorAll('[role="dialog"] button:not(:disabled),[role="dialog"] input')];const first=controls[0],last=controls[controls.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}
+    });
+    render(phone);
+    if(globalThis.Tweak){const appearance={radius:26};const tweak=new Tweak({container:phone,onChange:()=>{phone.style.borderRadius=appearance.radius+'px';}});tweak.addSlider(appearance,'radius',{label:'外框圆角',min:12,max:32,unit:'px'});}
+  });
+  window.addEventListener('openai:set_globals',event=>{
+    const incoming=event.detail?.globals?.widgetState?.privateContent;if(!incoming)return;
+    root.querySelectorAll('[data-design]').forEach(phone=>{const next=incoming[phone.dataset.design],s=states[phone.dataset.design];if(!next)return;let changed=false;for(const key of ['page','filter','query','customer','preset']){if(key in next&&s[key]!==next[key]){s[key]=next[key];changed=true;}}if(!services[s.preset])s.preset=0;if(typeof s.query!=='string')s.query='';if(!people.some(p=>p.id===s.customer))s.customer=phone.dataset.design==='split'?'lin':null;if(changed)render(phone);});
+  });
+})();
+</script>

@@ -45,7 +45,7 @@ export function validateOperation(operation) {
   const restoring = operation?.method === 'importBackupData';
   assertJsonBudget(operation, restoring ? DATA_LIMITS.restoreBytes : DATA_LIMITS.operationBytes, restoring ? DATA_LIMITS.backupBytes : 16384);
   if (!operation || typeof operation.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(operation.id) ||
-      !WRITE_METHODS.includes(operation.method) || !Array.isArray(operation.args) || operation.args.length > 2 ||
+      !WRITE_METHODS.includes(operation.method) || !Array.isArray(operation.args) || operation.args.length > (operation.method === 'refundLedger' ? 3 : 2) ||
       !operation.generated || !Array.isArray(operation.generated.ids) ||
       operation.generated.ids.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,128}$/.test(id)) ||
       !Array.isArray(operation.generated.times) || operation.generated.times.length > 8 ||

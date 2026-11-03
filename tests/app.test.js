@@ -18,6 +18,7 @@ const vueUrl = pathToFileURL(require.resolve('vue')).href;
 const directory = await mkdtemp(join(tmpdir(), 'member-ui-test-'));
 const keypadPath = join(directory, 'keypad.mjs');
 const cloudSettingsPath = join(directory, 'cloud-settings.mjs');
+const customersPath = join(directory, 'customers.mjs');
 const nativeAppPath = join(directory, 'native-app.mjs');
 await writeFile(nativeAppPath, 'export const App = { addListener() { throw new Error("Unexpected native subscription"); }, async exitApp() {} };');
 const nativeAppUrl = pathToFileURL(nativeAppPath).href;
@@ -33,6 +34,7 @@ async function compileComponent(sourceUrl, outputPath, keypadUrl) {
       : specifier === '@capacitor/app' ? nativeAppUrl
       : specifier.endsWith('Keypad.vue') ? keypadUrl
       : specifier.endsWith('CloudSettings.vue') ? pathToFileURL(cloudSettingsPath).href
+      : specifier.endsWith('Customers.vue') ? pathToFileURL(customersPath).href
       : specifier.startsWith('.') ? new URL(specifier, sourceUrl).href : pathToFileURL(require.resolve(specifier)).href;
     return `from ${quote}${target}${quote}`;
   });
@@ -40,6 +42,7 @@ async function compileComponent(sourceUrl, outputPath, keypadUrl) {
 }
 await compileComponent(new URL('../src/components/Keypad.vue', import.meta.url), keypadPath);
 await compileComponent(new URL('../src/components/CloudSettings.vue', import.meta.url), cloudSettingsPath);
+await compileComponent(new URL('../src/components/Customers.vue', import.meta.url), customersPath);
 const appPath = join(directory, 'app.mjs');
 await compileComponent(new URL('../src/App.vue', import.meta.url), appPath, pathToFileURL(keypadPath).href);
 const { default: App } = await import(pathToFileURL(appPath).href);
@@ -159,7 +162,8 @@ test('external export succeeds with an explicit warning when its optional local 
 test('the recharge form accepts decimals and credits the exact confirmed total', async () => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111' });
   await mount();
-  button('会员充值').click();
+  document.querySelector('.customer-open').click(); await nextTick();
+  button('额度充值').click();
   await nextTick();
   const inputs = [...document.querySelectorAll('input[type="number"]')];
   inputs[0].value = '19.99';
@@ -196,7 +200,7 @@ test('whitespace-only phone edits cannot be saved through the member form', asyn
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   const previous = new Map(localStorage.values);
   await mount();
-  document.querySelector('.member-card > div').click();
+  document.querySelector('.customer-open').click();
   await nextTick();
   button('修改档案').click();
   await nextTick();
@@ -229,14 +233,14 @@ test('a numeric ledger phone is rejected by the import screen and the current le
   assert.deepEqual(localStorage.values, previous);
   button('知道了').click();
   await nextTick();
-  document.querySelectorAll('nav button')[2].click();
+  document.querySelectorAll('nav button')[1].click();
   await nextTick();
   assert.ok(document.body.textContent.includes('138 0000 1111'));
 });
 
 async function assertDailySummary(date, recharge) {
   if (!document.querySelector('.dashboard-card')) {
-    document.querySelectorAll('nav button')[2].click(); await nextTick();
+    document.querySelectorAll('nav button')[1].click(); await nextTick();
     document.querySelector('#ledger-summary-tab').click(); await nextTick();
   }
   assert.ok(document.querySelector('header').textContent.includes(date));
@@ -345,9 +349,10 @@ test('cashier starts with quick actions and the daily summary has a separate led
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
   assert.equal(document.querySelector('.dashboard-card'), null);
-  assert.ok(button('剪发扣款'));
-  assert.ok(button('会员充值'));
-  document.querySelectorAll('nav button')[2].click(); await nextTick();
+  assert.ok(button('扣款'));
+  assert.equal(document.querySelectorAll('nav button').length, 3);
+  assert.ok(document.querySelector('.customer-open'));
+  document.querySelectorAll('nav button')[1].click(); await nextTick();
   assert.equal(document.querySelector('#ledger-transactions-tab').getAttribute('aria-selected'), 'true');
   assert.equal(document.querySelector('.dashboard-card'), null);
   document.querySelector('#ledger-summary-tab').click(); await nextTick();
@@ -370,16 +375,16 @@ test('member and ledger fuzzy searches respond to input, blur, change and clear'
     await nextTick();
   }
   await search('阿', 'input');
-  assert.equal(document.querySelectorAll('.member-card').length, 1);
-  assert.ok(document.querySelector('.member-card').textContent.includes('张阿姨'));
+  assert.equal(document.querySelectorAll('.customer-row').length, 1);
+  assert.ok(document.querySelector('.customer-row').textContent.includes('张阿姨'));
   await search('2222', 'blur');
-  assert.equal(document.querySelectorAll('.member-card').length, 1);
-  assert.ok(document.querySelector('.member-card').textContent.includes('李大姐'));
+  assert.equal(document.querySelectorAll('.customer-row').length, 1);
+  assert.ok(document.querySelector('.customer-row').textContent.includes('李大姐'));
   await search('查无此人', 'change');
-  assert.equal(document.querySelectorAll('.member-card').length, 0);
+  assert.equal(document.querySelectorAll('.customer-row').length, 0);
   document.querySelector('header .header-search button').click(); await nextTick();
-  assert.equal(document.querySelectorAll('.member-card').length, 2);
-  document.querySelectorAll('nav button')[2].click(); await nextTick();
+  assert.equal(document.querySelectorAll('.customer-row').length, 2);
+  document.querySelectorAll('nav button')[1].click(); await nextTick();
   await search('1111', 'input');
   assert.ok(document.querySelector('#ledger-transactions').textContent.includes('张阿姨'));
   assert.equal(document.querySelector('#ledger-transactions').textContent.includes('李大姐'), false);
@@ -400,11 +405,11 @@ test('Chinese composition searches after committing the completed input', async 
   input.value = '阿';
   input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   await nextTick();
-  assert.equal(document.querySelectorAll('.member-card').length, 2);
+  assert.equal(document.querySelectorAll('.customer-row').length, 2);
   input.dispatchEvent(new dom.window.Event('compositionend', { bubbles: true }));
   await nextTick();
-  assert.equal(document.querySelectorAll('.member-card').length, 1);
-  assert.ok(document.querySelector('.member-card').textContent.includes('张阿姨'));
+  assert.equal(document.querySelectorAll('.customer-row').length, 1);
+  assert.ok(document.querySelector('.customer-row').textContent.includes('张阿姨'));
 });
 
 function cloudProfile(role, t) {
@@ -423,7 +428,7 @@ test('a native app can read its local ledger after logout while cloud writes req
   await mount();
   assert.ok(document.body.textContent.includes('私密会员'));
   assert.ok(document.querySelector('nav'));
-  assert.equal(button('剪发扣款').disabled, true);
+  assert.equal(button('扣款').disabled, true);
   await settings('account');
   assert.ok(document.body.textContent.includes('安全登录'));
 });
@@ -456,8 +461,10 @@ test('read-only cloud accounts cannot initiate a charge or change service prices
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   cloudProfile('viewer', t);
   await mount();
-  assert.equal(button('剪发扣款').disabled, true);
-  assert.equal(button('会员充值').disabled, true);
+  assert.equal(button('扣款').disabled, true);
+  document.querySelector('.customer-open').click(); await nextTick();
+  assert.equal(button('额度充值').disabled, true);
+  window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape' })); await nextTick();
   await settings('services'); assert.equal(button('新增项目').disabled, true);
   assert.throws(() => localDb.consume({ memberId: member.id, amount: 38 }), /权限/);
   assert.equal(localDb.getMemberById(member.id).balance, 10000);
@@ -465,7 +472,7 @@ test('read-only cloud accounts cannot initiate a charge or change service prices
 test('a cached signed-in cloud account records a charge and its pending operation through the UI', async t => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   cloudProfile('owner', t); await mount();
-  button('剪发扣款').click(); await nextTick();
+  button('扣款').click(); await nextTick();
   button('精致洗剪吹 (').click(); await nextTick();
   button('确认扣除').click(); await nextTick();
   button('确认扣款').click(); await nextTick();
@@ -595,10 +602,13 @@ test('native back closes forms and traverses settings levels before counting exi
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   const before = localDb.readBackupState();
   const back = await nativeBackListener(t);
-  button('会员充值').click(); await nextTick();
+  document.querySelector('.customer-open').click(); await nextTick();
+  button('额度充值').click(); await nextTick();
   await back(); await nextTick();
   assert.equal(document.querySelector('.recharge-plans'), null);
   assert.deepEqual(localDb.readBackupState(), before);
+  await back(); await nextTick();
+  assert.equal(document.querySelector('.member-detail-sheet'), null);
   await settings('backup-files');
   await back(); await nextTick();
   assert.ok(document.body.textContent.includes('本地快照'));
@@ -606,7 +616,7 @@ test('native back closes forms and traverses settings levels before counting exi
   await back(); await nextTick();
   assert.ok(document.body.textContent.includes('日常经营'));
   await back(); await nextTick();
-  assert.ok(document.querySelector('.member-card'));
+  assert.ok(document.querySelector('.customer-row'));
   assert.equal(exit.mock.callCount(), 0);
   await back(); await back();
   document.querySelector('.app-shell').dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
@@ -644,9 +654,9 @@ test('native cached account remains usable when secure credentials cannot be rea
   await new Promise(resolve => setImmediate(resolve)); await nextTick();
   assert.equal(getCloudState().user.id, 'test-user');
   assert.equal(getCloudState().syncLoginRequired, true);
-  assert.ok(document.querySelector('.member-card'));
-  assert.equal(button('剪发扣款').disabled, false);
-  button('剪发扣款').click(); await nextTick();
+  assert.ok(document.querySelector('.customer-row'));
+  assert.equal(button('扣款').disabled, false);
+  button('扣款').click(); await nextTick();
   button('精致洗剪吹 (').click(); await nextTick();
   button('确认扣除').click(); await nextTick();
   button('确认扣款').click(); await nextTick();
@@ -662,7 +672,7 @@ test('ordinary long-press menus are suppressed while input menus remain availabl
   t.mock.method(console, 'warn', () => {});
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
-  const label = document.querySelector('.member-card');
+  const label = document.querySelector('.customer-row');
   const context = new dom.window.Event('contextmenu', { bubbles: true, cancelable: true });
   label.dispatchEvent(context);
   assert.equal(context.defaultPrevented, true);
@@ -673,23 +683,26 @@ test('ordinary long-press menus are suppressed while input menus remain availabl
   Object.defineProperty(navigator, 'clipboard', { value: { writeText: async text => copied.push(text) }, configurable: true });
   t.after(() => { delete navigator.clipboard; });
   Capacitor.isNativePlatform = () => false;
+  document.querySelector('.customer-open').click(); await nextTick();
   document.querySelector('[aria-label="复制会员手机号"]').click();
   await new Promise(resolve => setImmediate(resolve)); await nextTick();
   assert.deepEqual(copied, ['13800001111']);
-  assert.equal(document.querySelector('[class*="z-40"]'), null);
+  assert.ok(document.querySelector('.member-detail-sheet'));
   assert.ok(document.body.textContent.includes('手机号已复制'));
 });
 
-test('haircut consume keypad stays docked, pops up on clicking amount or preset, allows direct amount modification and confirms with popup', async t => {
+test('haircut consume keypad stays docked, opens for editing and stays collapsed for presets, allows direct amount modification and confirms with popup', async t => {
   t.mock.method(console, 'warn', () => {});
   const member = localDb.createMember({ name: '李四', phone: '13900002222', initialBalance: 100 });
   await mount();
 
   // 1. 打开剪发扣款抽屉
-  button('剪发扣款').click();
+  button('扣款').click();
   await nextTick();
 
-  // 键盘默认展开显示
+  // 标准服务无需键盘；需要改价时再展开。
+  assert.ok(button('展开键盘'));
+  button('展开键盘').click(); await nextTick();
   assert.ok(button('收起键盘'));
   assert.ok(button('确认扣除'));
 
@@ -711,8 +724,9 @@ test('haircut consume keypad stays docked, pops up on clicking amount or preset,
   await nextTick();
   button('精致洗剪吹 (').click();
   await nextTick();
-  assert.ok(button('收起键盘'));
+  assert.ok(button('展开键盘'));
   assert.ok(amountCard.textContent.includes('38'));
+  button('展开键盘').click(); await nextTick();
 
   // 5. 带入数字后不要清空数字，而是尾部修改：
   // 此时金额为 38，点击退格键删除末尾 8 -> 变为 3
@@ -758,8 +772,9 @@ test('haircut consume modal back button first collapses keypad, second back clos
   const back = await nativeBackListener(t);
 
   // 1. 打开剪发扣款抽屉
-  button('剪发扣款').click();
+  button('扣款').click();
   await nextTick();
+  button('展开键盘').click(); await nextTick();
 
   // 键盘默认展开
   assert.ok(button('收起键盘'));
@@ -785,10 +800,12 @@ test('haircut consume confirmation back button first closes confirmation, then c
   const back = await nativeBackListener(t);
 
   // 1. 打开剪发扣款抽屉并选服务
-  button('剪发扣款').click();
+  button('扣款').click();
   await nextTick();
+  button('展开键盘').click(); await nextTick();
   button('精致洗剪吹 (').click();
   await nextTick();
+  button('展开键盘').click(); await nextTick();
 
   // 2. 点击确认扣除 -> 弹出消费确认框
   button('确认扣除').click();
@@ -819,8 +836,9 @@ test('clicking haircut modal backdrop first collapses the keypad, next click clo
   localDb.createMember({ name: '孙七', phone: '13900005555', initialBalance: 100 });
   await mount();
 
-  button('剪发扣款').click();
+  button('扣款').click();
   await nextTick();
+  button('展开键盘').click(); await nextTick();
 
   const backdrop = document.querySelector('.modal-title').closest('.fixed.inset-0');
   assert.ok(backdrop);
@@ -843,8 +861,9 @@ test('pressing Escape on keyboard follows the layered back hierarchy', async t =
   localDb.createMember({ name: '周八', phone: '13900006666', initialBalance: 100 });
   await mount();
 
-  button('剪发扣款').click();
+  button('扣款').click();
   await nextTick();
+  button('展开键盘').click(); await nextTick();
   assert.ok(button('收起键盘'));
 
   // 按 Escape 键第一次：收起键盘
@@ -857,4 +876,104 @@ test('pressing Escape on keyboard follows the layered back hierarchy', async t =
   window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await nextTick();
   assert.equal(document.querySelector('.modal-title'), null);
+});
+
+test('unified customer navigation filters low balances and debts without duplicating the directory', async t => {
+  t.mock.method(console, 'warn', () => {});
+  localDb.createMember({ name: '储值客户', phone: '13800001001', initialBalance: 100 });
+  localDb.createMember({ name: '低余额客户', phone: '13800001002', initialBalance: 20 });
+  const debt = localDb.createMember({ name: '欠款客户甲', phone: '13800001003' });
+  localDb.consume({ memberId: debt.id, amount: 38, allowDebt: true });
+  await mount();
+  assert.deepEqual([...document.querySelectorAll('nav button')].map(b => b.textContent.trim()), ['客户', '流水', '设置']);
+  assert.equal(document.querySelectorAll('.customer-row').length, 3);
+  assert.ok(document.querySelector('.customer-row-debt').textContent.includes('−¥38.00'));
+  assert.ok(document.querySelector('.customer-debt-summary').textContent.includes('38.00'));
+  document.querySelectorAll('.customer-filters button')[2].click(); await nextTick();
+  assert.equal(document.querySelectorAll('.customer-row').length, 1);
+  assert.ok(document.querySelector('.customer-row').textContent.includes('低余额客户'));
+  document.querySelector('.customer-debt-summary').click(); await nextTick();
+  assert.equal(document.querySelectorAll('.customer-row').length, 1);
+  assert.ok(document.querySelector('.customer-row').textContent.includes('欠款客户甲'));
+  document.querySelector('.customer-open').click(); await nextTick();
+  assert.ok(document.querySelector('.member-balance-debt'));
+  assert.ok(button('充值 / 还款'));
+  assert.equal(document.body.textContent.includes('删除注销此会员'), false);
+});
+
+test('recent customers follow actual non-reversed consumption instead of profile edits or recharges', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const first = localDb.createMember({ name: '近期来店', phone: '13800001001', initialBalance: 100 });
+  const second = localDb.createMember({ name: '只改档案', phone: '13800001002', initialBalance: 100 });
+  localDb.consume({ memberId: first.id, amount: 38 });
+  localDb.updateMember(second.id, { notes: '今天修改' });
+  localDb.recharge({ memberId: second.id, actualPay: 50 });
+  await mount();
+  assert.ok(document.querySelector('.customer-row').textContent.includes('近期来店'));
+  assert.ok(document.querySelectorAll('.customer-row')[1].textContent.includes('尚未消费'));
+});
+
+test('overdraft warns about additional and total debt and requires acknowledgement on every confirmation', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const member = localDb.createMember({ name: '欠款确认客户', phone: '13800001001', initialBalance: '20.01' });
+  await mount();
+  button('扣款').click(); await nextTick();
+  assert.ok(button('展开键盘'));
+  assert.match(document.querySelector('.debt-warning').textContent, /新增欠款 ¥17.99/);
+  assert.ok(document.querySelector('.consume-amount-debt'));
+  button('核对欠款').click(); await nextTick();
+  assert.equal(document.querySelector('.consume-confirm-dialog').getAttribute('role'), 'alertdialog');
+  assert.equal(button('确认并记欠款').disabled, true);
+  assert.equal(localDb.getMemberById(member.id).balance, 2001);
+  let acknowledgement = document.querySelector('.debt-acknowledgement input');
+  acknowledgement.click(); await nextTick();
+  assert.equal(button('确认并记欠款').disabled, false);
+  button('返回修改').click(); await nextTick();
+  button('核对欠款').click(); await nextTick();
+  assert.equal(document.querySelector('.debt-acknowledgement input').checked, false);
+  assert.equal(button('确认并记欠款').disabled, true);
+  document.querySelector('.debt-acknowledgement input').click(); await nextTick();
+  const confirm = button('确认并记欠款');
+  confirm.click(); confirm.click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, -1799);
+  assert.equal(localDb.getLedgers().filter(l => l.type === 'CONSUME').length, 1);
+  assert.ok(document.querySelector('#feedback-title').textContent.includes('已记录欠款'));
+  assert.ok(document.querySelector('.feedback-amount .balance-debt').textContent.includes('17.99'));
+  button('知道了').click(); await nextTick();
+  button('扣款').click(); await nextTick();
+  assert.match(document.querySelector('.debt-warning').textContent, /新增欠款 ¥38.00/);
+  assert.match(document.querySelector('.debt-warning').textContent, /累计欠款 ¥55.99/);
+});
+
+test('a changed customer balance forces renewed debt acknowledgement before saving the deduction', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const member = localDb.createMember({ name: '余额变化客户', phone: '13800001001', initialBalance: 20 });
+  await mount(); button('扣款').click(); await nextTick();
+  button('核对欠款').click(); await nextTick();
+  document.querySelector('.debt-acknowledgement input').click(); await nextTick();
+  localDb.recharge({ memberId: member.id, actualPay: 5 });
+  button('确认并记欠款').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 2500);
+  assert.equal(document.querySelector('.debt-acknowledgement input').checked, false);
+  assert.ok(document.querySelector('.consume-confirm-dialog').textContent.includes('13.00'));
+  assert.ok(document.body.textContent.includes('余额已变化'));
+});
+
+test('repayment from the consume drawer previews the remaining debt and produces a clear receipt', async t => {
+  t.mock.method(console, 'warn', () => {});
+  const member = localDb.createMember({ name: '还款客户', phone: '13800001001' });
+  localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+  await mount(); button('扣款').click(); await nextTick();
+  button('先充值 / 还款').click(); await nextTick();
+  assert.ok(document.querySelector('.recharge-plans'));
+  const inputs = [...document.querySelectorAll('input[type="number"]')];
+  inputs[0].value = '10'; inputs[1].value = '0';
+  inputs.forEach(input => input.dispatchEvent(new dom.window.Event('input', { bubbles: true })));
+  await nextTick(); button('核对充值信息').click(); await nextTick();
+  assert.match(document.querySelector('.recharge-debt-preview').textContent, /抵扣欠款 ¥10.00/);
+  assert.match(document.querySelector('.recharge-debt-preview').textContent, /仍欠款 ¥28.00/);
+  button('确认充值').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, -2800);
+  assert.ok(document.body.textContent.includes('本次抵扣欠款：¥10.00'));
+  assert.ok(document.body.textContent.includes('当前仍欠款：¥28.00'));
 });

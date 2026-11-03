@@ -101,14 +101,21 @@ body {
 .app-toast > span:first-child { flex-shrink: 0; }
 
 .app-header {
-  background: #24333a !important;
-  border-color: #35464b !important;
-  box-shadow: 0 3px 14px rgb(24 39 43 / 14%) !important;
+  background: #fff !important;
+  color: var(--app-ink);
+  border-color: var(--app-border) !important;
+  box-shadow: 0 2px 12px rgb(24 39 43 / 5%) !important;
 }
 
 .app-header .text-indigo-300 {
-  color: #a8d9c9;
+  color: #536c65;
 }
+.app-header .brand-title { color: var(--app-ink); }
+.app-header .header-search input { background: #f1f5f4; border-color: #dfe7e4; color: var(--app-ink); font-weight: 600; }
+.app-header .header-search input::placeholder { color: #637771; }
+.app-header .header-search input:focus { border-color: #167c68; }
+.app-header .header-search > span { color: #637771; }
+.app-header .register-member { background: #167c68; background-image: none; box-shadow: none; }
 
 .header-inner { padding: 8px 12px 10px; }
 .header-row { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
@@ -555,6 +562,94 @@ body {
 /* 数字等宽排版 */
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+/* 客户与收银共用一个入口，行内保留唯一的快捷扣款动作。 */
+.customers-page { display: grid; gap: 16px; }
+.customer-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.customer-filters button { min-height: 46px; padding: 8px 4px; border-radius: 12px; color: #52646b; font-size: 15px; font-weight: 700; }
+.customer-filters button[aria-pressed="true"] { background: #deefe8; color: #116a57; }
+.customer-debt-summary { display: flex; align-items: center; gap: 10px; text-align: left; padding: 12px 14px; border: 1px solid #f1b5ac; border-radius: 14px; background: #fff1ed; color: #a72a22; }
+.customer-debt-summary > span { display: grid; gap: 3px; flex: 1; }
+.customer-debt-summary strong { font-size: 16px; }
+.customer-debt-summary span > span { font-size: 14px; }
+.customer-debt-summary svg { flex: none; }
+.customer-list-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; padding: 0 2px; }
+.customer-list-heading h2 { font-size: 16px; font-weight: 700; margin: 0; }
+.customer-list-heading h2 span { color: #68767c; font-size: 14px; font-weight: 500; margin-left: 6px; }
+.customer-list-heading > span { color: #68767c; font-size: 14px; }
+.customer-list { background: white; border: 1px solid var(--app-border); border-radius: 18px; overflow: hidden; }
+.customer-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, auto); gap: 12px; padding: 16px; }
+.customer-row + .customer-row { border-top: 1px solid var(--app-border); }
+.customer-row-debt { background: #fff8f6; border-left: 4px solid #bf3327; padding-left: 12px; }
+.customer-open { display: flex; align-items: center; gap: 12px; text-align: left; min-width: 0; align-self: stretch; }
+.customer-avatar { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 14px; background: #e3f1ec; color: #167c68; font-size: 21px; font-weight: 800; }
+.customer-identity { display: grid; gap: 5px; min-width: 0; }
+.customer-identity strong { color: var(--app-ink); font-size: 20px; font-weight: 800; }
+.customer-phone { color: #51626a; font-size: 15px; font-variant-numeric: tabular-nums; }
+.customer-visit { color: #65757b; font-size: 13px; }
+.customer-row-actions { display: grid; justify-items: end; align-content: center; gap: 4px; min-width: 0; }
+.customer-balance-label { color: #66777e; font-size: 13px; text-align: right; }
+.customer-row-debt .customer-balance-label { color: #a72a22; font-weight: 700; }
+.customer-balance { color: #193c35; font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; text-align: right; }
+.customer-consume { min-height: 44px; min-width: 88px; padding: 8px 18px; margin-top: 4px; background: #e2f1eb; color: #116a57; border-radius: 11px; font-size: 16px; font-weight: 800; }
+.customer-consume:active { background: #cbe7db; }
+.customer-consume:disabled, .customer-empty-primary:disabled { opacity: .45; }
+.customer-list-hint { font-size: 14px; color: #68767c; text-align: center; }
+.customer-empty { display: grid; justify-items: center; gap: 12px; padding: 32px 16px; border: 1px solid var(--app-border); border-radius: 18px; background: white; color: #65757b; text-align: center; }
+.customer-empty h3 { color: var(--app-ink); font-size: 18px; font-weight: 800; }
+.customer-empty p { font-size: 15px; }
+.customer-empty button { min-height: 48px; padding: 10px 20px; border-radius: 12px; font-weight: 700; }
+.customer-empty-primary { background: #167c68; color: white; }
+.customer-empty-secondary { color: #167c68; background: #e4f2ec; }
+.app-shell .app-nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #65757b; font-size: 14px; font-weight: 600; }
+.app-shell .app-nav-item.nav-active { color: #116a57; font-weight: 800; }
+.app-shell .app-nav-item.nav-active::before { content: ''; width: 28px; height: 3px; border-radius: 3px; background: #167c68; position: absolute; top: 0; }
+.app-shell .balance-debt { color: #b42318 !important; font-weight: 800; }
+.app-shell .consume-submit { background: #167c68; }
+.app-shell .consume-submit-debt { background: #b42318; }
+.consume-sheet .keypad-confirm:not(:disabled) { background: #167c68; box-shadow: none; }
+.consume-sheet-debt .keypad-confirm:not(:disabled) { background: #b42318; }
+.member-detail-header-copy > .w-13 { background: #e2f1ea; background-image: none; color: #167c68; box-shadow: none; }
+.member-detail-actions button:first-child { background: #e2f1ea; background-image: none; color: #116a57; box-shadow: none; }
+.member-detail-actions button:last-child { background: #167c68; background-image: none; color: white; box-shadow: none; }
+.app-shell .consume-amount-debt { background: #fff4ef; border-color: #ce3d29; box-shadow: 0 0 0 3px #fce1d9; }
+.debt-warning { display: grid; gap: 5px; padding: 12px; border: 1px solid #efad9e; border-left: 4px solid #c53121; border-radius: 12px; background: #fff1eb; color: #962717; text-align: left; font-size: 14px; }
+.debt-warning strong { font-size: 16px; }
+.debt-warning-total { font-size: 18px; font-weight: 900; }
+.consume-recharge-link { display: block; width: 100%; min-height: 44px; padding: 10px; background: #fff0e9; color: #a32c1d; font-size: 16px; font-weight: 800; }
+.app-shell .consume-confirm-dialog { max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+.app-shell .consume-confirm-dialog { padding: 20px 16px; }
+.consume-confirm-dialog .feedback-icon { width: 44px; height: 44px; font-size: 28px; }
+.consume-confirm-dialog #consume-confirm-title { margin-top: 10px; }
+.consume-confirm-dialog .feedback-amount { margin-top: 12px; }
+.consume-confirm-dialog > .grid { margin-top: 14px; }
+.app-shell .debt-confirm-dialog { border: 2px solid #c82f22; }
+.debt-confirm-warning { display: grid; gap: 8px; margin-top: 14px; padding: 12px; border-radius: 12px; background: #fff0ea; color: #a12a1d; text-align: left; }
+.debt-confirm-warning > strong { font-size: 19px; font-weight: 900; }
+.debt-confirm-warning p { font-size: 15px; line-height: 1.5; }
+.debt-acknowledgement { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 0; color: #852317; font-size: 16px; font-weight: 800; }
+.debt-acknowledgement input { width: 23px; height: 23px; flex: none; accent-color: #b42318; }
+.recharge-debt-preview { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #c5ddd1; font-size: 16px; }
+.member-balance-panel { background: #e2f1ea; color: #164f40; border: 1px solid #c2dfd2; }
+.member-balance-panel .text-slate-400 { color: #426b5d; }
+.member-balance-debt { background: #fff0ea; color: #a12a1d; border-color: #eea799; }
+.member-balance-debt .text-slate-400 { color: #995747; }
+.app-shell .debt-tag { color: #a72a22; background: #ffdfd6; }
+.debt-dashboard-line { padding-top: 8px; color: #a72a22; font-size: 16px; }
+@media (max-width: 380px) {
+  .customer-row { grid-template-columns: minmax(0, 1fr) 100px; gap: 8px; padding: 14px 12px; }
+  .customer-row-debt { padding-left: 8px; }
+  .customer-open { gap: 8px; }
+  .customer-avatar { width: 36px; height: 36px; border-radius: 11px; font-size: 18px; }
+  .customer-phone { font-size: 14px; }
+  .customer-filters button { font-size: 14px; }
+  .customer-balance { font-size: 19px; }
+}
+@media (max-width: 280px) {
+  .customer-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .customer-avatar { display: none; }
+  .customer-row { grid-template-columns: minmax(0, 1fr) 88px; }
 }
 
 /* 输入框与按钮微交互 */

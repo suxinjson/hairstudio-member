@@ -28,6 +28,93 @@ beforeEach(() => {
 const newMember = (initialBalance = 100) => localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance });
 const backup = () => localDb.exportBackupData({ archiveSnapshot: false });
 
+test('debt requires explicit acknowledgement and stays exact through more consumption and repayment', () => {
+  const member = newMember('20.01');
+  const before = new Map(localStorage.values);
+  assert.throws(() => localDb.consume({ memberId: member.id, amount: '38.02' }), /确认欠款/);
+  assert.throws(() => localDb.consume({ memberId: member.id, amount: '38.02', allowDebt: 'true' }), /布尔值/);
+  assert.deepEqual(localStorage.values, before);
+  const consumed = localDb.consume({ memberId: member.id, amount: '38.02', allowDebt: true });
+  assert.equal(consumed.balanceAfter, -1801);
+  assert.match(localDb.getLedgers()[0].remark, /新增¥18.01，累计¥18.01/);
+  assert.throws(() => localDb.consume({ memberId: member.id, amount: '0.01' }), /确认欠款/);
+  localDb.consume({ memberId: member.id, amount: '0.07', allowDebt: true });
+  assert.equal(localDb.getMemberById(member.id).balance, -1808);
+  localDb.recharge({ memberId: member.id, actualPay: '10.01' });
+  assert.equal(localDb.getMemberById(member.id).balance, -807);
+  localDb.recharge({ memberId: member.id, actualPay: '8.00', giftAmount: '0.07' });
+  assert.equal(localDb.getMemberById(member.id).balance, 0);
+  assert.doesNotThrow(() => localDb.parseAndValidateBackup(backup()));
+});
+
+test('negative balances survive backup replacement, merge, snapshots and CSV export', () => {
+  const member = newMember(0), older = backup();
+  localDb.consume({ memberId: member.id, amount: '38.01', allowDebt: true });
+  const debtBackup = backup();
+  assert.match(localDb.exportCSV(), /-38.01/);
+  localDb.importBackupData(older);
+  assert.equal(localDb.previewBackup(debtBackup).mergeError, '');
+  localDb.importBackupData(debtBackup, { mode: 'merge' });
+  assert.equal(localDb.getMemberById(member.id).balance, -3801);
+  localDb.saveLocalSnapshot('欠款快照');
+  assert.doesNotThrow(() => localDb.parseAndValidateBackup(localDb.getLocalSnapshots()[0].content));
+  localDb.importBackupData(debtBackup);
+  assert.equal(localDb.getMemberById(member.id).balance, -3801);
+  const tampered = JSON.parse(debtBackup);
+  tampered.data.members[0].balance = -3800;
+  assert.throws(() => localDb.parseAndValidateBackup(JSON.stringify(tampered)), /会员数据|不一致/);
+  tampered.data.members[0].balance = -3801;
+  tampered.data.members[0].isArchived = true;
+  assert.throws(() => localDb.parseAndValidateBackup(JSON.stringify(tampered)), /会员数据/);
+});
+
+test('debt cannot be archived and recharge reversal must acknowledge the debt it restores', () => {
+  const member = newMember(0);
+  const consumed = localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+  assert.throws(() => localDb.deleteMember(member.id), /欠款.*结清/);
+  const recharge = localDb.recharge({ memberId: member.id, actualPay: 38 });
+  assert.throws(() => localDb.refundLedger(recharge.ledgerId), /确认欠款/);
+  localDb.refundLedger(recharge.ledgerId, '撤销错误还款', true);
+  assert.equal(localDb.getMemberById(member.id).balance, -3800);
+  localDb.refundLedger(consumed.ledgerId);
+  assert.equal(localDb.getMemberById(member.id).balance, 0);
+  assert.doesNotThrow(() => localDb.deleteMember(member.id));
+  assert.doesNotThrow(() => localDb.parseAndValidateBackup(backup()));
+});
+
+test('reversing an archived zero-balance member recharge restores an active debt account', () => {
+  const member = newMember(100), opening = localDb.getLedgers()[0].id;
+  localDb.consume({ memberId: member.id, amount: 100 });
+  localDb.deleteMember(member.id);
+  localDb.refundLedger(opening, '错误充值', true);
+  assert.equal(localDb.getMemberById(member.id).balance, -10000);
+  assert.doesNotThrow(() => localDb.parseAndValidateBackup(backup()));
+});
+
+test('a failed overdraft write rolls back both balance and consumption ledger', t => {
+  t.mock.method(console, 'error', () => {});
+  const member = newMember(0), before = new Map(localStorage.values);
+  localStorage.failKey = ledgersKey;
+  assert.throws(() => localDb.consume({ memberId: member.id, amount: 38, allowDebt: true }), /回滚|恢复/);
+  localStorage.failKey = null;
+  assert.equal(localDb.getMemberById(member.id).balance, 0);
+  assert.deepEqual(localStorage.values, before);
+});
+
+test('debt and prepaid balances are counted separately and extreme deductions cannot overflow', () => {
+  const debtor = newMember(0);
+  localDb.consume({ memberId: debtor.id, amount: 38, allowDebt: true });
+  localDb.createMember({ name: '预付客户', phone: '13900002222', initialBalance: 100 });
+  const totals = localDb.getDashboard();
+  assert.equal(totals.totalBalance, 6200);
+  assert.equal(totals.totalCreditBalance, 10000);
+  assert.equal(totals.totalDebt, 3800);
+  assert.equal(totals.debtMemberCount, 1);
+  const before = new Map(localStorage.values);
+  assert.throws(() => localDb.consume({ memberId: debtor.id, amount: '90071992547409.91', allowDebt: true }), /范围/);
+  assert.deepEqual(localStorage.values, before);
+});
+
 test('decimal amounts are exact through opening, recharge, consumption and service pricing', () => {
   for (const [amount, cents] of [[0.07, 7], [0.14, 14], [0.29, 29], [1.1, 110], [2.3, 230], [19.99, 1999]]) {
     assert.equal(moneyToCent(amount), cents);

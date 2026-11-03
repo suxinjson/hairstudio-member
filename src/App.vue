@@ -29,7 +29,7 @@
             class="register-member h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center"
           >
             <span class="text-base font-black">+</span>
-            <span>登记新会员</span>
+            <span>新客户</span>
           </button>
         </div>
 
@@ -44,7 +44,7 @@
             :placeholder="searchPlaceholder"
             class="w-full bg-slate-800/90 border-2 border-slate-700/90 text-white text-base rounded-2xl pl-10 pr-10 placeholder:text-slate-400 focus:outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/20 transition shadow-inner font-bold"
           />
-          <span class="absolute left-3 top-3 text-lg text-slate-400 pointer-events-none">🔍</span>
+          <Search :size="21" class="absolute left-3 top-3 text-slate-500 pointer-events-none" aria-hidden="true" />
           <button 
             v-if="headerSearchQuery"
             @click="clearSearch"
@@ -68,126 +68,13 @@
         <button @click="openSettings('backup-files')" class="mt-3 font-black underline">打开备份恢复</button>
       </div>
       
-      <!-- ==================== TAB 1: 收银台 / 首页 ==================== -->
-      <div v-if="activeTab === 'home' && !cloudLocked" class="space-y-4">
-        
-        <!-- 列表小标题 -->
-        <div class="flex items-center justify-between px-1.5 pt-1">
-          <h2 class="text-sm font-black text-slate-700">
-            {{ searchQuery ? `搜索匹配客户 (${membersList.length})` : '最近来店客户' }}
-          </h2>
-          <span class="text-xs text-slate-400 font-medium">点击直接开单扣款</span>
-        </div>
-
-        <!-- 空搜索结果状态 -->
-        <div v-if="membersList.length === 0" class="bg-white rounded-3xl p-8 text-center border border-slate-200/90 shadow-sm space-y-3">
-          <div class="text-5xl">🔍</div>
-          <p class="text-base font-black text-slate-800">未找到此手机号或姓名</p>
-          <p class="text-sm text-slate-500 font-medium">可直接为新顾客建卡登记</p>
-          <div class="pt-2">
-            <button 
-              @click="openNewMemberModal" 
-              class="h-13 bg-indigo-600 active:bg-indigo-700 text-white text-base px-6 rounded-2xl font-black shadow-md shadow-indigo-500/20 btn-press"
-            >
-              + 立即建档录入
-            </button>
-          </div>
-        </div>
-
-        <!-- 会员大卡片列表 (极速收银：放大字号、大按键、高对比) -->
-        <div v-else class="space-y-3.5">
-          <div 
-            v-for="m in membersList" 
-            :key="m.id"
-            class="member-card bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)] transition"
-          >
-            <!-- 顶部信息行 (点击查看历史明细) -->
-            <div class="flex items-start justify-between cursor-pointer" @click="selectMember(m)">
-              <div class="flex items-start space-x-3.5">
-                <div class="w-13 h-13 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-slate-900 text-white flex items-center justify-center font-black text-2xl shadow-sm flex-shrink-0 mt-0.5">
-                  {{ m.name.charAt(0) }}
-                </div>
-                <div>
-                  <div class="flex items-center space-x-2">
-                    <button class="copyable-text font-black text-slate-900 text-xl tracking-tight" @click.stop="copyMemberField(m.name, '姓名')" title="点击复制姓名" aria-label="复制会员姓名">{{ m.name }}</button>
-                  </div>
-                  <button class="copyable-text block text-base text-slate-600 font-black tracking-wider font-mono mt-0.5" @click.stop="copyMemberField(m.phone, '手机号')" title="点击复制手机号" aria-label="复制会员手机号">
-                    {{ formatPhoneSpaced(m.phone) }}
-                  </button>
-                  <!-- 发型偏好便签 (优雅暖琥珀色) -->
-                  <div v-if="m.notes" class="mt-1.5 text-xs text-amber-900 bg-amber-50 border border-amber-200/90 px-2.5 py-1 rounded-xl inline-block font-bold">
-                    💇 {{ m.notes }}
-                  </div>
-                </div>
-              </div>
-
-              <!-- 卡内可用余额 -->
-              <div class="text-right flex-shrink-0">
-                <div class="text-xs text-slate-400 font-bold uppercase tracking-wider">卡内可用额度</div>
-                <div class="text-2xl font-black text-indigo-600 tabular-nums mt-0.5">
-                  ¥ {{ formatCent(m.balance) }}
-                </div>
-              </div>
-            </div>
-
-            <!-- 底部两项核心收银操作大按钮 (大高度52px，单手极速触达) -->
-            <div class="mt-4 pt-3.5 border-t border-slate-100 grid grid-cols-2 gap-3">
-              <button 
-                @click.stop="openConsumeModal(m)"
-                :disabled="!canCloudWrite('consume')"
-                class="h-13 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 active:from-rose-700 active:to-rose-800 text-white rounded-2xl font-black text-base shadow-md shadow-rose-500/25 flex items-center justify-center space-x-1.5 btn-press"
-              >
-                <span class="text-lg">✂️</span>
-                <span>剪发扣款</span>
-              </button>
-
-              <button 
-                @click.stop="openRechargeModal(m)"
-                :disabled="!canCloudWrite('recharge')"
-                class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 active:from-emerald-800 active:to-teal-800 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-600/25 flex items-center justify-center space-x-1.5 btn-press"
-              >
-                <span class="text-lg">💳</span>
-                <span>会员充值</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- ==================== TAB 2: 会员名册 ==================== -->
-      <div v-if="activeTab === 'members' && !cloudLocked" class="space-y-3.5">
-        <div class="flex items-center justify-between px-1.5">
-          <span class="text-sm text-slate-700 font-black">全店名册 (共 {{ membersList.length }} 人)</span>
-          <span class="text-xs text-slate-400 font-semibold">点击查看或编辑档案</span>
-        </div>
-
-        <div class="space-y-3">
-          <div 
-            v-for="m in membersList" 
-            :key="m.id"
-            @click="selectMember(m)"
-            class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] flex items-center justify-between active:bg-slate-50 cursor-pointer"
-          >
-            <div class="flex items-center space-x-3.5">
-              <div class="w-13 h-13 rounded-2xl bg-gradient-to-tr from-indigo-700 to-slate-900 text-white flex items-center justify-center font-black text-xl shadow-sm">
-                {{ m.name.charAt(0) }}
-              </div>
-              <div>
-                <button class="copyable-text block font-black text-slate-900 text-lg" @click.stop="copyMemberField(m.name, '姓名')" title="点击复制姓名" aria-label="复制会员姓名">{{ m.name }}</button>
-                <button class="copyable-text block text-base text-slate-600 font-bold font-mono" @click.stop="copyMemberField(m.phone, '手机号')" title="点击复制手机号" aria-label="复制会员手机号">{{ formatPhoneSpaced(m.phone) }}</button>
-                <div v-if="m.notes" class="text-xs text-slate-500 font-medium truncate max-w-[180px] mt-0.5">
-                  {{ m.notes }}
-                </div>
-              </div>
-            </div>
-
-            <div class="text-right">
-              <div class="text-xl font-black text-slate-900 tabular-nums">¥ {{ formatCent(m.balance) }}</div>
-              <div class="text-xs text-slate-400 font-semibold">累计消费 ¥{{ formatCent(m.total_consume) }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- 统一客户入口：快速扣款与客户档案共享一份列表。 -->
+      <Customers v-if="activeTab === 'customers' && !cloudLocked"
+        v-model:filter="customerFilter" :members="membersList" :ledgers="customerLedgers"
+        :query="searchQuery" :summary="dashboard"
+        :can-consume="!storageError && canCloudWrite('consume')"
+        :can-create="!storageError && canCloudWrite('createMember')"
+        @select="selectMember" @consume="openConsumeModal" @create="openNewMemberModal" />
 
       <!-- ==================== TAB 3: 流水明细与撤销冲正 ==================== -->
       <div v-if="activeTab === 'ledgers' && !cloudLocked" class="space-y-3.5">
@@ -242,7 +129,7 @@
                   {{ item.remark || '无项目说明' }}
                 </div>
                 <div>
-                  变动后余额: <strong class="text-slate-900 font-black">¥{{ (item.balanceAfter / 100).toFixed(2) }}</strong>
+                  {{ item.balanceAfter < 0 ? '变动后欠款' : '变动后余额' }}: <strong class="text-slate-900 font-black" :class="{ 'balance-debt': item.balanceAfter < 0 }">¥{{ formatCent(Math.abs(item.balanceAfter)) }}</strong>
                 </div>
               </div>
 
@@ -302,8 +189,9 @@
 
             <div class="mt-3.5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
               <div>
-                全店会员沉淀总额：<strong class="text-slate-900 text-sm font-black tabular-nums">¥ {{ formatCent(dashboard.totalBalance || 0) }}</strong>
+                客户储值余额：<strong class="text-slate-900 text-sm font-black tabular-nums">¥ {{ formatCent(dashboard.totalCreditBalance || 0) }}</strong>
               </div>
+              <div v-if="dashboard.totalDebt" class="debt-dashboard-line">客户待收欠款：<strong>¥ {{ formatCent(dashboard.totalDebt) }}</strong> · {{ dashboard.debtMemberCount }} 人</div>
               <div>
                 总客户数：<strong class="text-slate-900 text-sm font-black">{{ dashboard.memberCount || 0 }}</strong> 人
               </div>
@@ -520,7 +408,7 @@
               </div>
               <div class="flex items-center justify-between text-slate-600 font-medium">
                 <span>{{ formatTime(s.createdAt) }}</span>
-                <span>包含 {{ s.memberCount }} 会员 · {{ s.ledgerCount }} 笔流水 · 额度 ¥{{ formatCent(s.totalBalance) }}</span>
+                <span>包含 {{ s.memberCount }} 客户 · {{ s.ledgerCount }} 笔流水 · 净余额 ¥{{ formatCent(s.totalBalance) }}</span>
               </div>
               <div class="flex space-x-2 pt-2 border-t border-slate-200/70">
                 <button 
@@ -563,43 +451,17 @@
 
     </main>
 
-    <!-- 底部固定导航栏 (适配全面屏手势条，大触控热区) -->
-    <nav v-if="!cloudLocked" class="app-nav fixed bottom-0 left-0 right-0 max-w-[500px] mx-auto bg-white/95 backdrop-blur-md border-t border-slate-200/90 z-30 pb-gesture-safe shadow-lg">
-      <div class="grid grid-cols-4 h-16">
-        <button 
-          @click="activeTab = 'home'"
-          class="flex flex-col items-center justify-center transition btn-press"
-          :class="activeTab === 'home' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
-        >
-          <span class="text-2xl">🏪</span>
-          <span class="text-xs mt-1">收银台</span>
+    <!-- 三个主入口，统一客户列表与收银操作。 -->
+    <nav v-if="!cloudLocked" class="app-nav fixed bottom-0 left-0 right-0 mx-auto bg-white/95 backdrop-blur-md z-30 pb-gesture-safe" aria-label="主导航">
+      <div class="grid grid-cols-3 h-16">
+        <button @click="activeTab = 'customers'" :aria-current="activeTab === 'customers' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'customers' }" class="app-nav-item btn-press">
+          <UsersRound :size="23" aria-hidden="true" /><span>客户</span>
         </button>
-
-        <button 
-          @click="activeTab = 'members'"
-          class="flex flex-col items-center justify-center transition btn-press"
-          :class="activeTab === 'members' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
-        >
-          <span class="text-2xl">👥</span>
-          <span class="text-xs mt-1">会员库</span>
+        <button @click="activeTab = 'ledgers'" :aria-current="activeTab === 'ledgers' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'ledgers' }" class="app-nav-item btn-press">
+          <ReceiptText :size="23" aria-hidden="true" /><span>流水</span>
         </button>
-
-        <button 
-          @click="activeTab = 'ledgers'"
-          class="flex flex-col items-center justify-center transition btn-press"
-          :class="activeTab === 'ledgers' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
-        >
-          <span class="text-2xl">📋</span>
-          <span class="text-xs mt-1">账单流水</span>
-        </button>
-
-        <button 
-          @click="openSettings()"
-          class="flex flex-col items-center justify-center transition btn-press"
-          :class="activeTab === 'settings' ? 'text-indigo-600 font-black' : 'text-slate-400 font-semibold'"
-        >
-          <span class="text-2xl">⚙️</span>
-          <span class="text-xs mt-1">设置备份</span>
+        <button @click="openSettings()" :aria-current="activeTab === 'settings' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'settings' }" class="app-nav-item btn-press">
+          <Settings :size="23" aria-hidden="true" /><span>设置</span>
         </button>
       </div>
     </nav>
@@ -612,7 +474,7 @@
       class="fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
       @click.self="handleConsumeModalBack"
     >
-      <div class="bg-white rounded-t-[32px] max-h-[92vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full overflow-hidden">
+      <div class="consume-sheet bg-white rounded-t-[32px] max-h-[92vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full overflow-hidden" :class="{ 'consume-sheet-debt': isConsumeOverBalance }">
         <!-- 弹窗把手 (固定顶部) -->
         <div class="pt-2.5 pb-1 flex-shrink-0">
           <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto"></div>
@@ -626,7 +488,7 @@
               <span class="text-indigo-600 truncate max-w-[170px]">— {{ consumingMember.name }}</span>
             </div>
             <div class="text-sm text-slate-500 font-semibold mt-0.5">
-              卡内可用余额：<strong class="text-indigo-600 text-lg font-black tabular-nums">¥ {{ formatCent(consumingMember.balance) }}</strong>
+              {{ consumingMember.balance < 0 ? '当前欠款' : '可用余额' }}：<strong class="text-indigo-600 text-lg font-black tabular-nums" :class="{ 'balance-debt': consumingMember.balance < 0 }">¥ {{ formatCent(Math.abs(consumingMember.balance)) }}</strong>
             </div>
           </div>
           <button 
@@ -649,7 +511,7 @@
           <div 
             @click="openConsumeKeypad"
             class="p-4 rounded-2xl border-2 transition-all cursor-pointer select-none"
-            :class="showConsumeKeypad ? 'border-indigo-500/70 bg-indigo-50/40 shadow-sm ring-2 ring-indigo-200/50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100/70'"
+            :class="isConsumeOverBalance ? 'consume-amount-debt' : showConsumeKeypad ? 'border-indigo-500/70 bg-indigo-50/40 shadow-sm ring-2 ring-indigo-200/50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100/70'"
           >
             <div class="flex items-center justify-between">
               <div class="text-xs font-black uppercase tracking-wider" :class="showConsumeKeypad ? 'text-indigo-600' : 'text-slate-500'">
@@ -673,7 +535,7 @@
             </div>
 
             <!-- 超大数字显示 (尾部修改光标指示) -->
-            <div class="text-5xl font-black text-slate-900 tracking-tight tabular-nums mt-1 flex items-center justify-center py-1">
+            <div class="text-5xl font-black text-slate-900 tracking-tight tabular-nums mt-1 flex items-center justify-center py-1" :class="{ 'balance-debt': isConsumeOverBalance }">
               <span class="text-3xl mr-1.5 text-slate-400 font-bold">¥</span>
               <span>{{ consumeAmountStr || '0.00' }}</span>
               <!-- 输入光标效果 (处于激活编辑态时在末尾闪烁，表明在尾部直接修改) -->
@@ -683,11 +545,11 @@
               ></span>
             </div>
 
-            <!-- 余额不足红字警示 -->
-            <div v-if="isConsumeOverBalance" class="text-center mt-2">
-              <div class="text-xs text-rose-600 font-black bg-rose-50 border border-rose-200 py-1 px-3 rounded-xl inline-block">
-                ⚠️ 扣款金额超过当前卡内余额（¥{{ formatCent(consumingMember.balance) }}），无法扣费！
-              </div>
+            <div v-if="isConsumeOverBalance" class="debt-warning mt-2" role="status" aria-live="polite">
+              <strong>⚠️ {{ consumingMember.balance < 0 ? '客户已有欠款，本次将继续增加欠款' : '本次扣款超出余额，将记为欠款' }}</strong>
+              <span>本次新增欠款 ¥{{ formatCent(consumeDebtAdded) }}</span>
+              <span class="debt-warning-total">扣款后累计欠款 ¥{{ formatCent(-consumeBalanceAfter) }}</span>
+              <span>确认时需勾选知晓欠款，也可先为客户充值。</span>
             </div>
             
             <div v-else class="text-center mt-1.5">
@@ -701,7 +563,7 @@
           <div>
             <div class="text-xs font-black text-slate-500 mb-2 flex items-center justify-between">
               <span>点击一键带入常用项目与金额：</span>
-              <span class="text-[11px] text-slate-400">点击自动调出键盘可改金额</span>
+              <span class="text-[11px] text-slate-400">改价时点击金额</span>
             </div>
             <div class="flex flex-wrap gap-2">
               <button 
@@ -755,7 +617,7 @@
               v-model="consumeAmountStr" 
               confirmText="确认扣除" 
               theme="danger"
-              :disabled="isConsumeOverBalance || isSubmittingConsume || !canCloudWrite('consume')"
+              :disabled="!canSubmitConsume || isSubmittingConsume || !canCloudWrite('consume')"
               @confirm="requestConsumeConfirmation" 
             />
           </div>
@@ -779,12 +641,13 @@
             <button 
               type="button"
               @click="requestConsumeConfirmation"
-              :disabled="isConsumeOverBalance || isSubmittingConsume || !canSubmitConsume || !canCloudWrite('consume')"
-              class="h-13 px-6 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 active:from-rose-700 text-white font-black text-base rounded-2xl shadow-md shadow-rose-500/20 disabled:opacity-50 disabled:shadow-none btn-press flex items-center justify-center whitespace-nowrap"
+              :disabled="isSubmittingConsume || !canSubmitConsume || !canCloudWrite('consume')"
+              class="consume-submit h-13 px-6 text-white font-black text-base rounded-2xl disabled:opacity-50 btn-press flex items-center justify-center whitespace-nowrap" :class="{ 'consume-submit-debt': isConsumeOverBalance }"
             >
-              确认扣除
+              {{ isConsumeOverBalance ? '核对欠款' : '确认扣除' }}
             </button>
           </div>
+          <button v-if="isConsumeOverBalance" type="button" class="consume-recharge-link" :disabled="!canCloudWrite('recharge')" @click="rechargeFromConsume">先充值 / 还款</button>
         </div>
       </div>
     </div>
@@ -805,13 +668,14 @@
               💳 会员储值 — {{ rechargingMember.name }}
             </div>
             <div class="text-sm text-slate-500 font-semibold mt-0.5">
-              当前卡内余额：<strong class="text-indigo-600 font-black text-base">¥ {{ formatCent(rechargingMember.balance) }}</strong>
+              {{ rechargingMember.balance < 0 ? '当前欠款' : '可用余额' }}：<strong class="text-indigo-600 font-black text-base" :class="{ 'balance-debt': rechargingMember.balance < 0 }">¥ {{ formatCent(Math.abs(rechargingMember.balance)) }}</strong>
             </div>
           </div>
           <button @click="rechargingMember = null" class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold btn-press">✕</button>
         </div>
 
         <div class="p-5 overflow-y-auto space-y-4">
+          <div v-if="rechargingMember.balance < 0" class="debt-warning"><strong>充值到账额度将优先抵扣欠款</strong><span>当前欠款 ¥{{ formatCent(-rechargingMember.balance) }}，结清后剩余金额转为可用余额。</span></div>
           <!-- 快捷充值档位 (放大卡片) -->
           <div>
             <div class="text-xs font-black text-slate-500 mb-2.5">快捷充值套餐</div>
@@ -919,6 +783,10 @@
           <div class="mt-2 flex justify-between gap-3 text-base"><span>赠送额度</span><strong>¥{{ rechargeConfirmation.giftAmount.toFixed(2) }}</strong></div>
           <div class="mt-3 border-t border-emerald-200 pt-3 flex justify-between gap-3 text-lg font-black text-emerald-800"><span>总到账</span><strong>¥{{ (rechargeConfirmation.actualPay + rechargeConfirmation.giftAmount).toFixed(2) }}</strong></div>
           <div class="mt-2 text-sm text-slate-600">收款方式：{{ rechargeConfirmation.payMethod }}</div>
+          <div v-if="rechargeConfirmation.currentBalance < 0" class="recharge-debt-preview">
+            <div>本次抵扣欠款 <strong>¥{{ formatCent(rechargeConfirmation.debtRepaid) }}</strong></div>
+            <div :class="{ 'balance-debt': rechargeConfirmation.balanceAfter < 0 }">{{ rechargeConfirmation.balanceAfter < 0 ? '充值后仍欠款' : '充值后可用余额' }} <strong>¥{{ formatCent(Math.abs(rechargeConfirmation.balanceAfter)) }}</strong></div>
+          </div>
         </div>
         <div class="mt-6 grid grid-cols-2 gap-3">
           <button @click="rechargeConfirmation = null" class="h-14 rounded-xl border-2 border-slate-300 text-base font-bold text-slate-700 btn-press">返回修改</button>
@@ -934,32 +802,39 @@
       @click.self="consumeConfirmation = null"
     >
       <section 
-        class="feedback-dialog w-full max-w-sm bg-white text-center shadow-2xl" 
-        role="dialog" 
+        class="feedback-dialog consume-confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl"
+        :class="{ 'debt-confirm-dialog': consumeConfirmation.balanceAfter < 0 }"
+        :role="consumeConfirmation.balanceAfter < 0 ? 'alertdialog' : 'dialog'"
         aria-modal="true" 
         aria-labelledby="consume-confirm-title"
       >
-        <div class="feedback-icon mx-auto text-3xl font-black bg-rose-100 text-rose-600">✂️</div>
-        <h2 id="consume-confirm-title" class="mt-4 text-2xl font-black text-slate-900">请核对扣款金额</h2>
-        <p class="mt-2 text-base text-slate-700">确认后将立即从 {{ consumeConfirmation.memberName }} 会员卡中扣款。</p>
+        <div class="feedback-icon mx-auto text-3xl font-black bg-rose-100 text-rose-600"><CircleAlert v-if="consumeConfirmation.balanceAfter < 0" :size="30" aria-hidden="true" /><span v-else aria-hidden="true">✂️</span></div>
+        <h2 id="consume-confirm-title" class="mt-4 text-2xl font-black text-slate-900" :class="{ 'balance-debt': consumeConfirmation.balanceAfter < 0 }">{{ consumeConfirmation.balanceAfter < 0 ? '注意：本次扣款将产生欠款' : '请核对扣款金额' }}</h2>
+        <p class="mt-2 text-base text-slate-700">{{ consumeConfirmation.balanceAfter < 0 ? '确认后将记录服务消费和欠款，请核对客户与金额。' : `确认后将立即从 ${consumeConfirmation.memberName} 会员卡中扣款。` }}</p>
         <div class="feedback-amount mt-5 rounded-xl px-4 py-4 text-left">
           <div class="flex justify-between gap-3 text-base"><span>消费会员</span><strong class="text-slate-900">{{ consumeConfirmation.memberName }}</strong></div>
+          <div class="mt-2 flex justify-between gap-3 text-sm"><span>手机号</span><strong>{{ formatPhoneSpaced(consumeConfirmation.memberPhone) }}</strong></div>
           <div class="mt-2 flex justify-between gap-3 text-base"><span>服务项目</span><strong class="text-slate-800 max-w-[170px] truncate text-right">{{ consumeConfirmation.itemsSummary }}</strong></div>
-          <div class="mt-2 flex justify-between gap-3 text-base"><span>当前卡内余额</span><strong>¥{{ (consumeConfirmation.currentBalance / 100).toFixed(2) }}</strong></div>
+          <div class="mt-2 flex justify-between gap-3 text-base"><span>{{ consumeConfirmation.currentBalance < 0 ? '原有欠款' : '当前余额' }}</span><strong :class="{ 'balance-debt': consumeConfirmation.currentBalance < 0 }">¥{{ formatCent(Math.abs(consumeConfirmation.currentBalance)) }}</strong></div>
           <div class="mt-3 border-t border-rose-200 pt-3 flex justify-between items-baseline gap-3 text-xl font-black text-rose-700">
             <span>扣款金额</span>
             <strong class="text-2xl tabular-nums">¥{{ consumeConfirmation.amount.toFixed(2) }}</strong>
           </div>
           <div class="mt-2.5 border-t border-dashed border-rose-200/80 pt-2 flex justify-between gap-3 text-sm text-slate-600 font-semibold">
-            <span>扣款后卡内剩余</span>
-            <strong class="text-indigo-600 font-black tabular-nums">¥{{ (consumeConfirmation.balanceAfter / 100).toFixed(2) }}</strong>
+            <span>{{ consumeConfirmation.balanceAfter < 0 ? '扣款后累计欠款' : '扣款后可用余额' }}</span>
+            <strong class="text-indigo-600 font-black tabular-nums" :class="{ 'balance-debt': consumeConfirmation.balanceAfter < 0 }">¥{{ formatCent(Math.abs(consumeConfirmation.balanceAfter)) }}</strong>
           </div>
+        </div>
+        <div v-if="consumeConfirmation.balanceAfter < 0" class="debt-confirm-warning">
+          <strong>新增欠款 ¥{{ formatCent(consumeConfirmation.debtAdded) }}</strong>
+          <p>确认后余额为负数，该客户累计欠款 ¥{{ formatCent(-consumeConfirmation.balanceAfter) }}，需后续收款结清。</p>
+          <label class="debt-acknowledgement"><input v-model="debtAcknowledged" type="checkbox" /><span>我已知晓并同意记录本次欠款</span></label>
         </div>
         <div class="mt-6 grid grid-cols-2 gap-3">
           <button @click="consumeConfirmation = null" class="h-14 rounded-xl border-2 border-slate-300 text-base font-bold text-slate-700 btn-press">返回修改</button>
-          <button @click="confirmConsume" :disabled="isSubmittingConsume || !canCloudWrite('consume')" class="h-14 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 active:from-rose-800 text-base font-black text-white btn-press disabled:opacity-60 flex items-center justify-center space-x-1.5 shadow-md shadow-rose-600/30">
+          <button @click="confirmConsume" :disabled="isSubmittingConsume || !canCloudWrite('consume') || (consumeConfirmation.balanceAfter < 0 && !debtAcknowledged)" class="consume-submit h-14 rounded-xl text-base font-black text-white btn-press disabled:opacity-60 flex items-center justify-center space-x-1.5" :class="{ 'consume-submit-debt': consumeConfirmation.balanceAfter < 0 }">
             <span v-if="isSubmittingConsume">扣款中...</span>
-            <span v-else>确认扣款</span>
+            <span v-else>{{ consumeConfirmation.balanceAfter < 0 ? '确认并记欠款' : '确认扣款' }}</span>
           </button>
         </div>
       </section>
@@ -1109,7 +984,7 @@
             <div>
               <div class="flex flex-wrap items-center gap-1.5">
                 <button class="copyable-text font-black text-xl text-slate-900" @click.stop="copyMemberField(selectedMember.name, '姓名')" aria-label="复制会员姓名">{{ selectedMember.name }}</button>
-                <span class="text-xs bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-black">储值会员</span>
+                <span class="text-xs bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-black" :class="{ 'debt-tag': selectedMember.balance < 0 }">{{ selectedMember.balance < 0 ? '尚有欠款' : '客户档案' }}</span>
               </div>
               <button class="copyable-text block text-base text-slate-600 font-mono font-black" @click.stop="copyMemberField(selectedMember.phone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(selectedMember.phone) }}</button>
             </div>
@@ -1132,11 +1007,12 @@
 
         <div class="member-detail-content flex-1 overflow-y-auto p-5 space-y-4">
           <!-- 醒目大额度黑金渐变卡片 -->
-          <div class="bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 rounded-3xl p-5 text-white shadow-md relative border border-slate-800">
-            <div class="text-xs text-indigo-200 font-black uppercase tracking-wider">卡内当前可用额度</div>
+          <div class="member-balance-panel rounded-3xl p-5" :class="{ 'member-balance-debt': selectedMember.balance < 0 }">
+            <div class="text-xs font-black">{{ selectedMember.balance < 0 ? '客户当前欠款' : '当前可用余额' }}</div>
             <div class="text-4xl font-black tracking-tight mt-1.5 tabular-nums">
-              ¥ {{ formatCent(selectedMember.balance) }}
+              {{ selectedMember.balance < 0 ? '−' : '' }}¥ {{ formatCent(Math.abs(selectedMember.balance)) }}
             </div>
+            <p v-if="selectedMember.balance < 0" class="mt-2 font-bold">待收回 ¥{{ formatCent(-selectedMember.balance) }}，充值将自动抵扣欠款。</p>
 
             <div class="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-slate-800/80 text-xs">
               <div>
@@ -1193,7 +1069,7 @@
                     {{ l.changeAmount > 0 ? '+' : '' }}{{ (l.changeAmount / 100).toFixed(2) }}
                   </div>
                   <div class="text-slate-400 font-medium">
-                    余额: ¥{{ (l.balanceAfter / 100).toFixed(2) }}
+                    <span :class="{ 'balance-debt': l.balanceAfter < 0 }">{{ l.balanceAfter < 0 ? '欠款' : '余额' }}: ¥{{ formatCent(Math.abs(l.balanceAfter)) }}</span>
                   </div>
                 </div>
               </div>
@@ -1219,7 +1095,7 @@
             :disabled="!canCloudWrite('recharge')"
             class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center space-x-1.5 btn-press"
           >
-            <span class="detail-action-icon" aria-hidden="true">💳</span><span>额度充值</span>
+            <span class="detail-action-icon" aria-hidden="true">💳</span><span>{{ selectedMember.balance < 0 ? '充值 / 还款' : '额度充值' }}</span>
           </button>
 
           <button 
@@ -1425,7 +1301,7 @@
         <div v-if="feedbackModal.amount" class="feedback-amount mt-5 rounded-xl px-4 py-3">
           <div class="text-sm font-bold text-slate-600">本次扣款</div>
           <div class="mt-1 text-3xl font-black tabular-nums text-rose-700">¥ {{ feedbackModal.amount }}</div>
-          <div class="mt-2 text-base font-bold text-slate-700">{{ feedbackModal.memberName }} · 扣后余额 ¥{{ feedbackModal.balance }}</div>
+          <div class="mt-2 text-base font-bold text-slate-700" :class="{ 'balance-debt': feedbackModal.debt }">{{ feedbackModal.memberName }} · {{ feedbackModal.debt ? '累计欠款' : '扣后余额' }} ¥{{ feedbackModal.debt || feedbackModal.balance }}</div>
         </div>
         <button
           @click="feedbackModal = null"
@@ -1450,11 +1326,13 @@ import { isValidMoney, moneyToCent } from './money.js';
 import { exportFile, isExportCancelled } from './file-export.js';
 import Keypad from './components/Keypad.vue';
 import CloudSettings from './components/CloudSettings.vue';
+import Customers from './components/Customers.vue';
+import { UsersRound, ReceiptText, Settings, Search, CircleAlert } from 'lucide-vue-next';
 import { cloudClient, copyToClipboard } from './cloud-device.js';
 import { canWrite } from './sync-protocol.js';
 
-// 页面标签：'home' | 'members' | 'ledgers' | 'settings'
-const activeTab = ref('home');
+// 页面标签：'customers' | 'ledgers' | 'settings'
+const activeTab = ref('customers');
 const ledgerView = ref('transactions');
 const isNativeApp = Capacitor.isNativePlatform();
 const settingsPath = ref([]);
@@ -1497,6 +1375,8 @@ function backInSettings() {
 // 全局响应式状态
 const dashboard = ref({});
 const membersList = ref([]);
+const customerLedgers = ref([]);
+const customerFilter = ref('recent');
 const ledgersList = ref([]);
 const hairServices = ref([]);
 const rechargePlans = ref([]);
@@ -1518,6 +1398,7 @@ const consumeSummary = ref('精致洗剪吹');
 const isSubmittingConsume = ref(false);
 const showConsumeKeypad = ref(true);
 const consumeConfirmation = ref(null);
+const debtAcknowledged = ref(false);
 
 // 储值充值抽屉
 const rechargingMember = ref(null);
@@ -1593,7 +1474,7 @@ const headerSearchQuery = computed({
 
 const searchPlaceholder = computed(() => activeTab.value === 'ledgers'
   ? '搜索姓名、手机号、服务项目或备注…'
-  : '输入会员姓名或手机号码查找…'
+  : '姓名 / 手机号 / 手机尾号'
 );
 watch(headerSearchQuery, handleSearch, { flush: 'sync' });
 
@@ -1684,6 +1565,7 @@ function refreshAll() {
     const nextPlans = localDb.getRechargePlans();
     const nextLedgers = localDb.getLedgers({ type: ledgerFilterType.value });
     membersList.value = nextMembers;
+    customerLedgers.value = localDb.getLedgers();
     dashboard.value = nextDashboard;
     hairServices.value = nextServices;
     rechargePlans.value = nextPlans;
@@ -1697,6 +1579,7 @@ function refreshAll() {
     storageError.value = error.message;
     if (activeTab.value !== 'settings' || settingsPage.value === 'overview') openSettings('backup-files');
     membersList.value = [];
+    customerLedgers.value = [];
     ledgersList.value = [];
     selectedMember.value = null;
     localSnapshots.value = localDb.getLocalSnapshots();
@@ -1740,7 +1623,7 @@ function selectMember(m) {
 
 // 充值
 function openRechargeModal(m) {
-  rechargingMember.value = m;
+  rechargingMember.value = localDb.getMemberById(m.id) || m;
   rechargeConfirmation.value = null;
   isSubmittingRecharge.value = false;
   rechargeForm.value = {
@@ -1768,19 +1651,35 @@ function requestRechargeConfirmation() {
     return;
   }
 
+  const current = localDb.getMemberById(rechargingMember.value.id);
+  if (!current) { showFeedback('客户不存在或已注销。'); return; }
+  rechargingMember.value = current;
+  const credit = moneyToCent(rechargeForm.value.actualPay) + moneyToCent(rechargeForm.value.giftAmount || 0);
+  if (!Number.isSafeInteger(credit) || !Number.isSafeInteger(current.balance + credit)) {
+    showFeedback('充值金额超出可处理范围。', 'error'); return;
+  }
   rechargeConfirmation.value = {
     memberId: rechargingMember.value.id,
     memberName: rechargingMember.value.name,
     actualPay: Number(rechargeForm.value.actualPay),
     giftAmount: Number(rechargeForm.value.giftAmount),
     payMethod: rechargeForm.value.payMethod,
-    remark: rechargeForm.value.remark
+    remark: rechargeForm.value.remark,
+    currentBalance: current.balance,
+    balanceAfter: current.balance + credit,
+    debtRepaid: Math.min(Math.max(0, -current.balance), credit)
   };
 }
 
 function confirmRecharge() {
   const confirmation = rechargeConfirmation.value;
   if (!confirmation || isSubmittingRecharge.value) return;
+  const current = localDb.getMemberById(confirmation.memberId);
+  if (!current || current.balance !== confirmation.currentBalance) {
+    requestRechargeConfirmation();
+    showToast('客户余额已变化，请重新核对充值结果。');
+    return;
+  }
   isSubmittingRecharge.value = true;
 
   try {
@@ -1794,7 +1693,9 @@ function confirmRecharge() {
 
     const memberName = confirmation.memberName;
     const totalCredit = res.totalCredit / 100;
-    const balanceAfter = (res.balanceAfter / 100).toFixed(2);
+    const balanceAfter = (Math.abs(res.balanceAfter) / 100).toFixed(2);
+    const balanceText = res.balanceAfter < 0 ? `当前仍欠款：¥${balanceAfter} 元，请后续结清。` : `当前可用余额：¥${balanceAfter} 元。`;
+    const repaymentText = confirmation.debtRepaid > 0 ? `\n本次抵扣欠款：¥${formatCent(confirmation.debtRepaid)} 元` : '';
 
     rechargingMember.value = null;
     rechargeConfirmation.value = null;
@@ -1802,7 +1703,7 @@ function confirmRecharge() {
 
     receiptModal.value = {
       name: memberName,
-      messageText: `【梦飞空间会员充值通知】\n尊敬的 ${memberName}，您好！\n本次充值已成功入账：¥${totalCredit.toFixed(2)} 元\n当前卡内剩余额度为：¥${balanceAfter} 元。\n感谢您的支持与惠顾，祝您生活愉快！`
+      messageText: `【梦飞空间会员充值通知】\n尊敬的 ${memberName}，您好！\n本次充值已成功入账：¥${totalCredit.toFixed(2)} 元${repaymentText}\n${balanceText}\n感谢您的支持与惠顾，祝您生活愉快！`
     };
 
     refreshAll();
@@ -1818,13 +1719,14 @@ function confirmRecharge() {
 
 // 扣款相关
 function openConsumeModal(m) {
-  consumingMember.value = m;
+  consumingMember.value = localDb.getMemberById(m.id) || m;
   consumeConfirmation.value = null;
   isSubmittingConsume.value = false;
-  consumeAmountStr.value = '';
   const first = hairServices.value[0];
+  consumeAmountStr.value = first ? first.price.toString() : '';
   consumeSummary.value = first ? first.name : '精致洗剪吹';
-  showConsumeKeypad.value = true;
+  showConsumeKeypad.value = false;
+  debtAcknowledged.value = false;
 }
 
 function handleConsumeModalBack() {
@@ -1852,13 +1754,17 @@ function clearConsumeAmount() {
 function setConsumePreset(item) {
   consumeAmountStr.value = item.price.toString();
   consumeSummary.value = item.name;
-  showConsumeKeypad.value = true;
+  showConsumeKeypad.value = false;
 }
 
+const consumeBalanceAfter = computed(() => {
+  if (!consumingMember.value || !consumeAmountStr.value || !isValidMoney(consumeAmountStr.value)) return null;
+  return consumingMember.value.balance - moneyToCent(consumeAmountStr.value);
+});
+const consumeDebtAdded = computed(() => consumeBalanceAfter.value === null ? 0
+  : Math.max(0, -consumeBalanceAfter.value) - Math.max(0, -consumingMember.value.balance));
 const isConsumeOverBalance = computed(() => {
-  if (!consumingMember.value || !consumeAmountStr.value) return false;
-  if (!isValidMoney(consumeAmountStr.value)) return false;
-  return moneyToCent(consumeAmountStr.value) > consumingMember.value.balance;
+  return canSubmitConsume.value && consumeBalanceAfter.value < 0;
 });
 
 const canSubmitConsume = computed(() => {
@@ -1867,7 +1773,7 @@ const canSubmitConsume = computed(() => {
   if (!isValidMoney(consumeAmountStr.value)) return false;
   const num = parseFloat(consumeAmountStr.value);
   if (num <= 0) return false;
-  return moneyToCent(consumeAmountStr.value) <= consumingMember.value.balance;
+  return Number.isSafeInteger(consumeBalanceAfter.value) && Number.isSafeInteger(consumingMember.value.total_consume + moneyToCent(consumeAmountStr.value));
 });
 
 function requestConsumeConfirmation() {
@@ -1882,10 +1788,11 @@ function requestConsumeConfirmation() {
     return;
   }
   const amountCent = moneyToCent(consumeAmountStr.value);
-  if (amountCent > consumingMember.value.balance) {
-    showFeedback('扣款金额超过当前卡内余额，无法扣除！', 'error');
-    return;
-  }
+  const current = localDb.getMemberById(consumingMember.value.id);
+  if (!current) { showFeedback('客户不存在或已注销。', 'error'); return; }
+  consumingMember.value = current;
+  if (!canSubmitConsume.value) { showFeedback('扣款金额超出可处理范围。', 'error'); return; }
+  debtAcknowledged.value = false;
 
   consumeConfirmation.value = {
     memberId: consumingMember.value.id,
@@ -1895,6 +1802,7 @@ function requestConsumeConfirmation() {
     amount: amountNum,
     amountCent,
     balanceAfter: consumingMember.value.balance - amountCent,
+    debtAdded: consumeDebtAdded.value,
     itemsSummary: consumeSummary.value.trim() || '精致洗剪吹'
   };
 }
@@ -1902,12 +1810,21 @@ function requestConsumeConfirmation() {
 function confirmConsume() {
   const conf = consumeConfirmation.value;
   if (!conf || isSubmittingConsume.value) return;
+  if (conf.balanceAfter < 0 && !debtAcknowledged.value) return;
+  const current = localDb.getMemberById(conf.memberId);
+  if (!current) { consumeConfirmation.value = null; showFeedback('客户不存在或已注销。', 'error'); return; }
+  if (current.balance !== conf.currentBalance) {
+    requestConsumeConfirmation();
+    showToast('客户余额已变化，请重新核对金额和欠款。');
+    return;
+  }
   isSubmittingConsume.value = true;
   try {
     const result = localDb.consume({
       memberId: conf.memberId,
       amount: conf.amount,
-      itemsSummary: conf.itemsSummary
+      itemsSummary: conf.itemsSummary,
+      allowDebt: conf.balanceAfter < 0 && debtAcknowledged.value
     });
 
     const memberName = conf.memberName;
@@ -1921,11 +1838,12 @@ function confirmConsume() {
     if (selectedMember.value) {
       selectedMember.value = localDb.getMemberById(selectedMember.value.id);
     }
-    showFeedback('本次服务已记入会员账本。', 'success', {
-      title: '消费成功',
+    showFeedback(balanceAfterCent < 0 ? `本次已记录新增欠款 ¥${formatCent(conf.debtAdded)}，请记得收款结清。` : '本次服务已记入会员账本。', 'success', {
+      title: balanceAfterCent < 0 ? '扣款成功 · 已记录欠款' : '消费成功',
       amount: (deductedCent / 100).toFixed(2),
       memberName,
-      balance: (balanceAfterCent / 100).toFixed(2)
+      balance: (balanceAfterCent / 100).toFixed(2),
+      debt: balanceAfterCent < 0 ? formatCent(-balanceAfterCent) : null
     });
   } catch (err) {
     showFeedback(err.message, 'error', { title: '扣款失败' });
@@ -1934,15 +1852,25 @@ function confirmConsume() {
   }
 }
 
+function rechargeFromConsume() {
+  if (!consumingMember.value) return;
+  const member = consumingMember.value;
+  closeConsumeModal();
+  openRechargeModal(member);
+}
+
 // 错单撤回 / 冲正
 function confirmRefundLedger(item) {
   const amountYuan = Math.abs(item.changeAmount / 100).toFixed(2);
   const actionText = item.type === 'CONSUME' ? `撤销扣款并退还 ¥${amountYuan}` : `撤销充值并扣回 ¥${amountYuan}`;
-  if (!confirm(`确定要${actionText}吗？系统将自动原路冲正恢复会员额度。`)) return;
+  const current = localDb.getMemberById(item.memberId);
+  const balanceAfter = (current?.balance || 0) - item.changeAmount;
+  const debtWarning = balanceAfter < 0 ? `\n⚠️ 撤销后该客户累计欠款 ¥${formatCent(-balanceAfter)}，需后续收款结清。` : '';
+  if (!confirm(`确定要为 ${item.memberName}${actionText}吗？系统将记录冲正流水。${debtWarning}`)) return;
 
   try {
-    const res = localDb.refundLedger(item.id, '店主撤单冲正');
-    showToast(`撤销成功，卡内余额更新为 ¥${(res.newBalance / 100).toFixed(2)}`);
+    const res = localDb.refundLedger(item.id, '店主撤单冲正', balanceAfter < 0);
+    showToast(`撤销成功，${res.newBalance < 0 ? '累计欠款' : '可用余额'} ¥${formatCent(Math.abs(res.newBalance))}`);
     refreshAll();
     if (selectedMember.value) {
       selectedMember.value = localDb.getMemberById(selectedMember.value.id);
@@ -2289,7 +2217,7 @@ function closeTopLayer() {
   }
   if (selectedMember.value) { selectedMember.value = null; return true; }
   if (activeTab.value === 'settings' && settingsPath.value.length && !cloudLocked.value) { backInSettings(); return true; }
-  if (activeTab.value !== 'home' && !cloudLocked.value) { activeTab.value = 'home'; return true; }
+  if (activeTab.value !== 'customers' && !cloudLocked.value) { activeTab.value = 'customers'; return true; }
   return false;
 }
 

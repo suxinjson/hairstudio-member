@@ -325,6 +325,9 @@ const db = {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === id);
     if (!m) throw new Error('会员不存在');
+    if (m.balance < 0) {
+      throw new Error(`该客户尚有 ¥${(-m.balance/100).toFixed(2)} 欠款，请结清后再注销`);
+    }
     if (m.balance > 0) {
       throw new Error(`该会员卡内尚有 ¥${(m.balance/100).toFixed(2)} 余额，请先扣除或清零后再删除`);
     }
@@ -379,26 +382,27 @@ const db = {
     };
   },
 
-  // --- 消费扣减 (防并发/超扣锁) ---
-  consume({ memberId, amount, itemsSummary = '洗剪吹理发', remark = '' }) {
+  // --- 消费扣减：欠款须显式确认，余额与流水仍原子写入 ---
+  consume({ memberId, amount, itemsSummary = '洗剪吹理发', remark = '', allowDebt = false }) {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === memberId);
     if (!m || m.isArchived) throw new Error('会员不存在或已注销');
 
     const amountCent = moneyToCent(amount, '消费扣款金额');
     if (amountCent <= 0) throw new Error('消费扣款金额必须大于0');
-    if (m.balance < amountCent) {
-      throw new Error(`卡内余额不足！当前剩余 ¥${(m.balance/100).toFixed(2)}，无法扣除 ¥${(amountCent/100).toFixed(2)}`);
-    }
-
     const before = m.balance;
-    const after = before - amountCent;
+    const after = checkedSum(before, -amountCent);
+    if (after < 0 && !allowDebt) {
+      throw new Error(`扣款后将欠款 ¥${(-after/100).toFixed(2)}，请确认欠款后再扣款`);
+    }
 
     m.balance = after;
     m.total_consume = checkedSum(m.total_consume || 0, amountCent);
     m.updated_at = nowISO();
 
-    const detail = itemsSummary + (remark ? ` (${remark})` : '');
+    const debtAdded = Math.max(0, -after) - Math.max(0, -before);
+    const detail = itemsSummary + (remark ? ` (${remark})` : '') + (after < 0
+      ? ` [已确认欠款：本次新增¥${(debtAdded/100).toFixed(2)}，累计¥${(-after/100).toFixed(2)}]` : '');
     const ledger = this.makeLedger({
       member: m,
       memberId: m.id,
@@ -421,7 +425,7 @@ const db = {
   },
 
   // --- 核心安全：错录撤回 / 红冲退款 (防止店主输错金额) ---
-  refundLedger(ledgerId, reason = '店主手工撤销') {
+  refundLedger(ledgerId, reason = '店主手工撤销', allowDebt = false) {
     const ledgers = normalizeRefunds(load(STORAGE_KEYS.LEDGERS));
     const target = ledgers.find(l => l.id === ledgerId);
     if (!target) throw new Error('未找到该流水记录');
@@ -450,10 +454,10 @@ const db = {
     } else if (target.type === 'RECHARGE') {
       // 原来是充值增加，撤销需要扣减会员余额
       const deductAmount = target.changeAmount;
-      if (m.balance < deductAmount) {
-        throw new Error(`会员当前余额 ¥${(m.balance/100).toFixed(2)} 低于欲撤销的充值金额 ¥${(deductAmount/100).toFixed(2)}，撤销将导致负数！`);
+      after = checkedSum(before, -deductAmount);
+      if (after < 0 && !allowDebt) {
+        throw new Error(`撤销充值后将欠款 ¥${(-after/100).toFixed(2)}，请确认欠款后再撤销`);
       }
-      after = before - deductAmount;
       m.balance = after;
       m.total_recharge = Math.max(0, (m.total_recharge || 0) - deductAmount);
       refundAmount = -deductAmount;
@@ -463,7 +467,7 @@ const db = {
     }
 
     target.isRefunded = true;
-    if (m.isArchived && after > 0) {
+    if (m.isArchived && after !== 0) {
       if (!m.phone.trim()) throw new Error('该注销会员缺少手机号，无法重新启用；请先核对并恢复完整会员档案后再撤销');
       m.isArchived = false;
       delete m.deleted_at;
@@ -576,6 +580,8 @@ const db = {
     const ledgers = normalizeRefunds(load(STORAGE_KEYS.LEDGERS));
 
     const totalBalance = members.reduce((sum, m) => sum + (m.balance || 0), 0);
+    const totalCreditBalance = members.reduce((sum, m) => sum + Math.max(0, m.balance || 0), 0);
+    const totalDebt = members.reduce((sum, m) => sum + Math.max(0, -(m.balance || 0)), 0);
     const totalRecharge = members.reduce((sum, m) => sum + (m.total_recharge || 0), 0);
     const totalConsume = members.reduce((sum, m) => sum + (m.total_consume || 0), 0);
 
@@ -600,6 +606,9 @@ const db = {
     return {
       memberCount: members.filter(member => !member.isArchived).length,
       totalBalance,
+      totalCreditBalance,
+      totalDebt,
+      debtMemberCount: members.filter(member => !member.isArchived && member.balance < 0).length,
       historyTotalRecharge: totalRecharge,
       historyTotalConsume: totalConsume,
       today: {
@@ -637,7 +646,7 @@ const db = {
     for (const member of members) {
       if (!member || typeof member.id !== 'string' || !member.id || memberIds.has(member.id) ||
           typeof member.name !== 'string' || !member.name.trim() || typeof member.phone !== 'string' ||
-          !Number.isSafeInteger(member.balance) || member.balance < 0 ||
+          !Number.isSafeInteger(member.balance) ||
           !Number.isSafeInteger(member.total_recharge) || member.total_recharge < 0 ||
           !Number.isSafeInteger(member.total_consume) || member.total_consume < 0 ||
           member.balance !== member.total_recharge - member.total_consume ||
@@ -655,7 +664,7 @@ const db = {
           typeof ledger.memberId !== 'string' || !ledger.memberId ||
           !['RECHARGE', 'CONSUME', 'REFUND'].includes(ledger.type) ||
           !Number.isSafeInteger(ledger.changeAmount) || !Number.isSafeInteger(ledger.balanceBefore) ||
-          !Number.isSafeInteger(ledger.balanceAfter) || ledger.balanceBefore < 0 || ledger.balanceAfter < 0 ||
+          !Number.isSafeInteger(ledger.balanceAfter) ||
           ledger.balanceAfter - ledger.balanceBefore !== ledger.changeAmount ||
           (ledger.type === 'RECHARGE' && ledger.changeAmount <= 0) ||
           (ledger.type === 'CONSUME' && ledger.changeAmount >= 0) || ledger.changeAmount === 0 ||

@@ -79,6 +79,7 @@ export function validateMutationArgs(method, args) {
   const money = (item, fields) => { for (const key of fields) if (item[key] !== undefined && (typeof item[key] !== 'number' && typeof item[key] !== 'string' || String(item[key]).length > 32)) throw new Error('金额格式无效'); };
   if (['deleteMember', 'deleteService', 'refundLedger', 'updateMember'].includes(method)) id(args[0]);
   if (method === 'refundLedger' && args[1] !== undefined) boundedText(args[1], DATA_LIMITS.remark, '撤销原因');
+  if (method === 'refundLedger' && args[2] !== undefined && typeof args[2] !== 'boolean') throw new Error('欠款确认必须是布尔值');
   if (['createMember', 'updateMember'].includes(method)) {
     const item = object(args[method === 'updateMember' ? 1 : 0]);
     texts(item, { name: DATA_LIMITS.name, phone: DATA_LIMITS.phone, notes: DATA_LIMITS.notes }); money(item, ['initialBalance']);
@@ -87,6 +88,7 @@ export function validateMutationArgs(method, args) {
   if (['recharge', 'consume'].includes(method)) {
     const item = object(args[0]); id(item.memberId);
     texts(item, { payMethod: 64, itemsSummary: 512, remark: DATA_LIMITS.remark }); money(item, ['actualPay', 'giftAmount', 'amount']);
+    if (method === 'consume' && item.allowDebt !== undefined && typeof item.allowDebt !== 'boolean') throw new Error('欠款确认必须是布尔值');
   }
   if (method === 'saveService') {
     const item = object(args[0]); boundedText(item.name, DATA_LIMITS.name, '服务名称', true);

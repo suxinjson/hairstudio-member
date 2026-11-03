@@ -447,13 +447,45 @@ test('reusing an operation ID with changed contents is rejected', async () => {
   await assert.rejects(service.sync(owner.identity, [altered]), { status: 409 });
   assert.equal((await service.account(owner.identity)).data.members[0].balance, 12000);
 });
-test('two offline devices cannot overspend the same observed member balance', async () => {
+test('two offline devices cannot both consume against the same stale observed balance', async () => {
   const account = await initialAccount(), otherDevice = await login('owner');
   const first = operation(account.data, owner, 'consume', [{ memberId: account.member.id, amount: 80 }]).operation;
   const second = operation(account.data, otherDevice, 'consume', [{ memberId: account.member.id, amount: 80 }]).operation;
   await service.sync(owner.identity, [first]);
   await assert.rejects(service.sync(otherDevice.identity, [second]), { status: 409 });
   assert.equal((await service.account(owner.identity)).data.members[0].balance, 2000);
+});
+
+test('cloud sync preserves acknowledged debt, partial repayments and reversal without duplicate deductions', async () => {
+  const account = await initialAccount();
+  const consumed = operation(account.data, owner, 'consume', [{ memberId: account.member.id, amount: '138.01', allowDebt: true }]);
+  const result = await service.sync(owner.identity, [consumed.operation]);
+  assert.equal(result.data.members[0].balance, -3801);
+  assert.equal(result.data.members[0].total_consume, 13801);
+  const retry = await service.sync(owner.identity, [consumed.operation]);
+  assert.equal(retry.revision, result.revision);
+  assert.equal(retry.data.ledgers.filter(l => l.type === 'CONSUME').length, 1);
+  const recharge = operation(result.data, owner, 'recharge', [{ memberId: account.member.id, actualPay: '10.01' }]);
+  const partial = await service.sync(owner.identity, [recharge.operation]);
+  assert.equal(partial.data.members[0].balance, -2800);
+  const reversal = operation(partial.data, owner, 'refundLedger', [recharge.data.ledgers[0].id, '还款误录', true]);
+  const reversed = await service.sync(owner.identity, [reversal.operation]);
+  assert.equal(reversed.data.members[0].balance, -3801);
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, -3801);
+});
+
+test('cloud replay rejects missing or forged debt acknowledgement and stale debt preconditions atomically', async () => {
+  const account = await initialAccount();
+  const debt = operation(account.data, owner, 'consume', [{ memberId: account.member.id, amount: 138, allowDebt: true }]);
+  const missing = structuredClone(debt.operation); delete missing.args[0].allowDebt;
+  await assert.rejects(service.sync(owner.identity, [missing]), /确认欠款/);
+  const forged = structuredClone(debt.operation); forged.args[0].allowDebt = 'true';
+  await assert.rejects(service.sync(owner.identity, [forged]), /布尔值/);
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, 10000);
+  await service.sync(owner.identity, [debt.operation]);
+  const stale = operation(account.data, owner, 'consume', [{ memberId: account.member.id, amount: 20 }]);
+  await assert.rejects(service.sync(owner.identity, [stale.operation]), /变化|冲突|不一致/);
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, -3800);
 });
 test('independent member changes from different devices can both synchronize', async () => {
   const account = await initialAccount(), second = await login('owner');
