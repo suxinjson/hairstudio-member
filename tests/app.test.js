@@ -25,26 +25,46 @@ const nativeAppUrl = pathToFileURL(nativeAppPath).href;
 const { App: nativeApp } = await import(nativeAppUrl);
 const { Capacitor } = await import('@capacitor/core');
 
-async function compileComponent(sourceUrl, outputPath, keypadUrl) {
-  const source = await readFile(sourceUrl, 'utf8');
+const compiledCache = new Map();
+
+async function compileVueFile(sourceUrl, outputPath) {
+  const fileKey = String(sourceUrl);
+  if (compiledCache.has(fileKey)) return compiledCache.get(fileKey);
+
+  const outPath = outputPath || join(directory, 'comp-' + Math.random().toString(36).slice(2, 9) + '.mjs');
+  const outUrl = pathToFileURL(outPath).href;
+  compiledCache.set(fileKey, outUrl);
+
+  const source = await readFile(new URL(fileKey), 'utf8');
   const { descriptor } = parse(source);
-  const script = compileScript(descriptor, { id: outputPath, inlineTemplate: true }).content;
-  const rewritten = script.replace(/from (['"])([^'"]+)\1/g, (match, quote, specifier) => {
-    const target = specifier === 'vue' ? vueUrl
-      : specifier === '@capacitor/app' ? nativeAppUrl
-      : specifier.endsWith('Keypad.vue') ? keypadUrl
-      : specifier.endsWith('CloudSettings.vue') ? pathToFileURL(cloudSettingsPath).href
-      : specifier.endsWith('Customers.vue') ? pathToFileURL(customersPath).href
-      : specifier.startsWith('.') ? new URL(specifier, sourceUrl).href : pathToFileURL(require.resolve(specifier)).href;
-    return `from ${quote}${target}${quote}`;
-  });
-  await writeFile(outputPath, rewritten);
+  const script = compileScript(descriptor, { id: outPath, inlineTemplate: true }).content;
+
+  const matches = [...script.matchAll(/from (['"])([^'"]+)\1/g)];
+  let rewritten = script;
+  for (const match of matches) {
+    const [full, quote, specifier] = match;
+    let target;
+    if (specifier === 'vue') target = vueUrl;
+    else if (specifier === '@capacitor/app') target = nativeAppUrl;
+    else if (specifier.endsWith('.vue')) {
+      const depUrl = new URL(specifier, fileKey);
+      target = await compileVueFile(depUrl);
+    } else if (specifier.startsWith('.')) {
+      target = new URL(specifier, fileKey).href;
+    } else {
+      target = pathToFileURL(require.resolve(specifier)).href;
+    }
+    rewritten = rewritten.replace(full, `from ${quote}${target}${quote}`);
+  }
+  await writeFile(outPath, rewritten);
+  return outUrl;
 }
-await compileComponent(new URL('../src/components/Keypad.vue', import.meta.url), keypadPath);
-await compileComponent(new URL('../src/components/CloudSettings.vue', import.meta.url), cloudSettingsPath);
-await compileComponent(new URL('../src/components/Customers.vue', import.meta.url), customersPath);
+
+await compileVueFile(new URL('../src/components/Keypad.vue', import.meta.url), keypadPath);
+await compileVueFile(new URL('../src/components/CloudSettings.vue', import.meta.url), cloudSettingsPath);
+await compileVueFile(new URL('../src/components/Customers.vue', import.meta.url), customersPath);
 const appPath = join(directory, 'app.mjs');
-await compileComponent(new URL('../src/App.vue', import.meta.url), appPath, pathToFileURL(keypadPath).href);
+await compileVueFile(new URL('../src/App.vue', import.meta.url), appPath);
 const { default: App } = await import(pathToFileURL(appPath).href);
 const { default: CloudSettings } = await import(pathToFileURL(cloudSettingsPath).href);
 const { createApp, nextTick } = await import(vueUrl);
