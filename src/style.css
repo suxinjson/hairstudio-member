@@ -139,8 +139,8 @@ body {
 .header-search input { height: 48px; }
 
 .ledger-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 5px; border-radius: 16px; background: #e2e8e8; }
-.ledger-tabs button { min-height: 44px; padding: 10px 8px; border-radius: 12px; font-size: 16px; font-weight: 800; color: #52626a; }
-.ledger-tabs button[aria-selected="true"] { color: #167c68; background: white; box-shadow: 0 1px 4px rgb(24 39 43 / 10%); }
+.ledger-tabs button { min-height: 44px; padding: 10px 8px; border-radius: 12px; font-size: 16px; font-weight: 700; color: #52626a; transition: all 0.15s ease; }
+.ledger-tabs button[aria-selected="true"] { color: #0b5e4a; background: white; font-weight: 900; box-shadow: 0 2px 8px rgba(16, 124, 104, 0.14), 0 1px 2px rgba(0, 0, 0, 0.04); }
 
 .app-header input {
   background: #304147;
@@ -581,8 +581,8 @@ body {
 /* 会员与收银共用一个入口，行内保留唯一的快捷扣款动作。 */
 .customers-page { display: grid; gap: 16px; }
 .customer-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.customer-filters button { min-height: 46px; padding: 8px 4px; border-radius: 12px; color: #52646b; font-size: 15px; font-weight: 700; white-space: nowrap; }
-.customer-filters button[aria-pressed="true"] { background: #deefe8; color: #116a57; }
+.customer-filters button { min-height: 46px; padding: 8px 4px; border-radius: 12px; color: #52646b; font-size: 15px; font-weight: 700; white-space: nowrap; background: #eef3f1; transition: all 0.15s ease; }
+.customer-filters button[aria-pressed="true"] { background: #167c68; color: white; font-weight: 800; box-shadow: 0 2px 6px rgba(22, 124, 104, 0.25); }
 .customer-debt-summary { display: flex; align-items: center; gap: 10px; text-align: left; padding: 12px 14px; border: 1px solid #f1b5ac; border-radius: 14px; background: #fff1ed; color: #a72a22; }
 .customer-debt-summary > span { display: grid; gap: 3px; flex: 1; }
 .customer-debt-summary strong { font-size: 16px; }
@@ -616,9 +616,45 @@ body {
 .customer-empty button { min-height: 48px; padding: 10px 20px; border-radius: 12px; font-weight: 700; white-space: nowrap; }
 .customer-empty-primary { background: #167c68; color: white; }
 .customer-empty-secondary { color: #167c68; background: #e4f2ec; }
-.app-shell .app-nav-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; color: #65757b; font-size: 14px; font-weight: 600; white-space: nowrap; }
-.app-shell .app-nav-item.nav-active { color: #116a57; font-weight: 800; }
-.app-shell .app-nav-item.nav-active::before { content: ''; width: 28px; height: 3px; border-radius: 3px; background: #167c68; position: absolute; top: 0; }
+.app-shell .app-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: #5c6f75;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  position: relative;
+  transition: color 0.18s ease;
+}
+.app-shell .app-nav-item svg {
+  transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+  padding: 3px 16px;
+  box-sizing: content-box;
+  border-radius: 14px;
+}
+.app-shell .app-nav-item.nav-active {
+  color: #0b5e4a;
+  font-weight: 900;
+}
+.app-shell .app-nav-item.nav-active svg {
+  background: #d8f1e7;
+  color: #0b5e4a;
+  transform: scale(1.06);
+  box-shadow: 0 1px 4px rgba(16, 124, 104, 0.16);
+}
+.app-shell .app-nav-item.nav-active::before {
+  content: '';
+  width: 36px;
+  height: 3.5px;
+  border-radius: 0 0 4px 4px;
+  background: #167c68;
+  position: absolute;
+  top: 0;
+  box-shadow: 0 2px 6px rgba(22, 124, 104, 0.4);
+}
 .app-shell .balance-debt { color: #b42318 !important; font-weight: 800; }
 .app-shell .consume-submit { background: #167c68; }
 .app-shell .consume-submit-debt { background: #b42318; }
