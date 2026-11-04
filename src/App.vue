@@ -614,14 +614,14 @@ const connectionLabel = computed(() => {
   if (cloudState.value.syncLoginRequired) return '登录失效 · 待重新登录';
   if (cloudState.value.status === 'conflict') return '需核对云端版本';
   if (cloudState.value.outbox.length) return `联网 · 待同步 ${cloudState.value.outbox.length} 笔`;
-  return '';
+  return '在线同步';
 });
 const compactConnectionLabel = computed(() => {
   if (!cloudState.value.user) return isNativeApp && !cloudState.value.binding ? '本机' : '未登录';
   if (!cloudState.value.online) return '离线';
   if (cloudState.value.syncLoginRequired) return '待登录';
   if (cloudState.value.status === 'conflict') return '待核对';
-  return cloudState.value.outbox.length ? '待同步' : '';
+  return cloudState.value.outbox.length ? '待同步' : '已同步';
 });
 const stopCloudSubscription = cloudClient.subscribe((state) => {
   cloudState.value = state;

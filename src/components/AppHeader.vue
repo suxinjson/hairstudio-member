@@ -12,36 +12,23 @@
               <span class="brand-medium">梦飞会员管家</span>
               <span class="brand-short">梦飞会员</span>
             </h1>
-            <div class="header-meta text-indigo-300 font-semibold" :title="connectionLabel ? (currentDateText + ' · ' + connectionLabel) : currentDateText">
-              <span class="header-meta-full">{{ currentDateText }}{{ connectionLabel ? ' · ' + connectionLabel : '' }}</span>
-              <span class="header-meta-compact">{{ compactDateText }}{{ compactConnectionLabel ? ' · ' + compactConnectionLabel : '' }}</span>
+            <div class="header-meta text-indigo-300 font-semibold" :title="currentDateText + ' · ' + connectionLabel">
+              <span class="header-meta-full">{{ currentDateText }} · {{ connectionLabel }}</span>
+              <span class="header-meta-compact">{{ compactDateText }} · {{ compactConnectionLabel }}</span>
             </div>
           </div>
         </div>
 
-        <div class="header-actions">
-          <!-- 云端已启用时显示同步入口；已同步时仅展示精致绿点状态，不堆砌冗余文字。 -->
-          <button
-            v-if="cloudBinding && !cloudLocked"
-            @click="emit('open-account')"
-            :class="['sync-chip', 'btn-press', cloudOnline ? 'sync-chip-online' : 'sync-chip-offline', !connectionLabel ? 'sync-chip-synced' : '']"
-            :aria-label="connectionLabel ? ('同步状态：' + connectionLabel) : '云端已连接并同步'"
-            :title="connectionLabel || '云端在线 · 已同步'"
-          >
-            <span class="sync-dot" :class="{ 'sync-dot-live': cloudOnline && !outboxLength }"></span>
-            <span v-if="connectionLabel" class="sync-chip-full">{{ connectionLabel }}</span>
-            <span v-if="compactConnectionLabel" class="sync-chip-compact">{{ compactConnectionLabel }}</span>
-          </button>
-          <button
-            v-if="activeTab !== 'settings' && !cloudLocked"
-            @click="emit('create-member')"
-            :disabled="hasStorageError || !canCreateMember"
-            class="register-member h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center"
-          >
-            <span class="text-base font-black">+</span>
-            <span>登记会员</span>
-          </button>
-        </div>
+        <!-- 登记按钮保留完整文字和字号，优先收缩品牌描述。 -->
+        <button
+          v-if="activeTab !== 'settings' && !cloudLocked"
+          @click="emit('create-member')"
+          :disabled="hasStorageError || !canCreateMember"
+          class="register-member h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center"
+        >
+          <span class="text-base font-black">+</span>
+          <span>登记会员</span>
+        </button>
       </div>
 
       <!-- 紧凑搜索框，输入变化和失焦时立即查找。 -->

@@ -135,43 +135,6 @@ body {
 .app-shell .register-member { flex-shrink: 0; gap: 4px; padding: 8px 10px; font-size: 16px; white-space: nowrap; }
 .register-member > span { white-space: nowrap; }
 
-.sync-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 9999px;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-  border: 1px solid #dce5e1;
-  background: #f1f6f4;
-  color: #2e4a42;
-  flex-shrink: 0;
-}
-.sync-chip-online {
-  border-color: #cbe3d9;
-  background: #f0f8f4;
-}
-.sync-chip-offline {
-  border-color: #fbd6d0;
-  background: #fff3f0;
-  color: #b42318;
-}
-.sync-chip-synced {
-  padding: 8px;
-}
-.sync-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  background: #94a3b8;
-  flex-shrink: 0;
-}
-.sync-dot-live {
-  background: #10b981;
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
-}
 .header-search { margin-top: 8px; }
 .header-search input { height: 48px; }
 
