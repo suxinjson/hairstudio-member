@@ -75,7 +75,7 @@ afterEach(() => app?.unmount());
 after(async () => {
   dom.window.close();
   if (!resolve(directory).startsWith(resolve(tmpdir()) + sep)) throw new Error('Unexpected temporary directory');
-  await rm(directory, { recursive: true });
+  await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 async function mount() {
@@ -1085,4 +1085,51 @@ test('repayment from the consume drawer previews the remaining debt and produces
   assert.equal(localDb.getMemberById(member.id).balance, -2800);
   assert.ok(document.body.textContent.includes('本次抵扣欠款：¥10.00'));
   assert.ok(document.body.textContent.includes('当前仍欠款：¥28.00'));
+});
+
+test('confirmation inquiry modal renders friendly Chinese buttons, handles cancel, back button and accept', async t => {
+  await mount();
+  await settings('services');
+  const serviceCountBefore = localDb.getServices().length;
+  const deleteBtn = button('删除');
+  assert.ok(deleteBtn);
+  deleteBtn.click();
+  await nextTick();
+
+  // Confirmation modal should appear
+  const confirmDialog = document.querySelector('.confirm-dialog');
+  assert.ok(confirmDialog, 'confirm modal must be visible');
+  assert.ok(confirmDialog.textContent.includes('删除服务确认'));
+  assert.ok(confirmDialog.textContent.includes('确定要删除该服务项目吗'));
+
+  // Verify friendly Chinese buttons (no English OK / Cancel)
+  const cancelBtn = [...confirmDialog.querySelectorAll('button')].find(b => b.textContent.trim() === '取消');
+  const submitBtn = [...confirmDialog.querySelectorAll('button')].find(b => b.textContent.trim() === '确认删除');
+  assert.ok(cancelBtn, 'Cancel button in Chinese');
+  assert.ok(submitBtn, 'Submit button in Chinese');
+
+  // Cancel action does not delete
+  cancelBtn.click();
+  await nextTick();
+  assert.equal(document.querySelector('.confirm-dialog'), null);
+  assert.equal(localDb.getServices().length, serviceCountBefore);
+
+  // Trigger again and test accept
+  button('删除').click();
+  await nextTick();
+  // Test Escape / Back button dismissal
+  assert.ok(document.querySelector('.confirm-dialog'));
+  window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape' }));
+  await nextTick();
+  assert.equal(document.querySelector('.confirm-dialog'), null);
+  assert.equal(localDb.getServices().length, serviceCountBefore);
+
+  // Trigger again and test accept
+  button('删除').click();
+  await nextTick();
+  const submitBtn2 = [...document.querySelector('.confirm-dialog').querySelectorAll('button')].find(b => b.textContent.trim() === '确认删除');
+  submitBtn2.click();
+  await nextTick();
+  assert.equal(document.querySelector('.confirm-dialog'), null);
+  assert.equal(localDb.getServices().length, serviceCountBefore - 1);
 });

@@ -85,7 +85,7 @@
   </section>
 </template>
 <script setup>
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted, inject } from 'vue';
 import { Capacitor } from '@capacitor/core';
 import { cloudClient, checkForUpdate, downloadUpdate, installUpdate, copyToClipboard } from '../cloud-device.js';
 import { DEFAULT_CLOUD_SERVER_URL } from '../cloud-config.js';
@@ -111,6 +111,11 @@ const loginHint = computed(() => isNativeApp
   ? 'App 可不登录离线记账；登录后会检测本机数据并安全同步到云端。'
   : '网页版需要登录后使用，服务器已自动配置。');
 const newUser = ref({ username: '', displayName: '', password: '', role: 'clerk' });
+const injectAskConfirm = inject('askConfirm', null);
+async function promptConfirm(options) {
+  if (injectAskConfirm) return await injectAskConfirm(options);
+  return window.confirm(typeof options === 'string' ? options : options.message);
+}
 const message = ref(''), users = ref(null), audit = ref(null), update = ref(null), downloaded = ref(null), downloading = ref(false), progress = ref(0);
 const resolutionMessage = computed(() => {
   if (props.recoveryRequired) return '本机账本无法读取。可先导出原始数据与待办，联网后采用云端账本；店主也可通过备份中心恢复本机账本。';
@@ -130,7 +135,16 @@ async function login() {
     await cloudClient.sync();
   });
 }
-async function bootstrap() { if (confirm('将本机会员和流水迁移为云端的初始账本？此操作只允许店主在云端为空时执行。')) await perform(async () => { await cloudClient.bootstrap(); await cloudClient.sync(); }); }
+async function bootstrap() {
+  const confirmed = await promptConfirm({
+    title: '初始云端迁移确认',
+    message: '将本机会员和流水迁移为云端的初始账本？此操作只允许店主在云端为空时执行。',
+    confirmText: '确认迁移',
+    cancelText: '取消',
+    danger: false
+  });
+  if (confirmed) await perform(async () => { await cloudClient.bootstrap(); await cloudClient.sync(); });
+}
 async function exportPending() {
   await perform(async () => {
     const content = { version: '2.0', exportedAt: new Date().toISOString(), appName: '梦飞空间会员管家', ...localDb.readRecoveryState() };
@@ -139,13 +153,49 @@ async function exportPending() {
     message.value = '已发起备份导出，请确认接收端文件可打开，再采用云端账本。';
   });
 }
-async function useCloud() { if (confirm('请先导出并核对本机账本。确认放弃本机尚未同步的变更，改用云端账本？覆盖前会保存一份本机恢复点。')) await perform(() => cloudClient.useCloudLedger()); }
-async function uploadRecovered() { if (confirm('确认用恢复后的本机完整账本覆盖云端？请先导出并核对原待办和云端流水，避免遗漏其他设备交易。原待办将归档，再上传本次完整恢复。')) await perform(() => cloudClient.uploadRecoveredLedger()); }
-async function unlink() { if (confirm('确认解除云端绑定并继续使用本机账本？请先保留外部备份。')) await perform(() => cloudClient.unlink()); }
+async function useCloud() {
+  const confirmed = await promptConfirm({
+    title: '采用云端账本确认',
+    message: '请先导出并核对本机账本。\n确认放弃本机尚未同步的变更，改用云端账本？覆盖前会保存一份本机恢复点。',
+    confirmText: '确认改用云端',
+    cancelText: '取消',
+    danger: true
+  });
+  if (confirmed) await perform(() => cloudClient.useCloudLedger());
+}
+async function uploadRecovered() {
+  const confirmed = await promptConfirm({
+    title: '覆盖云端账本确认',
+    message: '确认用恢复后的本机完整账本覆盖云端？\n请先导出并核对原待办和云端流水，避免遗漏其他设备交易。原待办将归档，再上传本次完整恢复。',
+    confirmText: '确认覆盖云端',
+    cancelText: '取消',
+    danger: true
+  });
+  if (confirmed) await perform(() => cloudClient.uploadRecoveredLedger());
+}
+async function unlink() {
+  const confirmed = await promptConfirm({
+    title: '解除云端绑定确认',
+    message: '确认解除云端绑定并继续使用本机账本？\n请确保已导出留存外部备份。',
+    confirmText: '确认解除绑定',
+    cancelText: '取消',
+    danger: true
+  });
+  if (confirmed) await perform(() => cloudClient.unlink());
+}
 async function loadUsers() { await perform(async () => { users.value = await cloudClient.request('/users'); }); }
 async function loadAudit() { await perform(async () => { audit.value = await cloudClient.request('/activity'); }); }
 async function createUser() { await perform(async () => { await cloudClient.request('/users', newUser.value); newUser.value.password = ''; await loadUsers(); message.value = '账号已创建'; }); }
-async function updateUser(user, active) { if (confirm('确认更新此账号权限？该账号已有登录会立即失效，需要重新登录。')) await perform(async () => { await cloudClient.request('/users/' + user.id, { role: user.role, active }, 'PATCH'); await loadUsers(); }); }
+async function updateUser(user, active) {
+  const confirmed = await promptConfirm({
+    title: active ? '更新权限确认' : '停用账号确认',
+    message: `确认${active ? '更新' : '停用'}账号「${user.displayName}」权限？\n该账号已有登录会立即失效，需要重新登录。`,
+    confirmText: active ? '确认更新' : '确认停用',
+    cancelText: '取消',
+    danger: !active
+  });
+  if (confirmed) await perform(async () => { await cloudClient.request('/users/' + user.id, { role: user.role, active }, 'PATCH'); await loadUsers(); });
+}
 async function checkUpdate() { await perform(async () => { update.value = await checkForUpdate(); downloaded.value = null; if (!update.value) message.value = '当前没有可用的新版本'; }); }
 async function download() {
   downloading.value = true; progress.value = 0;

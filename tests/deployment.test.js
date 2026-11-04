@@ -16,7 +16,7 @@ async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'member-deployment-test-'));
   t.after(async () => {
     assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep));
-    await rm(directory, { recursive: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
   return directory;
 }

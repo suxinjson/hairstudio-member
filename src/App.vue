@@ -1132,6 +1132,55 @@
       <span>{{ toastMessage }}</span>
     </div>
 
+    <!-- 全局询问确认弹窗 (操作确认、注销、撤销等友好交互，替代原生带英文按钮的系统 confirm 弹窗) -->
+    <div
+      v-if="confirmModal"
+      class="feedback-backdrop fixed inset-0 z-[75] flex items-center justify-center p-5 animate-fade-in backdrop-blur-xs"
+      @click.self="handleConfirmModalCancel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-modal-title"
+    >
+      <section
+        class="feedback-dialog confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-modal-title"
+      >
+        <div
+          class="feedback-icon mx-auto"
+          :class="confirmModal.type === 'danger' ? 'feedback-icon-error' : 'confirm-icon-warning'"
+        >
+          <span v-if="confirmModal.type === 'danger'" aria-hidden="true">⚠️</span>
+          <span v-else aria-hidden="true">❓</span>
+        </div>
+        <h2 id="confirm-modal-title" class="mt-4 text-2xl font-black text-slate-900">
+          {{ confirmModal.title }}
+        </h2>
+        <p class="mt-2.5 text-base leading-relaxed text-slate-600 font-medium whitespace-pre-line text-center">
+          {{ confirmModal.message }}
+        </p>
+        <div class="mt-6 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            @click="handleConfirmModalCancel"
+            class="h-13 rounded-2xl border-2 border-slate-300 text-base font-bold text-slate-700 active:bg-slate-100 btn-press"
+          >
+            {{ confirmModal.cancelText || '取消' }}
+          </button>
+          <button
+            type="button"
+            @click="handleConfirmModalAccept"
+            class="confirm-modal-submit h-13 rounded-2xl text-base font-black text-white shadow-md btn-press"
+            :class="confirmModal.type === 'danger' ? 'bg-rose-600 hover:bg-rose-700 active:bg-rose-800 shadow-rose-500/25' : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 shadow-indigo-500/25'"
+            autofocus
+          >
+            {{ confirmModal.confirmText || '确定' }}
+          </button>
+        </div>
+      </section>
+    </div>
+
     <div
       v-if="feedbackModal"
       class="feedback-backdrop fixed inset-0 z-[70] flex items-center justify-center p-5 animate-fade-in"
@@ -1169,7 +1218,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted, provide } from 'vue';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import { localDb } from './storage.js';
@@ -1241,6 +1290,34 @@ const ledgerSearchQuery = ref('');
 const toastMessage = ref('');
 let toastTimer = null;
 const feedbackModal = ref(null);
+const confirmModal = ref(null);
+
+function askConfirm(options) {
+  if (typeof options === 'string') {
+    options = { message: options };
+  }
+  return new Promise(resolve => {
+    confirmModal.value = {
+      title: options.title || '操作确认',
+      message: options.message,
+      confirmText: options.confirmText || '确定',
+      cancelText: options.cancelText || '取消',
+      type: options.type || (options.danger ? 'danger' : 'warning'),
+      resolve
+    };
+  });
+}
+function handleConfirmModalAccept() {
+  const resolve = confirmModal.value?.resolve;
+  confirmModal.value = null;
+  resolve?.(true);
+}
+function handleConfirmModalCancel() {
+  const resolve = confirmModal.value?.resolve;
+  confirmModal.value = null;
+  resolve?.(false);
+}
+provide('askConfirm', askConfirm);
 const storageError = ref('');
 const isExporting = ref(false);
 
@@ -1783,13 +1860,20 @@ function rechargeFromConsume() {
 }
 
 // 错单撤回 / 冲正
-function confirmRefundLedger(item) {
+async function confirmRefundLedger(item) {
   const amountYuan = Math.abs(item.changeAmount / 100).toFixed(2);
   const actionText = item.type === 'CONSUME' ? `撤销扣款并退还 ¥${amountYuan}` : `撤销充值并扣回 ¥${amountYuan}`;
   const current = localDb.getMemberById(item.memberId);
   const balanceAfter = (current?.balance || 0) - item.changeAmount;
   const debtWarning = balanceAfter < 0 ? `\n⚠️ 撤销后该客户累计欠款 ¥${formatCent(-balanceAfter)}，需后续收款结清。` : '';
-  if (!confirm(`确定要为 ${item.memberName}${actionText}吗？系统将记录冲正流水。${debtWarning}`)) return;
+  const confirmed = await askConfirm({
+    title: '撤销流水确认',
+    message: `确定要为 ${item.memberName}${actionText}吗？系统将记录冲正流水。${debtWarning}`,
+    confirmText: '确认撤销',
+    cancelText: '取消',
+    danger: true
+  });
+  if (!confirmed) return;
 
   try {
     const res = localDb.refundLedger(item.id, '店主撤单冲正', balanceAfter < 0);
@@ -1849,8 +1933,19 @@ function submitMemberForm() {
   }
 }
 
-function handleDeleteMember(m) {
-  if (!confirm(`确定要注销会员「${m.name}」吗？历史档案和流水将保留用于对账。`)) return;
+async function handleDeleteMember(m) {
+  if (m.balance < 0) {
+    showFeedback('该会员尚有未结清欠款，不能注销。请先充值或结清欠款。', 'error', { title: '无法注销欠款客户' });
+    return;
+  }
+  const confirmed = await askConfirm({
+    title: '注销会员确认',
+    message: `确定要注销会员「${m.name}」吗？\n注销后该会员将从列表中移除，历史档案和交易流水将完整保留用于核算对账。`,
+    confirmText: '确认注销',
+    cancelText: '取消',
+    danger: true
+  });
+  if (!confirmed) return;
   try {
     localDb.deleteMember(m.id);
     selectedMember.value = null;
@@ -1887,8 +1982,15 @@ function submitServiceForm() {
   }
 }
 
-function deleteServiceItem(id) {
-  if (!confirm('确定要删除该服务项目吗？')) return;
+async function deleteServiceItem(id) {
+  const confirmed = await askConfirm({
+    title: '删除服务确认',
+    message: '确定要删除该服务项目吗？\n已有的记账流水不会受到任何影响。',
+    confirmText: '确认删除',
+    cancelText: '取消',
+    danger: true
+  });
+  if (!confirmed) return;
   hairServices.value = localDb.deleteService(id);
   showToast('服务项目已删除');
 }
@@ -1976,8 +2078,15 @@ function handleCreateManualSnapshot() {
 }
 
 // 删除快照
-function handleDeleteSnapshot(id) {
-  if (!confirm('确定要删除此份本地快照记录吗？')) return;
+async function handleDeleteSnapshot(id) {
+  const confirmed = await askConfirm({
+    title: '删除快照确认',
+    message: '确定要删除此份本地快照记录吗？\n删除后将无法从此快照点恢复数据。',
+    confirmText: '确认删除',
+    cancelText: '取消',
+    danger: true
+  });
+  if (!confirmed) return;
   try {
     localDb.deleteLocalSnapshot(id);
     refreshAll();
@@ -2132,6 +2241,7 @@ function handleVisibilityChange() {
 }
 
 function closeTopLayer() {
+  if (confirmModal.value) { handleConfirmModalCancel(); return true; }
   if (feedbackModal.value) { feedbackModal.value = null; return true; }
   if (receiptModal.value) { receiptModal.value = null; return true; }
   if (backupRestoreRequest.value) { backupRestoreRequest.value = null; return true; }
