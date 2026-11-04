@@ -2,14 +2,16 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
+COPY admin/package.json ./admin/package.json
 RUN npm ci
 COPY . .
 ARG VITE_CLOUD_SERVER_URL=https://124.70.184.136
 RUN npm run build:web
+RUN npm run admin:build
 
 FROM node:22-alpine AS api
 WORKDIR /app
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=48927
 COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
 RUN npm ci --workspace=server --omit=dev --ignore-scripts
@@ -18,9 +20,10 @@ COPY src/storage.js src/accounting.js src/money.js src/sync-protocol.js src/clou
 COPY capacitor.config.json ./
 RUN mkdir -p /app/releases && chown -R node:node /app
 USER node
-EXPOSE 3000
+EXPOSE 48927
 CMD ["node", "server/main.js"]
 
 FROM caddy:2-alpine AS web
 COPY --from=build /app/dist /srv
+COPY --from=build /app/admin/dist /srv/admin
 COPY deploy/Caddyfile /etc/caddy/Caddyfile

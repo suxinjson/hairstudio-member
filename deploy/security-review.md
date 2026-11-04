@@ -50,7 +50,7 @@
 
 生产 API 只接受来自明确配置的可信代理 IP 的请求；没有配置时拒绝请求。默认 Compose 给 Caddy 固定私网地址 172.30.184.10，API 只信任该地址，不信任整个私网。IPv4-mapped IPv6 地址会规范化。
 
-可信代理还必须提供准确的 X-Forwarded-Proto: https 和有效的最后一跳客户端 IP。不可信连接伪造这些头仍被拒绝；在代理前伪造更早的 X-Forwarded-For 地址也不能改变限流标识。Caddy 使用标准 reverse_proxy 转发头处理。公网仅发布 80/443，API 3000 和数据库 5432 不发布。
+可信代理还必须提供准确的 X-Forwarded-Proto: https 和有效的最后一跳客户端 IP。不可信连接伪造这些头仍被拒绝；在代理前伪造更早的 X-Forwarded-For 地址也不能改变限流标识。Caddy 使用标准 reverse_proxy 转发头处理。公网仅发布 80/443，后端专用端口 48927 和数据库 5432 不对外暴露。
 
 ### 真实 PostgreSQL 的服务修改/删除同步失败
 

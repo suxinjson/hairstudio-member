@@ -8,6 +8,12 @@
 
 GitHub 账号、自动部署和服务器的安全配置步骤见 [安全配置说明](security-configuration.md)。
 
+## 访问地址与入口
+
+- **移动端 Web 入口**：`https://<你的域名或IP>/`
+- **PC 端后台管理中心**：`https://<你的域名或IP>/admin/`（支持会员全量管理、批量 Excel 导入导出、充值与消费流水统计、员工账号权限管理等）
+- **后端 API 服务接口**：`https://<你的域名或IP>/api/*`（由 Caddy 反向代理到内网隔离端口 `48927`，不对外直接暴露内部端口）
+
 ## 首次启动
 
 1. 将域名 A/AAAA 记录指向服务器，开放 TCP 80/443；80 用于 HTTPS 证书申请和跳转。
@@ -100,7 +106,7 @@ docker compose exec -T db psql -U member -d member -c \
 
 先创建权限为 700 的 `backups` 目录并设 `umask 077`。使用 IP HTTPS 时，上面的每条 `docker compose` 都应加 `-f compose.yaml -f deploy/compose.ip.yaml`。不要使用 `down -v`。管理员角色仍叫 `member`，兼容现有 PostgreSQL 卷；运行时角色叫 `member_app`，上述特权列须全部为 `f`。API 在生产启动时检查角色并拒绝特权连接。
 
-默认私网为 `172.30.184.0/24`，Caddy 为 `172.30.184.10`。如果与现有 Docker/VPN 网络冲突，同时设置 `.env` 的 `MEMBER_PRIVATE_SUBNET` 和位于其中的 `MEMBER_PROXY_IP`，重建网络。API 只信任该明确地址，不信任整个私网，也不公开 3000/5432。
+默认私网为 `172.30.184.0/24`，Caddy 为 `172.30.184.10`。如果与现有 Docker/VPN 网络冲突，同时设置 `.env` 的 `MEMBER_PRIVATE_SUBNET` 和位于其中的 `MEMBER_PROXY_IP`，重建网络。API 只信任该明确地址，不信任整个私网，也不公开后端端口 48927 或数据库 5432。
 
 迁移失败时 API 不启动；先查看迁移日志，核对原管理员密码和新增应用密码，不要删除数据库卷重试。手工 Node.js 部署先用管理员连接执行 `npm run server:migrate`（设置 `APP_DATABASE_PASSWORD`），再用 `PGUSER=member_app` 和应用密码运行 `npm run server`。生产设置 `NODE_ENV=production` 与准确的 `TRUSTED_PROXY_IPS`，反向代理必须覆盖 HTTPS 转发头并追加实际客户端地址。
 

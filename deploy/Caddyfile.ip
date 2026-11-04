@@ -19,7 +19,13 @@ https://{$PUBLIC_DOMAIN} {
     header X-Content-Type-Options "nosniff"
     header Referrer-Policy "no-referrer"
     handle /api/* {
-        reverse_proxy api:3000
+        reverse_proxy api:48927
+    }
+    redir /admin /admin/ 308
+    handle /admin/* {
+        root * /srv
+        try_files {path} /admin/index.html
+        file_server
     }
     handle {
         root * /srv
