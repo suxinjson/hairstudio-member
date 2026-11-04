@@ -84,7 +84,7 @@ export function useRecharge({
 
     const current = localDb.getMemberById(rechargingMember.value.id);
     if (!current) {
-      showFeedback('客户不存在或已注销。');
+      showFeedback('会员不存在或已注销。');
       return;
     }
     rechargingMember.value = current;
@@ -122,7 +122,7 @@ export function useRecharge({
     }
     if (!current || current.balance !== confirmation.currentBalance) {
       requestRechargeConfirmation();
-      showToast('客户余额已变化，请重新核对充值结果。');
+      showToast('会员余额已变化，请重新核对充值结果。');
       return;
     }
     isSubmittingRecharge.value = true;

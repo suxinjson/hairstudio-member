@@ -20,49 +20,91 @@
       <div
         v-for="item in ledgers"
         :key="item.id"
-        class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] text-sm"
+        class="ledger-item-card bg-white p-4 rounded-2xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] text-sm transition"
       >
-        <div class="flex items-center justify-between">
-          <div class="flex items-center space-x-2 min-w-0">
-            <span
-              class="px-2 py-0.5 rounded-xl font-black text-xs whitespace-nowrap shrink-0"
-              :class="getBadgeClass(item.type)"
+        <!-- 头部：会员身份（头像 + 姓名 + 业务标签 + 电话）与变动金额 -->
+        <div class="flex items-start justify-between gap-3">
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <!-- 会员首字头像 -->
+            <div
+              class="w-11 h-11 rounded-xl flex items-center justify-center font-black text-lg shrink-0 select-none"
+              :class="{
+                'bg-emerald-100 text-emerald-800': item.type === 'RECHARGE',
+                'bg-slate-100 text-slate-800': item.type === 'CONSUME',
+                'bg-amber-100 text-amber-800': item.type === 'REFUND'
+              }"
+              aria-hidden="true"
             >
-              {{ getTypeText(item.type) }}<span class="sr-only" v-if="item.type === 'RECHARGE'">(储值)</span>
-            </span>
-            <button class="copyable-text font-black text-slate-900 text-base sm:text-lg whitespace-nowrap truncate max-w-[120px]" @click.stop="emit('copy', item.memberName, '姓名')" aria-label="复制会员姓名">{{ item.memberName }}</button>
-            <button class="copyable-text text-slate-500 font-mono font-bold text-xs sm:text-sm whitespace-nowrap" @click.stop="emit('copy', item.memberPhone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(item.memberPhone) }}</button>
+              {{ item.memberName ? item.memberName.charAt(0) : '会' }}
+            </div>
+
+            <!-- 姓名、标签与电话 -->
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2">
+                <button
+                  class="copyable-text font-black text-slate-900 text-base sm:text-lg whitespace-nowrap truncate max-w-[130px] sm:max-w-[180px]"
+                  @click.stop="emit('copy', item.memberName, '会员姓名')"
+                  aria-label="复制会员姓名"
+                >
+                  {{ item.memberName }}
+                </button>
+                <span
+                  class="px-2 py-0.5 rounded-lg font-black text-xs whitespace-nowrap shrink-0"
+                  :class="getBadgeClass(item.type)"
+                >
+                  {{ getTypeText(item.type) }}<span class="sr-only" v-if="item.type === 'RECHARGE'">(储值)</span>
+                </span>
+              </div>
+              <div class="mt-0.5">
+                <button
+                  class="copyable-text text-slate-500 font-mono font-bold text-xs sm:text-sm whitespace-nowrap"
+                  @click.stop="emit('copy', item.memberPhone, '会员手机号')"
+                  aria-label="复制会员手机号"
+                >
+                  {{ formatPhoneSpaced(item.memberPhone) }}
+                </button>
+              </div>
+            </div>
           </div>
-          <div
-            class="text-lg font-black tabular-nums"
-            :class="item.changeAmount > 0 ? 'text-emerald-600' : 'text-slate-900'"
-          >
-            {{ item.changeAmount > 0 ? '+' : '' }}{{ (item.changeAmount / 100).toFixed(2) }} 元
+
+          <!-- 右侧：本次变动金额与变动后余额 -->
+          <div class="text-right shrink-0">
+            <div
+              class="text-lg sm:text-xl font-black tabular-nums whitespace-nowrap"
+              :class="item.changeAmount > 0 ? 'text-emerald-600' : 'text-slate-900'"
+            >
+              {{ item.changeAmount > 0 ? '+' : '' }}{{ (item.changeAmount / 100).toFixed(2) }} 元
+            </div>
+            <div class="text-xs text-slate-500 font-semibold mt-0.5 whitespace-nowrap">
+              {{ item.balanceAfter < 0 ? '变动后欠款' : '变动后余额' }}:
+              <strong
+                class="font-black tabular-nums whitespace-nowrap"
+                :class="item.balanceAfter < 0 ? 'balance-debt' : 'text-slate-900'"
+              >
+                ¥{{ formatCent(Math.abs(item.balanceAfter)) }}
+              </strong>
+            </div>
           </div>
         </div>
 
-        <div class="mt-3 flex items-center justify-between text-slate-600 pt-2.5 border-t border-slate-100 text-xs font-semibold">
-          <div class="truncate max-w-[220px]">
-            {{ item.remark || '无项目说明' }}
-          </div>
-          <div>
-            {{ item.balanceAfter < 0 ? '变动后欠款' : '变动后余额' }}: <strong class="text-slate-900 font-black" :class="{ 'balance-debt': item.balanceAfter < 0 }">¥{{ formatCent(Math.abs(item.balanceAfter)) }}</strong>
-          </div>
+        <!-- 中部：服务明细/备注 -->
+        <div v-if="item.remark" class="mt-2.5 pt-2 border-t border-slate-100 text-xs text-slate-600 font-medium break-words">
+          <span class="text-slate-400 font-normal">项目明细：</span>{{ item.remark }}
         </div>
 
-        <!-- 时间与撤单操作 -->
-        <div class="flex items-center justify-between text-slate-400 text-xs mt-2.5 pt-1.5 border-t border-dashed border-slate-100">
-          <span class="font-medium">{{ formatTime(item.created_at) }}</span>
+        <!-- 底部：时间与撤单操作 -->
+        <div class="mt-2.5 pt-2 border-t border-dashed border-slate-100 flex items-center justify-between text-xs text-slate-400">
+          <span class="font-medium font-mono whitespace-nowrap">{{ formatTime(item.created_at) }}</span>
 
           <button
             v-if="item.type !== 'REFUND' && !item.isRefunded"
             @click.stop="emit('refund', item)"
             :disabled="!canWrite('refundLedger')"
-            class="text-rose-600 hover:text-rose-700 bg-rose-50 border border-rose-200/80 px-3.5 py-1.5 rounded-xl font-bold active:bg-rose-100 text-xs btn-press"
+            class="text-rose-600 hover:text-rose-700 bg-rose-50 border border-rose-200/80 px-3.5 py-1.5 rounded-xl font-bold active:bg-rose-100 text-xs btn-press whitespace-nowrap"
           >
             撤销此单
           </button>
-          <span v-else-if="item.isRefunded" class="text-slate-400 bg-slate-100 px-2.5 py-1 rounded-xl font-medium">
+          <span v-else-if="item.isRefunded" class="text-slate-400 bg-slate-100 px-2.5 py-1 rounded-xl font-medium whitespace-nowrap">
             已撤销冲正
           </span>
         </div>

@@ -31,7 +31,7 @@
         </div>
         <div class="flex items-center justify-between text-slate-600 font-medium">
           <span>{{ formatTime(s.createdAt) }}</span>
-          <span>包含 {{ s.memberCount }} 客户 · {{ s.ledgerCount }} 笔流水 · 净余额 ¥{{ formatCent(s.totalBalance) }}</span>
+          <span>包含 {{ s.memberCount }} 位会员 · {{ s.ledgerCount }} 笔流水 · 净余额 ¥{{ formatCent(s.totalBalance) }}</span>
         </div>
         <div class="flex space-x-2 pt-2 border-t border-slate-200/70">
           <button 

@@ -14,8 +14,8 @@ export function useLedgerRefund({
     const balanceAfter = (current?.balance || 0) - item.changeAmount;
     const balancePrompt =
       balanceAfter < 0
-        ? `\n\n⚠️ 注意：撤销充值后，客户余额将变为负数（欠款 ¥${formatCent(Math.abs(balanceAfter))}），需后续结清。`
-        : `\n\n撤销后客户余额变更为：¥${formatCent(Math.abs(balanceAfter))} 元。`;
+        ? `\n\n⚠️ 注意：撤销充值后，会员余额将变为负数（欠款 ¥${formatCent(Math.abs(balanceAfter))}），需后续结清。`
+        : `\n\n撤销后会员余额变更为：¥${formatCent(Math.abs(balanceAfter))} 元。`;
 
     const confirmed = await askConfirm({
       title: '撤单冲正确认',

@@ -33,8 +33,8 @@
             <span class="consume-edit-hint">{{ showKeypad ? '正在改价' : '点击改价' }}</span>
           </button>
           <div v-if="isConsumeOverBalance" class="debt-warning consume-debt-warning" role="status" aria-live="polite">
-            <strong>{{ member.balance < 0 ? '客户已有欠款' : '余额不足，将记录欠款' }}</strong>
-            <span>本次新增欠款 ¥{{ formatCent(consumeDebtAdded) }} · 累计欠款 ¥{{ formatCent(-consumeBalanceAfter) }}</span>
+            <strong>{{ member.balance < 0 ? '会员已有欠款' : '余额不足，将记录欠款' }}</strong>
+            <span class="whitespace-nowrap">本次新增欠款 ¥{{ formatCent(consumeDebtAdded) }} · 累计欠款 ¥{{ formatCent(-consumeBalanceAfter) }}</span>
           </div>
         </div>
 
@@ -102,7 +102,7 @@
           {{ confirmation.balanceAfter < 0 ? '注意：本次扣款将产生欠款' : '请核对扣款金额' }}
         </h2>
         <p class="mt-2 text-base text-slate-700">
-          {{ confirmation.balanceAfter < 0 ? '确认后将记录服务消费和欠款，请核对客户与金额。' : `确认后将立即从 ${confirmation.memberName} 会员卡中扣款。` }}
+          {{ confirmation.balanceAfter < 0 ? '确认后将记录服务消费和欠款，请核对会员与金额。' : `确认后将立即从 ${confirmation.memberName} 会员卡中扣款。` }}
         </p>
         <div class="feedback-amount mt-5 rounded-xl px-4 py-4 text-left">
           <div class="flex justify-between gap-3 text-base"><span>消费会员</span><strong class="text-slate-900">{{ confirmation.memberName }}</strong></div>
@@ -120,7 +120,7 @@
         </div>
         <div v-if="confirmation.balanceAfter < 0" class="debt-confirm-warning">
           <strong>新增欠款 ¥{{ formatCent(confirmation.debtAdded) }}</strong>
-          <p>确认后余额为负数，该客户累计欠款 ¥{{ formatCent(-confirmation.balanceAfter) }}，需后续收款结清。</p>
+          <p>确认后余额为负数，该会员累计欠款 ¥{{ formatCent(-confirmation.balanceAfter) }}，需后续收款结清。</p>
           <label class="debt-acknowledgement">
             <input :checked="debtAcknowledged" @change="emit('update:debtAcknowledged', $event.target.checked)" type="checkbox" />
             <span>我已知晓并同意记录本次欠款</span>

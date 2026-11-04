@@ -104,7 +104,7 @@ export function useConsume({
     const amountCent = moneyToCent(consumeAmountStr.value);
     const current = localDb.getMemberById(consumingMember.value.id);
     if (!current) {
-      showFeedback('客户不存在或已注销。', 'error');
+      showFeedback('会员不存在或已注销。', 'error');
       return;
     }
     consumingMember.value = current;
@@ -134,12 +134,12 @@ export function useConsume({
     const current = localDb.getMemberById(conf.memberId);
     if (!current) {
       consumeConfirmation.value = null;
-      showFeedback('客户不存在或已注销。', 'error');
+      showFeedback('会员不存在或已注销。', 'error');
       return;
     }
     if (current.balance !== conf.currentBalance) {
       requestConsumeConfirmation();
-      showToast('客户余额已变化，请重新核对金额和欠款。');
+      showToast('会员余额已变化，请重新核对金额和欠款。');
       return;
     }
     isSubmittingConsume.value = true;

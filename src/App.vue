@@ -24,7 +24,7 @@
     />
 
     <!-- 主视图容器 -->
-    <main class="max-w-5xl mx-auto p-4 space-y-4">
+    <main class="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-4 sm:py-4 space-y-3.5">
       <!-- 异常提示条 -->
       <div v-if="cloudState.binding && !cloudLocked && (cloudState.outbox.length || cloudState.status === 'conflict' || !cloudState.online)" class="sync-banner rounded-2xl p-3 border bg-white text-sm flex items-center justify-between gap-2">
         <span>{{ cloudState.online ? '☁️ 已联网' : '📴 当前离线' }}<span v-if="cloudState.outbox.length"> · 待同步 {{ cloudState.outbox.length }} 笔</span><span v-if="cloudState.status === 'conflict'"> · 请核对冲突</span></span>
@@ -36,7 +36,7 @@
         <button @click="openSettings('backup-files')" class="mt-3 font-black underline">打开备份恢复</button>
       </div>
       
-      <!-- 统一客户入口：快速扣款与客户档案共享一份列表。 -->
+      <!-- 统一会员入口：快速扣款与会员档案共享一份列表。 -->
       <Customers v-if="activeTab === 'customers' && !cloudLocked"
         v-model:filter="customerFilter" :members="membersList" :ledgers="customerLedgers"
         :query="searchQuery" :summary="dashboard"
@@ -151,11 +151,11 @@
 
     </main>
 
-    <!-- 三个主入口，统一客户列表与收银操作。 -->
+    <!-- 三个主入口，统一会员列表与收银操作。 -->
     <nav v-if="!cloudLocked" class="app-nav fixed bottom-0 left-0 right-0 mx-auto bg-white/95 backdrop-blur-md z-30 pb-gesture-safe" aria-label="主导航">
       <div class="grid grid-cols-3 h-16">
         <button @click="activeTab = 'customers'" :aria-current="activeTab === 'customers' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'customers' }" class="app-nav-item btn-press">
-          <UsersRound :size="23" aria-hidden="true" /><span>客户</span>
+          <UsersRound :size="23" aria-hidden="true" /><span>会员</span>
         </button>
         <button @click="activeTab = 'ledgers'" :aria-current="activeTab === 'ledgers' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'ledgers' }" class="app-nav-item btn-press">
           <ReceiptText :size="23" aria-hidden="true" /><span>流水</span>
@@ -614,14 +614,14 @@ const connectionLabel = computed(() => {
   if (cloudState.value.syncLoginRequired) return '登录失效 · 待重新登录';
   if (cloudState.value.status === 'conflict') return '需核对云端版本';
   if (cloudState.value.outbox.length) return `联网 · 待同步 ${cloudState.value.outbox.length} 笔`;
-  return '在线同步';
+  return '';
 });
 const compactConnectionLabel = computed(() => {
   if (!cloudState.value.user) return isNativeApp && !cloudState.value.binding ? '本机' : '未登录';
   if (!cloudState.value.online) return '离线';
   if (cloudState.value.syncLoginRequired) return '待登录';
   if (cloudState.value.status === 'conflict') return '待核对';
-  return cloudState.value.outbox.length ? '待同步' : '已同步';
+  return cloudState.value.outbox.length ? '待同步' : '';
 });
 const stopCloudSubscription = cloudClient.subscribe((state) => {
   cloudState.value = state;

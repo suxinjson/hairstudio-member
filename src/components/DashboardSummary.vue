@@ -33,13 +33,13 @@
       </div>
     </div>
 
-    <div class="mt-3.5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
-      <div>
-        客户可用总余额：<strong class="text-slate-900 text-sm font-black tabular-nums">¥ {{ formatCent(dashboard.totalCreditBalance || 0) }}</strong>
+    <div class="mt-3.5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold gap-2 flex-wrap sm:flex-nowrap">
+      <div class="whitespace-nowrap">
+        会员可用总余额：<strong class="text-slate-900 text-sm font-black tabular-nums whitespace-nowrap">¥ {{ formatCent(dashboard.totalCreditBalance || 0) }}</strong>
       </div>
-      <div v-if="dashboard.totalDebt" class="debt-dashboard-line">客户待收欠款：<strong>¥ {{ formatCent(dashboard.totalDebt) }}</strong> · {{ dashboard.debtMemberCount }} 人</div>
-      <div>
-        总客户数：<strong class="text-slate-900 text-sm font-black">{{ dashboard.memberCount || 0 }}</strong> 人
+      <div v-if="dashboard.totalDebt" class="debt-dashboard-line whitespace-nowrap">会员待收欠款：<strong>¥ {{ formatCent(dashboard.totalDebt) }}</strong> · {{ dashboard.debtMemberCount }} 人</div>
+      <div class="whitespace-nowrap">
+        总会员数：<strong class="text-slate-900 text-sm font-black whitespace-nowrap">{{ dashboard.memberCount || 0 }}</strong> 人
       </div>
     </div>
   </div>

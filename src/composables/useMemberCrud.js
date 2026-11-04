@@ -58,7 +58,7 @@ export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, sh
 
   async function handleDeleteMember(m) {
     if (m.balance < 0) {
-      showFeedback('该会员尚有未结清欠款，不能注销。请先充值或结清欠款。', 'error', { title: '无法注销欠款客户' });
+      showFeedback('该会员尚有未结清欠款，不能注销。请先充值或结清欠款。', 'error', { title: '无法注销欠款会员' });
       return;
     }
     const confirmed = await askConfirm({

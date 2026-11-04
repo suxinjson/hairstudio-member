@@ -346,7 +346,7 @@ const db = {
     const m = members.find(item => item.id === id);
     if (!m) throw new Error('会员不存在');
     if (m.balance < 0) {
-      throw new Error(`该客户尚有 ¥${(-m.balance/100).toFixed(2)} 欠款，请结清后再注销`);
+      throw new Error(`该会员尚有 ¥${(-m.balance/100).toFixed(2)} 欠款，请结清后再注销`);
     }
     if (m.balance > 0) {
       throw new Error(`该会员卡内尚有 ¥${(m.balance/100).toFixed(2)} 余额，请先扣除或清零后再删除`);

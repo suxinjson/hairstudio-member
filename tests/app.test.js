@@ -1014,7 +1014,7 @@ test('unified customer navigation filters low balances and debts without duplica
   const debt = localDb.createMember({ name: '欠款客户甲', phone: '13800001003' });
   localDb.consume({ memberId: debt.id, amount: 38, allowDebt: true });
   await mount();
-  assert.deepEqual([...document.querySelectorAll('nav button')].map(b => b.textContent.trim()), ['客户', '流水', '设置']);
+  assert.deepEqual([...document.querySelectorAll('nav button')].map(b => b.textContent.trim()), ['会员', '流水', '设置']);
   assert.equal(document.querySelectorAll('.customer-row').length, 3);
   assert.ok(document.querySelector('.customer-row-debt').textContent.includes('−¥38.00'));
   assert.ok(document.querySelector('.customer-debt-summary').textContent.includes('38.00'));

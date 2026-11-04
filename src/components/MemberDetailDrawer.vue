@@ -16,10 +16,10 @@
           </div>
           <div class="min-w-0">
             <div class="flex items-center gap-1.5">
-              <button class="copyable-text font-black text-xl text-slate-900 truncate max-w-[130px] sm:max-w-[180px] whitespace-nowrap text-left" @click.stop="emit('copy', member.name, '姓名')" aria-label="复制会员姓名">{{ member.name }}</button>
-              <span class="text-[11px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-black whitespace-nowrap shrink-0" :class="{ 'debt-tag': member.balance < 0 }">{{ member.balance < 0 ? '尚有欠款' : '客户档案' }}</span>
+              <button class="copyable-text font-black text-xl text-slate-900 truncate max-w-[130px] sm:max-w-[180px] whitespace-nowrap text-left" @click.stop="emit('copy', member.name, '会员姓名')" aria-label="复制会员姓名">{{ member.name }}</button>
+              <span class="text-[11px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-black whitespace-nowrap shrink-0" :class="{ 'debt-tag': member.balance < 0 }">{{ member.balance < 0 ? '尚有欠款' : '会员档案' }}</span>
             </div>
-            <button class="copyable-text block text-base text-slate-800 font-mono font-black tracking-wide whitespace-nowrap mt-0.5 text-left" @click.stop="emit('copy', member.phone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(member.phone) }}</button>
+            <button class="copyable-text block text-base text-slate-800 font-mono font-black tracking-wide whitespace-nowrap mt-0.5 text-left" @click.stop="emit('copy', member.phone, '会员手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(member.phone) }}</button>
           </div>
         </div>
         <div class="flex items-center space-x-1.5 shrink-0">
@@ -42,8 +42,8 @@
       <div class="member-detail-content flex-1 overflow-y-auto p-3.5 space-y-2.5">
         <!-- 醒目大额度黑金渐变卡片（紧凑内衬，突出余额与欠款） -->
         <div class="member-balance-panel rounded-3xl p-4" :class="{ 'member-balance-debt': member.balance < 0 }">
-          <div class="text-xs sm:text-sm font-black">{{ member.balance < 0 ? '客户当前欠款' : '当前可用余额' }}</div>
-          <div class="text-3xl sm:text-4xl font-black tracking-tight mt-1 tabular-nums">
+          <div class="text-xs sm:text-sm font-black whitespace-nowrap">{{ member.balance < 0 ? '会员当前欠款' : '当前可用余额' }}</div>
+          <div class="text-3xl sm:text-4xl font-black tracking-tight mt-1 tabular-nums whitespace-nowrap">
             {{ member.balance < 0 ? '−' : '' }}¥ {{ formatCent(Math.abs(member.balance)) }}
           </div>
           <div v-if="member.balance < 0" class="mt-2 text-xs sm:text-sm font-black text-rose-700 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200 flex items-center space-x-1">

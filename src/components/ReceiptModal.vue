@@ -19,7 +19,7 @@
         @click="emit('copy', receipt.messageText)"
         class="w-full h-13 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-2xl text-base font-black shadow-md shadow-indigo-500/25 btn-press"
       >
-        📋 一键复制致谢文案 (微信发给顾客)
+        📋 一键复制致谢文案 (微信发给会员)
       </button>
 
       <button 
