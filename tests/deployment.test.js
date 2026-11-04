@@ -245,7 +245,7 @@ test('temporary HTTPS failures recover before an APK is published', { skip: !bas
 
 test('the workflow deployment archive builds its Docker frontend without an Android project or preexisting files', { skip: !bashAvailable }, async t => {
   const directory = await fixture(t);
-  for (const name of ['server', 'src', 'deploy', 'Dockerfile', 'compose.yaml', 'package.json', 'package-lock.json', 'capacitor.config.json', 'index.html', 'vite.config.js', '.dockerignore']) {
+  for (const name of ['admin', 'server', 'src', 'deploy', 'Dockerfile', 'compose.yaml', 'package.json', 'package-lock.json', 'capacitor.config.json', 'index.html', 'vite.config.js', '.dockerignore']) {
     await cp(join(root, name), join(directory, name), { recursive: true });
   }
   await mkdir(join(directory, 'output_apk'));

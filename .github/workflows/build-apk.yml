@@ -119,7 +119,7 @@ jobs:
     - name: 11. 打包生成服务器更新包
       run: |
         mkdir -p deploy_bundle/releases
-        cp -r server src deploy Dockerfile compose.yaml package.json package-lock.json capacitor.config.json index.html vite.config.js .dockerignore deploy_bundle/
+        cp -r admin server src deploy Dockerfile compose.yaml package.json package-lock.json capacitor.config.json index.html vite.config.js .dockerignore deploy_bundle/
         cp "output_apk/hairstudio-member-v${VERSION_NAME}.apk" deploy_bundle/releases/
         cp output_apk/update-manifest.json deploy_bundle/releases/
         printf '%s\n' "$VERSION_CODE" > deploy_bundle/release-version.txt
