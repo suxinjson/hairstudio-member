@@ -308,7 +308,8 @@ body {
 }
 
 .modal-header > div.member-detail-header-copy {
-  flex-basis: 180px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .modal-header > button,
@@ -602,7 +603,7 @@ body {
 .customer-avatar { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 14px; background: #e3f1ec; color: #167c68; font-size: 21px; font-weight: 800; }
 .customer-identity { display: grid; gap: 5px; min-width: 0; }
 .customer-identity strong { color: var(--app-ink); font-size: 20px; font-weight: 800; }
-.customer-phone { color: #51626a; font-size: 15px; font-variant-numeric: tabular-nums; }
+.customer-phone { color: #51626a; font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .customer-visit { color: #65757b; font-size: 13px; }
 .customer-row-actions { display: grid; justify-items: end; align-content: center; gap: 4px; min-width: 0; }
 .customer-balance-label { color: #66777e; font-size: 13px; text-align: right; }
@@ -720,7 +721,7 @@ body {
 }
 .consume-sheet .keypad-confirm:not(:disabled) { background: #167c68; box-shadow: none; }
 .consume-sheet-debt .keypad-confirm:not(:disabled) { background: #b42318; }
-.member-detail-header-copy > .w-13 { background: #e2f1ea; background-image: none; color: #167c68; box-shadow: none; }
+.member-detail-header-copy > div:first-child, .member-detail-header-copy > .w-13, .member-detail-header-copy > .w-12 { background: #e2f1ea; background-image: none; color: #167c68; box-shadow: none; }
 .member-detail-actions button:first-child { background: #e2f1ea; background-image: none; color: #116a57; box-shadow: none; }
 .member-detail-actions button:last-child { background: #167c68; background-image: none; color: white; box-shadow: none; }
 .app-shell .consume-amount-debt { background: #fff4ef; border-color: #ce3d29; box-shadow: 0 0 0 3px #fce1d9; }

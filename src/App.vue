@@ -83,13 +83,13 @@
           <button id="ledger-summary-tab" role="tab" :aria-selected="ledgerView === 'summary'" aria-controls="ledger-summary" @click="ledgerView = 'summary'">收银简报</button>
         </div>
         <div v-if="ledgerView === 'transactions'" id="ledger-transactions" role="tabpanel" aria-labelledby="ledger-transactions-tab" class="space-y-3.5">
-          <!-- 筛选标签 -->
-          <div class="flex space-x-1.5 bg-slate-200/80 p-1.5 rounded-2xl text-sm font-black">
+          <!-- 筛选标签（大白话清晰单行，永不折行） -->
+          <div class="grid grid-cols-4 gap-1.5 bg-slate-200/80 p-1.5 rounded-2xl text-sm font-black">
             <button
-              v-for="type in [{ key: '', label: '全部流水' }, { key: 'CONSUME', label: '剪发扣费' }, { key: 'RECHARGE', label: '储值入账' }, { key: 'REFUND', label: '撤销记录' }]"
+              v-for="type in [{ key: '', label: '全部' }, { key: 'CONSUME', label: '扣款' }, { key: 'RECHARGE', label: '充值' }, { key: 'REFUND', label: '撤单' }]"
               :key="type.key"
               @click="ledgerFilterType = type.key; refreshLedgers()"
-              class="flex-1 py-2.5 rounded-xl transition text-center btn-press"
+              class="py-2.5 px-1 rounded-xl transition text-center whitespace-nowrap btn-press"
               :class="ledgerFilterType === type.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600'"
             >
               {{ type.label }}
@@ -106,15 +106,15 @@
               class="bg-white p-4.5 rounded-3xl border border-slate-200/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)] text-sm"
             >
               <div class="flex items-center justify-between">
-                <div class="flex items-center space-x-2">
+                <div class="flex items-center space-x-2 min-w-0">
                   <span
-                    class="px-2.5 py-1 rounded-xl font-black text-xs"
+                    class="px-2 py-0.5 rounded-xl font-black text-xs whitespace-nowrap shrink-0"
                     :class="getBadgeClass(item.type)"
                   >
-                    {{ getTypeText(item.type) }}
+                    {{ getTypeText(item.type) }}<span class="sr-only" v-if="item.type === 'RECHARGE'">(储值)</span>
                   </span>
-                  <button class="copyable-text font-black text-slate-900 text-lg" @click.stop="copyMemberField(item.memberName, '姓名')" aria-label="复制会员姓名">{{ item.memberName }}</button>
-                  <button class="copyable-text text-slate-500 font-mono font-bold" @click.stop="copyMemberField(item.memberPhone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(item.memberPhone) }}</button>
+                  <button class="copyable-text font-black text-slate-900 text-base sm:text-lg whitespace-nowrap truncate max-w-[120px]" @click.stop="copyMemberField(item.memberName, '姓名')" aria-label="复制会员姓名">{{ item.memberName }}</button>
+                  <button class="copyable-text text-slate-500 font-mono font-bold text-xs sm:text-sm whitespace-nowrap" @click.stop="copyMemberField(item.memberPhone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(item.memberPhone) }}</button>
                 </div>
                 <div
                   class="text-lg font-black tabular-nums"
@@ -167,7 +167,7 @@
 
             <div class="grid grid-cols-2 gap-3 mt-3.5">
               <div class="bg-gradient-to-br from-emerald-50/80 to-teal-50/40 p-4 rounded-2xl border border-emerald-100">
-                <div class="text-xs text-emerald-800 font-bold">今日储值充值</div>
+                <div class="text-xs text-emerald-800 font-bold">今日充值到账</div>
                 <div class="text-2xl font-black text-emerald-600 tabular-nums mt-1">
                   ¥ {{ formatCent(dashboard.today?.rechargeCreditTotal || 0) }}
                 </div>
@@ -177,7 +177,7 @@
               </div>
 
               <div class="bg-gradient-to-br from-rose-50/80 to-orange-50/40 p-4 rounded-2xl border border-rose-100">
-                <div class="text-xs text-rose-800 font-bold">今日剪发扣额</div>
+                <div class="text-xs text-rose-800 font-bold">今日服务扣款</div>
                 <div class="text-2xl font-black text-rose-600 tabular-nums mt-1">
                   ¥ {{ formatCent(dashboard.today?.consumeAmount || 0) }}
                 </div>
@@ -189,7 +189,7 @@
 
             <div class="mt-3.5 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-semibold">
               <div>
-                客户储值余额：<strong class="text-slate-900 text-sm font-black tabular-nums">¥ {{ formatCent(dashboard.totalCreditBalance || 0) }}</strong>
+                客户可用总余额：<strong class="text-slate-900 text-sm font-black tabular-nums">¥ {{ formatCent(dashboard.totalCreditBalance || 0) }}</strong>
               </div>
               <div v-if="dashboard.totalDebt" class="debt-dashboard-line">客户待收欠款：<strong>¥ {{ formatCent(dashboard.totalDebt) }}</strong> · {{ dashboard.debtMemberCount }} 人</div>
               <div>
@@ -824,50 +824,54 @@
       @click.self="selectedMember = null"
     >
       <div class="member-detail-sheet bg-white rounded-t-[32px] max-h-[90vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
-        <!-- 弹窗把手 -->
-        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto my-2.5"></div>
+        <!-- 弹窗把手（微缩间隙，释放垂直屏幕空间） -->
+        <div class="w-12 h-1 bg-slate-300 rounded-full mx-auto mt-2 mb-1 shrink-0"></div>
 
-        <div class="modal-header px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <div class="member-detail-header-copy flex items-center space-x-3.5">
-            <div class="w-13 h-13 rounded-2xl bg-gradient-to-tr from-indigo-700 to-slate-900 text-white flex items-center justify-center font-black text-2xl shadow-sm">
+        <div class="modal-header px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-2">
+          <div class="member-detail-header-copy flex items-center space-x-3 min-w-0">
+            <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-700 to-slate-900 text-white flex items-center justify-center font-black text-xl shadow-xs shrink-0">
               {{ selectedMember.name.charAt(0) }}
             </div>
-            <div>
-              <div class="flex flex-wrap items-center gap-1.5">
-                <button class="copyable-text font-black text-xl text-slate-900" @click.stop="copyMemberField(selectedMember.name, '姓名')" aria-label="复制会员姓名">{{ selectedMember.name }}</button>
-                <span class="text-xs bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full font-black" :class="{ 'debt-tag': selectedMember.balance < 0 }">{{ selectedMember.balance < 0 ? '尚有欠款' : '客户档案' }}</span>
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5">
+                <button class="copyable-text font-black text-xl text-slate-900 truncate max-w-[130px] sm:max-w-[180px] whitespace-nowrap text-left" @click.stop="copyMemberField(selectedMember.name, '姓名')" aria-label="复制会员姓名">{{ selectedMember.name }}</button>
+                <span class="text-[11px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-black whitespace-nowrap shrink-0" :class="{ 'debt-tag': selectedMember.balance < 0 }">{{ selectedMember.balance < 0 ? '尚有欠款' : '客户档案' }}</span>
               </div>
-              <button class="copyable-text block text-base text-slate-600 font-mono font-black" @click.stop="copyMemberField(selectedMember.phone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(selectedMember.phone) }}</button>
+              <button class="copyable-text block text-base text-slate-800 font-mono font-black tracking-wide whitespace-nowrap mt-0.5 text-left" @click.stop="copyMemberField(selectedMember.phone, '手机号')" aria-label="复制会员手机号">{{ formatPhoneSpaced(selectedMember.phone) }}</button>
             </div>
           </div>
-          <div class="flex items-center space-x-2">
+          <div class="flex items-center space-x-1.5 shrink-0">
             <button 
               @click="openEditMemberModal(selectedMember)"
-              class="h-9 px-3.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl font-bold text-xs active:bg-indigo-100 btn-press"
+              class="h-8.5 px-3 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl font-bold text-xs active:bg-indigo-100 btn-press whitespace-nowrap"
             >
               修改档案
             </button>
             <button 
               @click="selectedMember = null" 
-              class="w-10 h-10 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xl font-bold btn-press"
+              class="w-8.5 h-8.5 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-lg font-bold btn-press shrink-0"
+              aria-label="关闭详情"
             >
               ✕
             </button>
           </div>
         </div>
 
-        <div class="member-detail-content flex-1 overflow-y-auto p-5 space-y-4">
-          <!-- 醒目大额度黑金渐变卡片 -->
-          <div class="member-balance-panel rounded-3xl p-5" :class="{ 'member-balance-debt': selectedMember.balance < 0 }">
-            <div class="text-xs font-black">{{ selectedMember.balance < 0 ? '客户当前欠款' : '当前可用余额' }}</div>
-            <div class="text-4xl font-black tracking-tight mt-1.5 tabular-nums">
+        <div class="member-detail-content flex-1 overflow-y-auto p-3.5 space-y-2.5">
+          <!-- 醒目大额度黑金渐变卡片（紧凑内衬，突出余额与欠款） -->
+          <div class="member-balance-panel rounded-3xl p-4" :class="{ 'member-balance-debt': selectedMember.balance < 0 }">
+            <div class="text-xs sm:text-sm font-black">{{ selectedMember.balance < 0 ? '客户当前欠款' : '当前可用余额' }}</div>
+            <div class="text-3xl sm:text-4xl font-black tracking-tight mt-1 tabular-nums">
               {{ selectedMember.balance < 0 ? '−' : '' }}¥ {{ formatCent(Math.abs(selectedMember.balance)) }}
             </div>
-            <p v-if="selectedMember.balance < 0" class="mt-2 font-bold">待收回 ¥{{ formatCent(-selectedMember.balance) }}，充值将自动抵扣欠款。</p>
+            <div v-if="selectedMember.balance < 0" class="mt-2 text-xs sm:text-sm font-black text-rose-700 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200 flex items-center space-x-1">
+              <span>⚠️</span>
+              <span>待收回欠款 ¥{{ formatCent(-selectedMember.balance) }}（充值将自动优先结清欠款）</span>
+            </div>
 
-            <div class="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-slate-800/80 text-xs">
+            <div class="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-slate-800/80 text-xs">
               <div>
-                <span class="text-slate-400 font-medium">历史累计储值：</span>
+                <span class="text-slate-400 font-medium">历史累计充值：</span>
                 <span class="font-bold tabular-nums">¥{{ formatCent(selectedMember.total_recharge) }}</span>
               </div>
               <div>
@@ -877,49 +881,55 @@
             </div>
           </div>
 
-          <!-- 发型偏好说明 -->
-          <div v-if="selectedMember.notes" class="bg-amber-50 p-4 rounded-2xl border border-amber-200 text-sm text-amber-900 font-bold">
-            💇 发型习惯偏好：<span class="font-normal">{{ selectedMember.notes }}</span>
+          <!-- 发型偏好说明（理发店重点业务信息，大字醒目暖金色卡片） -->
+          <div v-if="selectedMember.notes" class="bg-amber-50/90 p-3.5 rounded-2xl border-2 border-amber-300 text-amber-950 shadow-xs">
+            <div class="flex items-center space-x-1.5 text-xs font-black text-amber-900 tracking-wide uppercase mb-1">
+              <span class="text-base" aria-hidden="true">💇</span>
+              <span>熟客发型与剪发习惯（重点注意）</span>
+            </div>
+            <div class="text-base font-black text-amber-950 leading-relaxed pl-5 break-words">
+              {{ selectedMember.notes }}
+            </div>
           </div>
 
           <!-- 近期交易明细 -->
           <div>
-            <div class="text-xs font-black uppercase tracking-wider text-slate-500 mb-2.5">
+            <div class="text-xs font-black uppercase tracking-wider text-slate-500 mb-1.5">
               近期消费与充值记录 ({{ currentMemberLedgers.length }})
             </div>
 
-            <div v-if="currentMemberLedgers.length === 0" class="text-sm text-slate-400 py-4 text-center font-bold">
+            <div v-if="currentMemberLedgers.length === 0" class="text-sm text-slate-400 py-3 text-center font-bold">
               暂无历史记录
             </div>
-            <div v-else class="space-y-2.5">
+            <div v-else class="space-y-2">
               <div 
                 v-for="l in currentMemberLedgers" 
                 :key="l.id"
-                class="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex items-center justify-between text-xs"
+                class="bg-slate-50 p-3 rounded-2xl border border-slate-200 flex items-center justify-between text-xs"
               >
-                <div>
-                  <div class="flex items-center space-x-2">
+                <div class="min-w-0 pr-2">
+                  <div class="flex items-center space-x-1.5">
                     <span 
-                      class="px-2 py-0.5 rounded-lg text-[11px] font-black"
+                      class="px-2 py-0.5 rounded-lg text-[11px] font-black shrink-0 whitespace-nowrap"
                       :class="getBadgeClass(l.type)"
                     >
                       {{ getTypeText(l.type) }}
                     </span>
-                    <span class="font-black text-slate-800 text-sm">{{ l.remark || '无' }}</span>
+                    <span class="font-black text-slate-800 text-sm truncate max-w-[150px]">{{ l.remark || '无' }}</span>
                   </div>
-                  <div class="text-slate-400 mt-1 font-medium">
+                  <div class="text-slate-400 mt-1 font-medium whitespace-nowrap">
                     {{ formatTime(l.created_at) }}
                   </div>
                 </div>
 
-                <div class="text-right">
+                <div class="text-right shrink-0">
                   <div 
                     class="font-black tabular-nums text-base"
                     :class="l.changeAmount > 0 ? 'text-emerald-600' : 'text-slate-900'"
                   >
                     {{ l.changeAmount > 0 ? '+' : '' }}{{ (l.changeAmount / 100).toFixed(2) }}
                   </div>
-                  <div class="text-slate-400 font-medium">
+                  <div class="text-slate-400 font-medium whitespace-nowrap">
                     <span :class="{ 'balance-debt': l.balanceAfter < 0 }">{{ l.balanceAfter < 0 ? '欠款' : '余额' }}: ¥{{ formatCent(Math.abs(l.balanceAfter)) }}</span>
                   </div>
                 </div>
@@ -928,7 +938,7 @@
           </div>
 
           <!-- 删除会员 (仅当余额为0时) -->
-          <div v-if="selectedMember.balance === 0" class="pt-2 text-center">
+          <div v-if="selectedMember.balance === 0" class="pt-1 text-center">
             <button 
               @click="handleDeleteMember(selectedMember)"
               :disabled="!canCloudWrite('deleteMember')"
@@ -939,14 +949,14 @@
           </div>
         </div>
 
-        <!-- 底部快捷充值与扣款 (大按钮52px) -->
+        <!-- 底部快捷充值与扣款 (大按钮52px，通俗明白大白话) -->
         <div class="member-detail-actions border-t border-slate-200 bg-white grid grid-cols-2 pb-gesture-safe">
           <button 
             @click="openRechargeModal(selectedMember)"
             :disabled="!canCloudWrite('recharge')"
             class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center space-x-1.5 btn-press"
           >
-            <span class="detail-action-icon" aria-hidden="true">💳</span><span>{{ selectedMember.balance < 0 ? '充值 / 还款' : '额度充值' }}</span>
+            <span class="detail-action-icon" aria-hidden="true">💳</span><span>{{ selectedMember.balance < 0 ? '充值 / 还款' : '充值' }}<span class="sr-only"> (额度充值)</span></span>
           </button>
 
           <button 
@@ -996,7 +1006,7 @@
           </div>
 
           <div v-if="!editingMemberId">
-            <label class="font-black text-slate-800 block mb-1.5">开卡初始储值额 (元，可填0)</label>
+            <label class="font-black text-slate-800 block mb-1.5">开卡充值金额 (元，无充值填0)</label>
             <input 
               v-model.number="memberForm.initialBalance" 
               type="number" 
@@ -1415,8 +1425,14 @@ const filteredLedgersList = computed(() => {
   const query = ledgerSearchQuery.value.trim().toLocaleLowerCase();
   if (!query) return ledgersList.value;
   const digits = query.replace(/\D/g, '');
+  const typeAliases = {
+    RECHARGE: '充值 储值 储值入账 入账',
+    CONSUME: '扣款 剪发 剪发扣款 剪发扣费 消费',
+    REFUND: '撤单 撤销 冲正 撤销冲正 撤销记录'
+  };
   return ledgersList.value.filter(item => {
-    const searchableText = [item.memberName, item.memberPhone, item.remark, getTypeText(item.type)]
+    const alias = typeAliases[item.type] || '';
+    const searchableText = [item.memberName, item.memberPhone, item.remark, getTypeText(item.type), alias]
       .filter(Boolean)
       .join(' ')
       .toLocaleLowerCase();
@@ -1457,9 +1473,9 @@ function formatTime(isoStr) {
 }
 
 function getTypeText(type) {
-  if (type === 'RECHARGE') return '储值入账';
-  if (type === 'CONSUME') return '剪发扣款';
-  if (type === 'REFUND') return '撤销冲正';
+  if (type === 'RECHARGE') return '充值';
+  if (type === 'CONSUME') return '扣款';
+  if (type === 'REFUND') return '撤单';
   return '流水';
 }
 
