@@ -1,7 +1,9 @@
 import { createLocalDb, localDb, configureCloudWrites, STORAGE_KEYS } from './storage.js';
 import { CLOUD_STATE_KEY, canWrite, mutationPrecondition, canonicalJSON, validateOperation, newId } from './sync-protocol.js';
+import { assertLedgerAccess } from './ledger-access.js';
 
 export function getCloudState(storage = globalThis.localStorage) {
+  if (storage === globalThis.localStorage) assertLedgerAccess();
   const raw = storage.getItem(CLOUD_STATE_KEY);
   if (raw === null) return { serverUrl: '', binding: null, user: null, revision: 0, outbox: [], activity: [], status: 'local' };
   const state = JSON.parse(raw);
@@ -12,11 +14,12 @@ export function getCloudState(storage = globalThis.localStorage) {
 }
 
 export function saveCloudState(state, storage = globalThis.localStorage) {
+  if (storage === globalThis.localStorage) assertLedgerAccess();
   storage.setItem(CLOUD_STATE_KEY, JSON.stringify(state));
 }
 
 export function installCloudRecording(onChange = () => {}, { allowLocal = () => true } = {}) {
-  configureCloudWrites((entries, mutation) => {
+  const stopRecording = configureCloudWrites((entries, mutation) => {
     const state = getCloudState();
     if (!state.binding) {
       if (state.user && !canWrite(state.user.role, mutation.method)) throw new Error('当前账号没有此操作权限');
@@ -44,7 +47,7 @@ export function installCloudRecording(onChange = () => {}, { allowLocal = () => 
     const next = { ...state, outbox: [...state.outbox, operation], status: 'pending' };
     return { ...entries, [CLOUD_STATE_KEY]: next };
   }, onChange);
-  return () => configureCloudWrites(null, null);
+  return stopRecording;
 }
 
 export function replayOperation(data, operation) {

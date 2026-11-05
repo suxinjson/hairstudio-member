@@ -2,6 +2,7 @@ import { localDb, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from './storage.js'
 import { getCloudState, saveCloudState, installCloudRecording, replayOperation } from './cloud-storage.js';
 import { CLOUD_STATE_KEY, canonicalJSON, newId, canWrite, mutationPrecondition, validateOperation, selectSyncBatch } from './sync-protocol.js';
 import { DEFAULT_RECHARGE_SETTINGS, normalizeRechargeSettings } from './recharge-settings.js';
+import { assertLedgerAccess, ledgerAccessVersion } from './ledger-access.js';
 
 export function normalizeServerUrl(value) {
   const url = new URL(value);
@@ -26,6 +27,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
   const setState = state => { saveCloudState(state); emit(); };
 
   async function raw(path, body, authorization = accessToken, method = body === undefined ? 'GET' : 'POST') {
+    const accessVersion = ledgerAccessVersion();
     const state = getCloudState();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
@@ -35,6 +37,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: controller.signal, credentials: 'omit', cache: 'no-store', redirect: 'error'
       });
       const result = await response.json();
+      assertLedgerAccess(accessVersion);
       networkUnavailable = false;
       if (!response.ok) { const error = new Error(result.error || '云端请求失败'); error.status = response.status; error.code = result.code; throw error; }
       return result;
@@ -45,9 +48,11 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
   }
 
   async function keepSession(session) {
+    const accessVersion = ledgerAccessVersion();
     accessToken = session.accessToken; refreshToken = session.refreshToken;
     const state = getCloudState();
     await vault.save({ refreshToken, serverUrl: state.serverUrl, userId: session.user.id, storeId: session.user.storeId });
+    assertLedgerAccess(accessVersion);
     // 原生安全存储是异步的，期间新增的记账操作必须保留。
     const current = getCloudState();
     const forbidden = current.outbox.some(operation => !canWrite(session.user.role, operation.method)) ||
@@ -94,7 +99,9 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     return account;
   }
   async function accept(account, acknowledged = [], { bind = false } = {}) {
+    const accessVersion = ledgerAccessVersion();
     await verifyAccount(account);
+    assertLedgerAccess(accessVersion);
     const state = getCloudState();
     if (account.revision < state.revision) throw new Error('云端版本发生回退，本机数据未覆盖');
     const ids = new Set(acknowledged);
@@ -186,11 +193,13 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     async restoreSession() {
       if (restorePromise) return restorePromise;
       restorePromise = (async () => {
+        const accessVersion = ledgerAccessVersion();
         const state = getCloudState();
         if (!state.serverUrl || !state.user) return;
         let saved;
         try { saved = await vault.load(); }
         catch (error) { if (!offlineEnabled()) throw error; }
+        assertLedgerAccess(accessVersion);
         // 读取期间可能主动退出或更换账号，不能恢复旧会话。
         const current = getCloudState();
         if (current.user?.id !== state.user.id || current.serverUrl !== state.serverUrl) return;

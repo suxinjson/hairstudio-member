@@ -83,6 +83,8 @@
           </div>
           <button v-if="hasPending" @click="retryPending" :disabled="isLoading || isSubmittingOperations"
             class="h-9 px-3 bg-amber-100 text-amber-900 rounded-xl text-xs font-bold disabled:opacity-50">继续确认待办</button>
+          <button v-if="adminApi.pendingOperation.value" @click="resolvePending" :disabled="isLoading || isSubmittingOperations"
+            class="h-9 px-3 text-rose-700 rounded-xl text-xs font-bold disabled:opacity-50">核对并取消未入账操作</button>
           <button v-if="pendingImport?.canCancel" @click="cancelRemainingImport" :disabled="isLoading"
             class="h-9 px-3 text-rose-700 rounded-xl text-xs font-bold">取消剩余导入</button>
 
@@ -316,6 +318,17 @@ async function cancelRemainingImport() {
   if (!confirm('已经入库的记录将保留。取消尚未入库的部分后，请重新预检剩余数据。确定继续吗？')) return;
   try { await adminApi.cancelRemainingImport(); await loadAccountData(); }
   catch (error) { alert(error.message); }
+}
+
+async function resolvePending() {
+  if (isSubmittingOperations.value || !confirm('服务器会核对原操作：已入账的保留，未入账的取消。完成后请按最新账本重新核对。确定继续吗？')) return;
+  isSubmittingOperations.value = true;
+  try {
+    const result = await adminApi.resolvePending();
+    activeTab.value = 'dashboard';
+    alert(`已核对：${result.resolved.filter(row => row.status === 'committed').length} 笔已入账，${result.resolved.filter(row => row.status === 'cancelled').length} 笔已取消。${pendingImport.value ? '请取消剩余导入后重新预检。' : '可重新核对后记账。'}`);
+  } catch (error) { alert('原操作核对尚未完成：' + error.message); }
+  finally { isSubmittingOperations.value = false; }
 }
 
 async function handleLogout() {

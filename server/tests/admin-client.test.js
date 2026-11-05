@@ -254,3 +254,114 @@ test('full audit export retries the same cursor after rate limiting instead of t
   };
   const all = await client.getAllActivity(); assert.equal(all.length, 502); assert.equal(calls, 3);
 });
+
+test('resolving an unreceived stale recharge cancels it durably and unblocks replacement accounting', async () => {
+  const data = await seed(), op = recharge(data);
+  client.requestFetch = async () => { throw new Error('request never reached server'); };
+  await assert.rejects(client.sync([op]), /never reached/);
+  client.requestFetch = (path, options) => fetch(url + path, options);
+  const change = buildAdminOperation('consume', [{ memberId: data.members[0].id, amount: 10 }], data, client.identity());
+  await service.sync(identity, [change]);
+  await assert.rejects(client.retryPending(), { status: 409 });
+  const resolved = await client.resolvePending();
+  assert.deepEqual(resolved.resolved, [{ id: op.id, status: 'cancelled' }]);
+  assert.equal(client.hasPending.value, false);
+  assert.equal(client.accountData.value.members[0].balance, 9000);
+  // A delayed original request can never commit after the cancellation.
+  await assert.rejects(service.sync(identity, [op]), { code: 'OPERATION_CANCELLED' });
+  await client.sync([recharge(client.accountData.value)]);
+  assert.equal(client.accountData.value.members[0].balance, 14000);
+});
+
+test('resolution preserves committed transactions and cancels only absent operations in a mixed batch', async () => {
+  const data = await seed(2), first = recharge(data, data.members[0]), second = recharge(data, data.members[1]);
+  await service.sync(identity, [first]);
+  client.requestFetch = async () => { throw new Error('lost request'); };
+  await assert.rejects(client.sync([first, second]), /lost request/);
+  client.requestFetch = (path, options) => fetch(url + path, options);
+  const resolved = await client.resolvePending();
+  assert.deepEqual(resolved.resolved, [{ id: first.id, status: 'committed' }, { id: second.id, status: 'cancelled' }]);
+  assert.equal(client.accountData.value.members.find(m => m.id === data.members[0].id).balance, 15000);
+  assert.equal(client.accountData.value.members.find(m => m.id === data.members[1].id).balance, 10000);
+  assert.deepEqual((await service.resolveOperations(identity, [first, second])).resolved, resolved.resolved);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM audit_events WHERE event='operation_cancelled'")).rows[0].count, 1);
+});
+
+test('a lost resolution response survives reload and retries resolution without resending the original recharge', async () => {
+  const data = await seed(), op = recharge(data); let loseSync = true, loseResolution = true;
+  client.requestFetch = async (path, options) => {
+    if (path === '/api/v1/sync' && loseSync) throw new Error('lost sync request');
+    const response = await fetch(url + path, options);
+    if (path === '/api/v1/sync/resolve' && loseResolution) { await response.clone().json(); throw new Error('lost resolution response'); }
+    return response;
+  };
+  await assert.rejects(client.sync([op]), /lost sync/); loseSync = false;
+  await assert.rejects(client.resolvePending(), /lost resolution/); loseResolution = false;
+  assert.equal(JSON.parse(storage.getItem(client.scopedKey('pending'))).resolving, true);
+  const paths = [], restored = newClient(storage, (path, options) => { paths.push(new URL(path).pathname); return fetch(path, options); });
+  await restored.retryPending();
+  assert.deepEqual(paths, ['/api/v1/sync/resolve']);
+  assert.equal(restored.hasPending.value, false);
+  assert.equal(restored.accountData.value.members[0].balance, 10000);
+  await assert.rejects(service.sync(identity, [op]), { code: 'OPERATION_CANCELLED' });
+});
+
+test('resolution rejects foreign actors or altered original data without cancelling any operations', async () => {
+  const data = await seed(), op = recharge(data);
+  await assert.rejects(service.resolveOperations(identity, JSON.parse(JSON.stringify([op, { ...op, id: randomUUID(), actorId: randomUUID() }]))), { status: 403 });
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM operations WHERE id=$1', [op.id])).rows[0].count, 0);
+  await service.sync(identity, [op]);
+  await assert.rejects(service.resolveOperations(identity, [{ ...op, args: [{ ...op.args[0], actualPay: 60 }] }]), { status: 409 });
+  assert.equal((await service.account(identity)).data.members[0].balance, 15000);
+});
+
+test('uncertain imports can be resolved then safely cancelled without resuming cancelled batch IDs', async () => {
+  const data = await seed();
+  const items = validateImportBatch([[data.members[0].name, data.members[0].phone, '50', '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+  client.requestFetch = async () => { throw new Error('lost import request'); };
+  await assert.rejects(client.executeBatchImport(items, 'merge_balance'), /lost import/);
+  client.requestFetch = (path, options) => fetch(url + path, options);
+  await client.resolvePending();
+  assert.equal(client.pendingImport.value.canCancel, true);
+  await assert.rejects(client.resumeBatchImport(), /已取消/);
+  await client.cancelRemainingImport();
+  assert.equal(client.hasPending.value, false);
+  assert.equal((await service.account(identity)).data.members[0].balance, 10000);
+});
+
+test('a committed import batch advances exactly once if pending removal fails during resolution', async () => {
+  const data = await seed();
+  const items = validateImportBatch([[data.members[0].name, data.members[0].phone, '50', '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+  client.requestFetch = async (path, options) => {
+    const response = await fetch(url + path, options);
+    if (path === '/api/v1/sync') { await response.clone().json(); throw new Error('lost committed import response'); }
+    return response;
+  };
+  await assert.rejects(client.executeBatchImport(items, 'merge_balance'), /lost committed/);
+  const remove = storage.removeItem.bind(storage); let failRemoval = true;
+  storage.removeItem = key => {
+    if (key === client.scopedKey('pending') && failRemoval) { failRemoval = false; throw new Error('pending removal interrupted'); }
+    remove(key);
+  };
+  await assert.rejects(client.resolvePending(), /interrupted/);
+  const restored = newClient(storage);
+  await restored.retryPending();
+  const job = JSON.parse(storage.getItem(restored.scopedKey('import')));
+  assert.equal(job.count, 1); assert.equal(job.cursor, 1);
+  await restored.resumeBatchImport();
+  assert.equal(restored.hasPending.value, false);
+  assert.equal(restored.accountData.value.members[0].balance, 15000);
+});
+
+test('failed resolution persistence sends no cancellation request and keeps the original operation', async () => {
+  const data = await seed(), op = recharge(data);
+  client.requestFetch = async () => { throw new Error('lost request'); };
+  await assert.rejects(client.sync([op]), /lost request/);
+  let requests = 0;
+  client.requestFetch = async () => { requests++; throw new Error('must not send'); };
+  storage.failPending = true;
+  await assert.rejects(client.resolvePending(), /quota exceeded/);
+  assert.equal(requests, 0);
+  const pending = JSON.parse(storage.getItem(client.scopedKey('pending')));
+  assert.equal(pending.operations[0].id, op.id); assert.equal(pending.resolving, undefined);
+});

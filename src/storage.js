@@ -3,6 +3,7 @@ import { moneyToCent } from './money.js';
 import { normalizeRechargeSettings } from './recharge-settings.js';
 import { DATA_LIMITS, byteLength, assertJsonBudget, assertAccountLimits, validateMutationArgs, DataLimitError } from './data-limits.js';
 import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones, normalizeMemberPhone } from './accounting.js';
+import { assertLedgerAccess } from './ledger-access.js';
 
 export const STORAGE_KEYS = {
   MEMBERS: 'hairstudio_members_v2',
@@ -14,6 +15,7 @@ export const STORAGE_KEYS = {
   SAFETY_SNAPSHOT: 'hairstudio_pre_restore_safety_snapshot'
 };
 const PENDING_WRITE_KEY = 'hairstudio_pending_write_v1';
+const activeStorageAccess = new WeakMap();
 
 // 默认理发店常用服务项目
 export const DEFAULT_SERVICES = [
@@ -1050,16 +1052,33 @@ for (const method of ['createMember', 'updateMember', 'deleteMember', 'recharge'
     try { return implementation.apply(this, args); } finally { mutation = null; }
   };
 }
+// Distinct databases in one runtime must not recover each other's live journal.
+// Browser runtimes are additionally serialized by the page's Web Lock.
+for (const method of Object.keys(db)) {
+  const implementation = db[method];
+  db[method] = function (...args) {
+    const owner = localStorage && activeStorageAccess.get(localStorage);
+    if (owner && owner !== db) throw Object.assign(new Error('账本正在记账，请稍后重试'), { code: 'LEDGER_BUSY' });
+    if (localStorage && !owner) activeStorageAccess.set(localStorage, db);
+    try { return implementation.apply(this, args); }
+    finally { if (localStorage && !owner) activeStorageAccess.delete(localStorage); }
+  };
+}
 return db;
 }
 
 const currentStorage = Object.fromEntries(['getItem', 'setItem', 'removeItem'].map(method =>
-  [method, (...args) => globalThis.localStorage[method](...args)]));
+  [method, (...args) => { assertLedgerAccess(); return globalThis.localStorage[method](...args); }]));
 let writeInterceptor = null;
 let writeListener = null;
 export function configureCloudWrites(beforeWrite, afterWrite) {
   writeInterceptor = beforeWrite;
   writeListener = afterWrite;
+  return () => {
+    if (writeInterceptor === beforeWrite && writeListener === afterWrite) {
+      writeInterceptor = null; writeListener = null;
+    }
+  };
 }
 export const localDb = createLocalDb(currentStorage, {
   beforeWrite: (entries, operation) => writeInterceptor?.(entries, operation) || entries,

@@ -173,6 +173,7 @@ export function createService(pool) {
           const { rows: [existing] } = await client.query('SELECT * FROM operations WHERE store_id=$1 AND id=$2', [user.store_id, operation.id]);
           if (existing) {
             if (existing.request_hash !== hash || existing.user_id !== user.id) throw new ApiError(409, '同一同步单号对应不同操作', 'SYNC_CONFLICT');
+            if (existing.result?.cancelled === true) throw new ApiError(409, '此操作已取消，请重新核对后记账', 'OPERATION_CANCELLED');
             continue;
           }
           let applied;
@@ -186,6 +187,34 @@ export function createService(pool) {
         const checksum = integrity(data);
         await client.query('UPDATE accounts SET data=$1,revision=$2,integrity=$3 WHERE store_id=$4', [data, revision, checksum, user.store_id]);
         return { data, revision, integrity: checksum, acknowledged: operations.map(op => op.id) };
+      });
+    },
+    async resolveOperations(identity, operations) {
+      if (!Array.isArray(operations) || !operations.length || operations.length > 100 ||
+          new Set(operations.map(op => op?.id)).size !== operations.length) throw new ApiError(400, '待确认操作格式无效');
+      try {
+        assertJsonBudget(operations, DATA_LIMITS.syncBytes);
+        operations.forEach(validateOperation);
+      } catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
+      return transaction(pool, async client => {
+        const user = await lockedUser(client, identity);
+        // The same account lock used by sync fences requests still in flight.
+        const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
+        if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败', 'INTEGRITY_FAILED');
+        const resolved = [];
+        for (const operation of operations) {
+          if (operation.actorId !== user.id || operation.deviceId !== user.device_id) throw new ApiError(403, '操作账号或设备不匹配', 'FORBIDDEN');
+          const hash = integrity(operation);
+          const { rows: [existing] } = await client.query('SELECT * FROM operations WHERE store_id=$1 AND id=$2', [user.store_id, operation.id]);
+          if (existing && (existing.request_hash !== hash || existing.user_id !== user.id)) throw new ApiError(409, '同一同步单号对应不同操作', 'SYNC_CONFLICT');
+          if (!existing) {
+            await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+              [user.store_id, operation.id, user.id, user.device_id, operation.method, hash, { cancelled: true }, account.revision]);
+            await audit(client, user, 'operation_cancelled', { operationId: operation.id, method: operation.method });
+          }
+          resolved.push({ id: operation.id, status: !existing || existing.result?.cancelled === true ? 'cancelled' : 'committed' });
+        }
+        return { data: account.data, revision: account.revision, integrity: account.integrity, resolved };
       });
     },
     async users(identity) {

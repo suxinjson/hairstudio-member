@@ -1264,6 +1264,22 @@ test('PostgreSQL concurrent changes to independent members both commit', { skip:
   assert.equal(committed.revision, 4);
 });
 
+test('PostgreSQL resolution fences an in-flight original transaction without duplicate accounting', { skip: !process.env.MEMBER_TEST_DATABASE_URL }, async () => {
+  const account = await initialAccount();
+  const op = operation(account.data, owner, 'recharge', [{ memberId: account.member.id, actualPay: 50 }]).operation;
+  const [synced, resolved] = await Promise.allSettled([service.sync(owner.identity, [op]), service.resolveOperations(owner.identity, [op])]);
+  assert.equal(resolved.status, 'fulfilled');
+  const status = resolved.value.resolved[0].status;
+  const next = await service.account(owner.identity);
+  if (status === 'committed') {
+    assert.equal(synced.status, 'fulfilled'); assert.equal(next.data.members[0].balance, 15000);
+  } else {
+    assert.equal(status, 'cancelled'); assert.equal(synced.status, 'rejected');
+    assert.equal(synced.reason.code, 'OPERATION_CANCELLED'); assert.equal(next.data.members[0].balance, 10000);
+  }
+  assert.deepEqual((await service.resolveOperations(owner.identity, [op])).resolved, resolved.value.resolved);
+});
+
 test('PostgreSQL a recovered snapshot and a competing charge cannot overwrite each other', { skip: !process.env.MEMBER_TEST_DATABASE_URL }, async () => {
   const account = await initialAccount(), other = await login('owner');
   const recovered = operation(account.data, owner, 'consume', [{ memberId: account.member.id, amount: 10 }]).data;

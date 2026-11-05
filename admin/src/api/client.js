@@ -19,7 +19,7 @@ export class AdminApiClient {
     this.idleExpiresAt = ref(null);
     this.accountData = ref(null); this.accountRevision = ref(0);
     this.accountStatus = ref('idle'); this.accountError = ref('');
-    this.hasPending = ref(false); this.pendingImport = ref(null); this.importing = ref(false);
+    this.hasPending = ref(false); this.pendingOperation = ref(false); this.pendingImport = ref(null); this.importing = ref(false);
     this.generation = 0; this.loadSequence = 0; this.applyingSession = false; this.refreshPromise = null;
     this.lockSignals = new Set();
     this.deviceId = this.getOrCreateDeviceId(); this.isLocked = this.createLockedRef(); this.restoreSession();
@@ -119,11 +119,12 @@ export class AdminApiClient {
   }
 
   readPending() {
-    if (!this.user.value) { this.hasPending.value = false; this.pendingImport.value = null; return; }
+    if (!this.user.value) { this.hasPending.value = false; this.pendingOperation.value = false; this.pendingImport.value = null; return; }
     try {
       const job = JSON.parse(this.storage.getItem(this.scopedKey('import')) || 'null');
       this.pendingImport.value = job?.status === 'pending' ? { count: job.count, total: job.total, canCancel: Boolean(job.canCancel) } : null;
-      this.hasPending.value = Boolean(this.storage.getItem(this.scopedKey('pending')) || this.pendingImport.value);
+      this.pendingOperation.value = Boolean(this.storage.getItem(this.scopedKey('pending')));
+      this.hasPending.value = Boolean(this.pendingOperation.value || this.pendingImport.value);
     } catch {
       this.hasPending.value = true; this.accountStatus.value = 'error'; this.accountError.value = '待确认记录损坏，请保留浏览器数据并联系管理员';
     }
@@ -253,6 +254,7 @@ export class AdminApiClient {
       if (!operations.length || selectSyncBatch(operations).length !== operations.length) throw new Error('操作批次超过单次同步容量');
       let pending = JSON.parse(this.storage.getItem(key) || 'null');
       const retrying = Boolean(pending);
+      if (pending?.resolving) throw new Error('正在确认并取消原操作，请先继续确认待办');
       if (pending && canonicalJSON(pending.operations) !== canonicalJSON(operations)) throw new Error('存在待确认操作，请先重试原操作');
       // A reload can interrupt any sent request before its response is handled.
       // Existing pending IDs, including legacy uncertain:false records, remain uncertain.
@@ -281,9 +283,48 @@ export class AdminApiClient {
 
   async retryPending(onProgress) {
     this.restoreSession();
-    if (this.pendingImport.value) return this.resumeBatchImport(onProgress);
     const pending = JSON.parse(this.storage.getItem(this.scopedKey('pending')) || 'null');
+    if (pending?.resolving) return this.resolvePending();
+    if (this.pendingImport.value) return this.resumeBatchImport(onProgress);
     if (pending) return this.sync(pending.operations);
+  }
+
+  async resolvePending() {
+    this.restoreSession();
+    const generation = this.generation, key = this.scopedKey('pending');
+    return this.lock('import', () => this.lock('writes', async () => {
+      this.assertSession(generation);
+      if (this.isLocked.value) throw new Error('请先解锁工作台');
+      const pending = JSON.parse(this.storage.getItem(key) || 'null');
+      if (!pending?.operations?.length) throw new Error('没有待确认的财务操作');
+      pending.operations.forEach(validateOperation);
+      // Resolution is itself durable and idempotent; a lost response must never
+      // resume the original sync request or drop its IDs without confirmation.
+      this.storage.setItem(key, JSON.stringify({ ...pending, resolving: true }));
+      this.readPending(); this.loadSequence++;
+      this.accountStatus.value = 'saving'; this.accountError.value = '';
+      try {
+        const response = await this.request('/api/v1/sync/resolve', { method: 'POST', body: JSON.stringify({ operations: pending.operations }) });
+        if (!Array.isArray(response.resolved) || canonicalJSON(response.resolved.map(row => row.id)) !== canonicalJSON(pending.operations.map(op => op.id)) ||
+            response.resolved.some(row => !['committed', 'cancelled'].includes(row.status))) throw new Error('云端操作确认结果无效，原操作已保留');
+        await this.acceptAccount(response, generation);
+        // Save import state before clearing the original pending batch, so a
+        // storage failure or reload can safely repeat resolution.
+        const importKey = this.scopedKey('import'), job = JSON.parse(this.storage.getItem(importKey) || 'null');
+        const resolutionIds = pending.operations.map(op => op.id);
+        if (job?.status === 'pending' && canonicalJSON(job.resolutionIds) !== canonicalJSON(resolutionIds)) {
+          const committed = response.resolved.every(row => row.status === 'committed');
+          this.storage.setItem(importKey, JSON.stringify({ ...job, canCancel: true, resolvedBatch: !committed, resolutionIds,
+            ...(committed ? { cursor: job.cursor + 1, count: job.count + job.batches[job.cursor].count } : {}) }));
+        }
+        this.storage.removeItem(key); this.readPending();
+        this.accountStatus.value = this.hasPending.value ? 'pending' : 'synced';
+        return response;
+      } catch (error) {
+        if (generation === this.generation) { this.readPending(); this.accountStatus.value = 'error'; this.accountError.value = error.message; }
+        throw error;
+      }
+    }));
   }
 
   getUsers() { return this.request('/api/v1/users'); }
@@ -394,6 +435,7 @@ export class AdminApiClient {
   }
 
   async runImport(job, key, generation, onProgress) {
+    if (job.resolvedBatch) throw new Error('原批次的未入账操作已取消，请取消剩余导入后重新预检');
     this.importing.value = true; this.readPending();
     try {
       while (job.cursor < job.batches.length) {

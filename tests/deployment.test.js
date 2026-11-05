@@ -245,7 +245,7 @@ test('temporary HTTPS failures recover before an APK is published', { skip: !bas
 
 test('the workflow deployment archive builds its Docker frontend without an Android project or preexisting files', { skip: !bashAvailable }, async t => {
   const directory = await fixture(t);
-  for (const name of ['admin', 'server', 'src', 'deploy', 'Dockerfile', 'compose.yaml', 'package.json', 'package-lock.json', 'capacitor.config.json', 'index.html', 'vite.config.js', '.dockerignore']) {
+  for (const name of ['admin', 'server', 'src', 'deploy', 'Dockerfile', 'compose.yaml', 'package.json', 'package-lock.json', 'capacitor.config.json', 'index.html', 'vite.config.js', '.dockerignore', 'vendor']) {
     await cp(join(root, name), join(directory, name), { recursive: true });
   }
   await mkdir(join(directory, 'output_apk'));
@@ -281,4 +281,18 @@ test('the workflow deployment archive builds its Docker frontend without an Andr
   assert.equal(built.status, 0, built.stdout + built.stderr);
   const html = await readFile(join(unpacked, 'dist/index.html'), 'utf8');
   assert.match(html, /<script[^>]+src="\/assets\//);
+});
+
+test('the API Docker stage includes every relative source dependency of its copied modules', async () => {
+  const dockerfile = await readFile(new URL('../Dockerfile', import.meta.url), 'utf8');
+  const sources = [...dockerfile.matchAll(/^COPY (src\/[^\r\n]+) \.\/src\/$/gm)]
+    .flatMap(match => match[1].split(/\s+/));
+  assert.ok(sources.length);
+  const copied = new Set(sources.map(source => new URL('../' + source, import.meta.url).href));
+  for (const module of copied) {
+    const contents = await readFile(new URL(module), 'utf8');
+    for (const dependency of contents.matchAll(/from ['"](\.[^'"]+)['"]/g)) {
+      assert.ok(copied.has(new URL(dependency[1], module).href), `${module} requires an uncopied runtime dependency: ${dependency[1]}`);
+    }
+  }
 });

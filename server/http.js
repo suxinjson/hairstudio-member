@@ -47,7 +47,7 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       const url = new URL(request.url, 'http://internal');
       const path = url.pathname;
       const route = request.method + ' ' + path;
-      const heavy = /^(GET|POST) \/api\/v1\/(account(?:\/head|\/bootstrap)?|sync)$/.test(route);
+      const heavy = /^(GET|POST) \/api\/v1\/(account(?:\/head|\/bootstrap)?|sync(?:\/resolve)?)$/.test(route);
       release = guard.enter(heavy ? 'account' : null, 2);
       guard.take('ip:' + ip, 180);
       const origin = request.headers.origin;
@@ -86,6 +86,9 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
         const input = await body(request, current.role === 'owner' ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes);
         if (input.operations?.some?.(op => op?.method === 'importBackupData')) guard.take('restore:' + identity.id, 3);
         return send(200, await service.sync(identity, input.operations));
+      }
+      if (route === 'POST /api/v1/sync/resolve') {
+        return send(200, await service.resolveOperations(identity, (await body(request, DATA_LIMITS.syncBytes)).operations));
       }
       if (route === 'GET /api/v1/users') return send(200, await service.users(identity));
       if (route === 'POST /api/v1/users') {

@@ -55,6 +55,23 @@ beforeEach(t => {
   t.mock.method(adminApi, 'getAccount', async () => ({ data, revision: 1, integrity: integrity(data) }));
 });
 afterEach(() => { app?.unmount(); app = null; });
+
+test('the pending operation resolution action confirms, waits, and clears the blocked workspace', async t => {
+  const pending = deferred(); let calls = 0;
+  const pendingKey = adminApi.scopedKey('pending');
+  localStorage.setItem(pendingKey, JSON.stringify({ operations: [{ id: 'original' }], uncertain: true }));
+  adminApi.readPending();
+  t.mock.method(adminApi, 'resolvePending', async () => {
+    calls++; const result = await pending.promise;
+    localStorage.removeItem(pendingKey); adminApi.readPending();
+    return result;
+  });
+  await mount();
+  button('核对并取消未入账操作').click(); await flush();
+  assert.equal(calls, 1); assert.equal(button('核对并取消未入账操作').disabled, true);
+  pending.resolve({ resolved: [{ id: 'original', status: 'cancelled' }] }); await flush();
+  assert.equal(document.body.textContent.includes('核对并取消未入账操作'), false);
+});
 after(async () => {
   adminApi.dispose(); dom.window.close();
   assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep));
