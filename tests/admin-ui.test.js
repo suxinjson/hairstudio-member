@@ -94,6 +94,19 @@ test('service save waits for confirmation and keeps the editor open while saving
   pending.resolve({ success: true }); await flush(); assert.equal(document.querySelector('input[type="text"]'), null);
 });
 
+test('admin recharge plans follow the current gift policy and update when it changes', async () => {
+  await mount(); button('服务与卡项').click(); await nextTick();
+  assert.ok(document.body.textContent.includes('送 ¥50.00'));
+  assert.equal(document.body.textContent.includes('送 ¥80'), false);
+  adminApi.accountData.value = { ...data, rechargeSettings: { giftEnabled: true, giftRate: 12.5 } };
+  await nextTick();
+  assert.ok(document.body.textContent.includes('送 ¥62.50'));
+  adminApi.accountData.value = { ...data, rechargeSettings: { giftEnabled: false, giftRate: 12.5 } };
+  await nextTick();
+  assert.ok(document.body.textContent.includes('充值赠送已关闭'));
+  assert.equal(document.body.textContent.includes('送 ¥'), false);
+});
+
 test('refund debt is displayed and requires an explicit checkbox before an operation can be submitted', async () => {
   data.members[0].balance = 2000;
   const ledger = { id: 'ledger-A', memberId: 'member-A', memberName: data.members[0].name, type: 'RECHARGE', changeAmount: 10000,

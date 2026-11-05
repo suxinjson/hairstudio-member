@@ -42,19 +42,19 @@
       <div class="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
         <div>
           <h3 class="font-black text-slate-900 text-base">🎁 储值卡充值赠送档位方案</h3>
-          <p class="text-xs text-slate-400 mt-0.5">前台会员充值时一键选择的实付与赠送配比</p>
+          <p class="text-xs text-slate-400 mt-0.5">{{ rechargePolicy.giftEnabled ? `按当前 ${rechargePolicy.giftRate}% 规则计算赠送，充值时可手动调整` : '当前充值赠送已关闭' }}</p>
         </div>
       </div>
 
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div
-          v-for="p in rechargePlans"
+          v-for="p in displayRechargePlans"
           :key="`${p.pay}_${p.gift}`"
           class="p-4 rounded-2xl border border-emerald-100 bg-emerald-50/40 text-center"
         >
           <div class="text-xs text-slate-500 font-bold">充值档位</div>
           <div class="text-xl font-black text-slate-900 mt-1">¥{{ p.pay }}</div>
-          <div class="text-xs font-black text-emerald-700 mt-1">
+          <div v-if="rechargePolicy.giftEnabled" class="text-xs font-black text-emerald-700 mt-1">
             送 ¥{{ p.gift }}
           </div>
         </div>
@@ -109,14 +109,21 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useOperationSubmission } from '../composables/useOperationSubmission.js';
+import { DEFAULT_RECHARGE_SETTINGS, normalizeRechargeSettings, rechargeGiftCent } from '../../../src/recharge-settings.js';
 
 const props = defineProps({
   services: { type: Array, default: () => [] },
   rechargePlans: { type: Array, default: () => [] },
+  rechargeSettings: { type: Object, default: () => ({ ...DEFAULT_RECHARGE_SETTINGS }) },
   submitOperations: { type: Function, required: true }
 });
+
+const rechargePolicy = computed(() => normalizeRechargeSettings(props.rechargeSettings));
+const displayRechargePlans = computed(() => props.rechargePlans.map(plan => ({
+  ...plan, gift: (rechargeGiftCent(plan.pay, rechargePolicy.value) / 100).toFixed(2)
+})));
 
 const submitOperation = useOperationSubmission(operations => props.submitOperations(operations));
 const isSubmitting = ref(false);

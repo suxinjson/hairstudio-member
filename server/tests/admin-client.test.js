@@ -69,6 +69,41 @@ test('a committed recharge with a lost response survives reload and retries its 
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 1);
 });
 
+for (const status of [429, 403, 409]) {
+  test(`a reload before recharge response handling retains its original ID after retry rejection ${status}`, async () => {
+    const data = await seed(), op = recharge(data);
+    let restoredStorage;
+    client.requestFetch = async (path, options) => {
+      const response = await fetch(url + path, options);
+      await response.clone().json();
+      // Capture the durable state before the disappearing page can handle a response/error.
+      const saved = JSON.parse(storage.getItem(client.scopedKey('pending')));
+      assert.equal(saved.uncertain, true);
+      restoredStorage = new MemoryStorage(); restoredStorage.values = new Map(storage.values);
+      // Upgrades must also retain older pending records interrupted with uncertain:false.
+      if (status === 429) restoredStorage.setItem(client.scopedKey('pending'), JSON.stringify({ ...saved, uncertain: false }));
+      throw new Error('page destroyed before response handling');
+    };
+    await assert.rejects(client.sync([op]), /page destroyed/);
+    let rejectRetry = true;
+    const restored = newClient(restoredStorage, async (path, options) => {
+      if (path.endsWith('/sync') && rejectRetry) return new Response(JSON.stringify({ error: 'retry rejected' }), { status });
+      return fetch(path, options);
+    });
+    await restored.getAccount();
+    assert.equal(restored.accountData.value.members[0].balance, 15000);
+    await assert.rejects(restored.retryPending(), { status });
+    assert.equal(restored.hasPending.value, true);
+    assert.equal(JSON.parse(restoredStorage.getItem(restored.scopedKey('pending'))).operations[0].id, op.id);
+    await assert.rejects(restored.sync([recharge(restored.accountData.value)]), /待确认操作/);
+    rejectRetry = false;
+    await restored.retryPending();
+    assert.equal(restored.hasPending.value, false);
+    assert.equal(restored.accountData.value.members[0].balance, 15000);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 1);
+  });
+}
+
 test('batch progress and the unacknowledged final chunk survive refresh without repeating earlier credits', async () => {
   const data = await seed(51);
   const items = validateImportBatch(data.members.map(member => [member.name, member.phone, '50', '0']), mapping, data.members, { conflictStrategy: 'merge_balance' }).results;

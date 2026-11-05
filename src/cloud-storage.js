@@ -15,10 +15,14 @@ export function saveCloudState(state, storage = globalThis.localStorage) {
   storage.setItem(CLOUD_STATE_KEY, JSON.stringify(state));
 }
 
-export function installCloudRecording(onChange = () => {}) {
+export function installCloudRecording(onChange = () => {}, { allowLocal = () => true } = {}) {
   configureCloudWrites((entries, mutation) => {
     const state = getCloudState();
-    if (!state.binding) return entries;
+    if (!state.binding) {
+      if (state.user && !canWrite(state.user.role, mutation.method)) throw new Error('当前账号没有此操作权限');
+      if (!allowLocal()) throw new Error('请先登录并完成云端账本加载与绑定，再进行记账');
+      return entries;
+    }
     if (!state.user) throw new Error('请先登录已绑定的云端账号');
     if (!canWrite(state.user.role, mutation.method)) throw new Error('当前账号没有此操作权限');
     let current;

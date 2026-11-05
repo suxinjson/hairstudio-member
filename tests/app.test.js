@@ -205,7 +205,7 @@ test('external export succeeds with an explicit warning when its optional local 
   assert.equal(document.body.textContent.includes('备份导出失败'), false);
 });
 
-test('the recharge form accepts decimals and credits the exact confirmed total', async () => {
+test('the recharge form accepts decimals and credits the exact confirmed total', async t => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111' });
   await mount();
   document.querySelector('.customer-open').click(); await nextTick();
@@ -222,6 +222,22 @@ test('the recharge form accepts decimals and credits the exact confirmed total',
   button('确认充值').click();
   await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, 2006);
+  // The receipt uses the real clipboard contract: success resolves without a value.
+  t.mock.method(Capacitor, 'isNativePlatform', () => false);
+  let copied, denied = false;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => {
+    if (denied) throw new Error('剪贴板访问被拒绝');
+    copied = text;
+  } } });
+  t.after(() => { delete navigator.clipboard; });
+  button('一键复制致谢文案').click();
+  await new Promise(resolve => setImmediate(resolve)); await nextTick();
+  assert.ok(copied.includes('20.06'));
+  assert.ok(document.body.textContent.includes('通知文本已复制到剪贴板'));
+  denied = true;
+  button('一键复制致谢文案').click();
+  await new Promise(resolve => setImmediate(resolve)); await nextTick();
+  assert.ok(document.body.textContent.includes('剪贴板访问被拒绝'));
 });
 
 async function openRecharge() {
@@ -463,6 +479,29 @@ test('browser use requires login even before a device is cloud-bound', async () 
   assert.equal(document.body.textContent.includes('服务器地址'), false);
   assert.equal(document.body.textContent.includes('网页端隐藏会员'), false);
   assert.equal(document.querySelector('nav'), null);
+});
+
+test('browser login identity without a bound ledger keeps customers and business navigation hidden', async t => {
+  Capacitor.isNativePlatform = () => false;
+  localDb.createMember({ name: '未加载账本私密会员', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('viewer', t);
+  saveCloudState({ ...getCloudState(), binding: null, status: 'needs-choice' });
+  await mount();
+  assert.equal(document.querySelector('.customer-row'), null);
+  assert.equal(document.querySelector('nav'), null);
+  assert.ok(document.body.textContent.includes('采用云端账本'));
+  assert.throws(() => localDb.recharge({ memberId: localDb.getMembers()[0].id, actualPay: 50 }), /权限|绑定/);
+});
+
+test('an unbound native viewer can read the local ledger but cannot change it', async t => {
+  const member = localDb.createMember({ name: '本机会员', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('viewer', t);
+  saveCloudState({ ...getCloudState(), binding: null, status: 'needs-choice' });
+  await mount();
+  assert.ok(document.body.textContent.includes('本机会员'));
+  assert.equal(button('扣款').disabled, true);
+  assert.throws(() => localDb.recharge({ memberId: member.id, actualPay: 50 }), /权限/);
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
 });
 
 test('cashier starts with quick actions and the daily summary has a separate ledger tab', async () => {

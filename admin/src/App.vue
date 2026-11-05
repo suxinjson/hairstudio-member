@@ -145,6 +145,7 @@
           v-else-if="activeTab === 'services'"
           :services="services"
           :recharge-plans="rechargePlans"
+          :recharge-settings="accountData.rechargeSettings"
           :submit-operations="handleSyncOperations"
         />
 

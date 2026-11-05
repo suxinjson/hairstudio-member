@@ -360,7 +360,7 @@ const storageError = ref('');
 const selectedMember = ref(null);
 const receiptModal = ref(null);
 const cloudState = ref(cloudClient.snapshot());
-const cloudLocked = computed(() => !isNativeApp && !cloudState.value.user);
+const cloudLocked = computed(() => !isNativeApp && (!cloudState.value.user || !cloudState.value.binding));
 
 const rechargeChannels = [
   { value: '微信支付', label: '微信支付' },
@@ -625,7 +625,7 @@ const compactConnectionLabel = computed(() => {
 });
 const stopCloudSubscription = cloudClient.subscribe((state) => {
   cloudState.value = state;
-  if (!state.user && !isNativeApp) {
+  if (!isNativeApp && (!state.user || !state.binding)) {
     activeTab.value = 'settings';
     selectedMember.value = null;
     consumingMember.value = null;
@@ -637,7 +637,9 @@ const stopCloudSubscription = cloudClient.subscribe((state) => {
   }
 });
 function canCloudWrite(method) {
-  return !cloudState.value.binding || canWrite(cloudState.value.user?.role, method);
+  const state = cloudState.value;
+  if (!state.binding) return isNativeApp && (!state.user || canWrite(state.user.role, method));
+  return canWrite(state.user?.role, method);
 }
 
 const currentMemberLedgers = computed(() => {
@@ -670,8 +672,12 @@ async function copyMemberField(text, label) {
 }
 async function copyReceiptText(text) {
   if (!text) return;
-  const ok = await copyToClipboard(text);
-  showToast(ok ? '通知文本已复制到剪贴板，可发给微信好友！' : '复制失败，请长按文本复制');
+  try {
+    await copyToClipboard(text);
+    showToast('通知文本已复制到剪贴板，可发给微信好友！');
+  } catch (error) {
+    showToast(error.message || '复制失败，请长按文本复制');
+  }
 }
 function handleContextMenu(event) {
   if (!event.target.closest('input:not([type="file"]), textarea')) event.preventDefault();

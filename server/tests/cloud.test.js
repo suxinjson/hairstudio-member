@@ -260,6 +260,65 @@ for (const field of ['services', 'rechargePlans']) {
   }
 }
 
+for (const role of ['owner', 'clerk', 'viewer']) {
+  test(`first browser login keeps ${role} writes blocked through account loading, failure and ledger choice`, async () => {
+    await initialAccount();
+    const username = role === 'owner' ? 'owner' : role;
+    if (role !== 'owner') await service.createUser(owner.identity, { username, password, displayName: role, role });
+    const member = localDb.createMember({ name: '未绑定本机会员', phone: '13900002222', initialBalance: 20 });
+    const original = localDb.readBackupState();
+    let loading, release, failAccount = true;
+    const started = new Promise(resolve => { loading = resolve; });
+    const barrier = new Promise(resolve => { release = resolve; });
+    const client = createCloudClient({ isOnline: () => false, fetch: async (input, options) => {
+      if (input.endsWith('/account') && failAccount) {
+        loading(); await barrier;
+        return new Response(JSON.stringify({ error: '账本暂时不可用' }), { status: 503 });
+      }
+      return fetch(input, options);
+    } });
+    stopClient = await client.start();
+    const rejected = assert.rejects(client.login(url, username, password), { status: 503 });
+    await started;
+    assert.equal(getCloudState().user.role, role);
+    assert.equal(getCloudState().binding, null);
+    assert.throws(() => localDb.recharge({ memberId: member.id, actualPay: 50 }), /权限|绑定/);
+    release(); await rejected;
+    assert.throws(() => localDb.createMember({ name: '不能建档', phone: '13700003333' }), /权限|绑定/);
+    assert.deepEqual(localDb.readBackupState(), original);
+    assert.equal(getCloudState().outbox.length, 0);
+    failAccount = false;
+    await client.login(url, username, password);
+    assert.equal(getCloudState().status, 'needs-choice');
+    assert.throws(() => localDb.recharge({ memberId: member.id, actualPay: 50 }), /权限|绑定/);
+    await client.useCloudLedger();
+    assert.equal(getCloudState().binding.storeId, owner.user.storeId);
+    const cloudMember = localDb.getMembers()[0];
+    if (role === 'viewer') assert.throws(() => localDb.recharge({ memberId: cloudMember.id, actualPay: 50 }), /权限/);
+    else {
+      localDb.recharge({ memberId: cloudMember.id, actualPay: 50 });
+      assert.equal(localDb.getMemberById(cloudMember.id).balance, 15000);
+      assert.equal(getCloudState().outbox.length, 1);
+    }
+  });
+}
+
+test('first browser binding is committed with the ledger and remains locked after a failed local write', async t => {
+  t.mock.method(console, 'error', () => {});
+  await initialAccount();
+  const client = createCloudClient({ fetch, isOnline: () => false });
+  stopClient = await client.start();
+  const original = localDb.readBackupState();
+  localStorage.failKey = STORAGE_KEYS.MEMBERS; localStorage.failOnce = true;
+  await assert.rejects(client.login(url, 'owner', password), /写入失败/);
+  assert.equal(getCloudState().binding, null);
+  assert.deepEqual(localDb.readBackupState(), original);
+  assert.throws(() => localDb.createMember({ name: '不能建档', phone: '13900002222' }), /绑定/);
+  await client.login(url, 'owner', password);
+  assert.equal(getCloudState().binding.storeId, owner.user.storeId);
+  assert.equal(localDb.getMembers()[0].balance, 10000);
+});
+
 for (const status of ['pending', 'conflict']) {
   test(`a browser restart requires login without losing its ${status} ledger or operations`, async () => {
     const account = await initialAccount();

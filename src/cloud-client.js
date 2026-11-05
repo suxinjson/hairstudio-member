@@ -93,7 +93,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     account.data = localDb.parseAndValidateBackup(JSON.stringify({ data: account.data })).data;
     return account;
   }
-  async function accept(account, acknowledged = []) {
+  async function accept(account, acknowledged = [], { bind = false } = {}) {
     await verifyAccount(account);
     const state = getCloudState();
     if (account.revision < state.revision) throw new Error('云端版本发生回退，本机数据未覆盖');
@@ -105,7 +105,8 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       setState({ ...state, revision: account.revision, outbox: pending, remoteConflict: account, status: 'conflict' });
       throw error;
     }
-    localDb.applyCloudSnapshot(data, CLOUD_STATE_KEY, { ...state, revision: account.revision, outbox: pending, bootstrap: null,
+    localDb.applyCloudSnapshot(data, CLOUD_STATE_KEY, { ...state, binding: bind ? { storeId: state.user.storeId } : state.binding,
+      revision: account.revision, outbox: pending, bootstrap: null,
       remoteConflict: null, conflictReason: null, status: pending.length ? 'pending' : 'synced', lastSync: clock() });
     onData(); emit();
   }
@@ -176,8 +177,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
           canonicalJSON(local.rechargePlans) !== canonicalJSON(DEFAULT_RECHARGE_PLANS) ||
           canonicalJSON(normalizeRechargeSettings(local.rechargeSettings)) !== canonicalJSON(DEFAULT_RECHARGE_SETTINGS);
         if (!local.members.length && !local.ledgers.length && !hasCustomSettings) {
-          setState({ ...getCloudState(), binding: { storeId: session.user.storeId }, status: 'synced' });
-          await accept(remote);
+          await accept(remote, [], { bind: true });
         } else {
           setState({ ...getCloudState(), status: remote.revision === 0 && !remote.data.members.length && session.user.role === 'owner' ? 'needs-bootstrap' : 'needs-choice' });
         }
@@ -310,7 +310,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     request,
     async downloadAuthorization() { await refreshSession(); return accessToken; },
     async start() {
-      const stopRecording = installCloudRecording(() => { emit(); this.sync().catch(() => {}); });
+      const stopRecording = installCloudRecording(() => { emit(); this.sync().catch(() => {}); }, { allowLocal: offlineEnabled });
       const online = () => { this.recordConnection('online'); this.sync().catch(() => {}); emit(); };
       const offline = () => { this.recordConnection('offline'); emit(); };
       globalThis.window?.addEventListener('online', online);

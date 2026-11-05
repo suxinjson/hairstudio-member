@@ -224,12 +224,12 @@ export class AdminApiClient {
       if (operations.some(operation => operation.actorId !== this.user.value.id || operation.deviceId !== this.deviceId)) throw new Error('操作账号或设备已变化，请重新核对');
       if (!operations.length || selectSyncBatch(operations).length !== operations.length) throw new Error('操作批次超过单次同步容量');
       let pending = JSON.parse(this.storage.getItem(key) || 'null');
+      const retrying = Boolean(pending);
       if (pending && canonicalJSON(pending.operations) !== canonicalJSON(operations)) throw new Error('存在待确认操作，请先重试原操作');
-      if (!pending) {
-        pending = { operations, uncertain: false };
-        // Persist stable IDs before sending any financial write.
-        this.storage.setItem(key, JSON.stringify(pending));
-      }
+      // A reload can interrupt any sent request before its response is handled.
+      // Existing pending IDs, including legacy uncertain:false records, remain uncertain.
+      pending = { ...(pending || { operations }), uncertain: true };
+      this.storage.setItem(key, JSON.stringify(pending));
       this.readPending(); this.loadSequence++;
       this.accountStatus.value = 'saving'; this.accountError.value = '';
       try {
@@ -241,7 +241,7 @@ export class AdminApiClient {
         return response;
       } catch (error) {
         // A definitive first-attempt rejection committed nothing. Uncertain retries retain their IDs.
-        if (!pending.uncertain && [400, 403, 409, 413, 415, 429].includes(error.status)) this.storage.removeItem(key);
+        if (!retrying && [400, 403, 409, 413, 415, 429].includes(error.status)) this.storage.removeItem(key);
         else this.storage.setItem(key, JSON.stringify({ ...pending, uncertain: true }));
         if (generation === this.generation) {
           this.readPending(); this.accountStatus.value = 'error'; this.accountError.value = error.message;
