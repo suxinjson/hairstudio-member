@@ -125,6 +125,23 @@ async function selectBackup(content) {
   await nextTick();
 }
 
+test('mobile headers show checking and failure instead of confirmed synchronization', async t => {
+  t.mock.method(cloudClient, 'start', async () => () => {});
+  t.mock.method(cloudClient, 'sync', async () => {});
+  const state = { serverUrl: 'https://localhost', binding: { storeId: 'store-A' }, deviceId: 'device-test-123456',
+    user: { id: 'owner-A', storeId: 'store-A', role: 'owner', displayName: '店主' }, outbox: [], activity: [], revision: 1,
+    status: 'synced', syncStatus: 'error', syncError: '服务器繁忙', online: true };
+  let update;
+  t.mock.method(cloudClient, 'snapshot', () => state);
+  t.mock.method(cloudClient, 'subscribe', listener => { update = listener; listener(state); return () => {}; });
+  await mount();
+  assert.match(document.body.textContent, /同步失败/); assert.doesNotMatch(document.body.textContent, /已同步/);
+  update({ ...state, syncStatus: 'checking', syncError: '' }); await nextTick();
+  assert.match(document.body.textContent, /同步中/); assert.doesNotMatch(document.body.textContent, /已同步/);
+  update({ ...state, syncStatus: 'confirmed', syncError: '' }); await nextTick();
+  assert.match(document.body.textContent, /已同步/);
+});
+
 test('damaged storage keeps the backup restore screen available and permits validated replacement', async t => {
   t.mock.method(console, 'error', () => {});
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });

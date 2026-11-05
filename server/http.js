@@ -85,8 +85,9 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
         const current = await service.authorize(identity, 'write');
         const input = await body(request, current.role === 'owner' ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes);
         if (input.operations?.some?.(op => op?.method === 'importBackupData')) guard.take('restore:' + identity.id, 3);
-        return send(200, await service.sync(identity, input.operations));
+        return send(200, await service.sync(identity, input.operations, input.importBatch ?? null));
       }
+      if (request.method === 'GET' && /^\/api\/v1\/imports\/[a-f0-9]{64}$/.test(path)) return send(200, await service.importStatus(identity, path.split('/').at(-1)));
       if (route === 'POST /api/v1/sync/resolve') {
         return send(200, await service.resolveOperations(identity, (await body(request, DATA_LIMITS.syncBytes)).operations));
       }

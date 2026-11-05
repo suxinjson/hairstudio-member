@@ -1,5 +1,7 @@
 import * as XLSX from 'xlsx';
 import { moneyToCent } from '../../../src/money.js';
+import { normalizeMemberPhone } from '../../../src/accounting.js';
+import { parseImportBuffer, IMPORT_LIMITS } from './import-parser.js';
 
 // 防 CSV / Excel 公式注入 (Formula Injection) 安全清洗
 export function sanitizeCellValue(val) {
@@ -61,9 +63,9 @@ export function parseImportMoney(value, { signed = false } = {}) {
 /**
  * 解析上传的文件 (支持 .xlsx, .xls, .csv)
  */
-export async function parseUploadedFile(file) {
+export async function parseUploadedFile(file, { signal } = {}) {
   // 1. 安全限制检查：最大 10MB
-  const MAX_FILE_SIZE = 10 * 1024 * 1024;
+  const MAX_FILE_SIZE = IMPORT_LIMITS.bytes;
   if (file.size > MAX_FILE_SIZE) {
     throw new Error('导入文件过大，最大支持 10MB');
   }
@@ -77,42 +79,11 @@ export async function parseUploadedFile(file) {
   }
 
   // 2. 读取二进制数据
+  signal?.throwIfAborted();
   const buffer = await file.arrayBuffer();
-  let workbook;
-
-  if (isCsv) {
-    // 处理 CSV，优先使用严格 UTF-8 解析；遇到非法字节序列降级为 GBK
-    let text;
-    try {
-      const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
-      text = utf8Decoder.decode(buffer);
-    } catch {
-      try {
-        const gbkDecoder = new TextDecoder('gbk');
-        text = gbkDecoder.decode(buffer);
-      } catch {
-        text = new TextDecoder('utf-8').decode(buffer);
-      }
-    }
-    workbook = XLSX.read(text, { type: 'string', raw: true });
-  } else {
-    workbook = XLSX.read(buffer, { type: 'array' });
-  }
-
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) throw new Error('文件中未找到任何工作表数据');
-
-  const sheet = workbook.Sheets[sheetName];
-  // 使用底层值，避免 Excel 显示格式先把三位小数舍入成合法金额。
-  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
-
-  if (rawRows.length < 2) {
-    throw new Error('导入表格中没有有效的数据行');
-  }
-
-  if (rawRows.length > 10001) {
-    throw new Error('单次导入最多支持 10,000 条记录，请分批导入');
-  }
+  signal?.throwIfAborted();
+  if (buffer.byteLength > MAX_FILE_SIZE) throw new Error('导入文件过大，最大支持 10MB');
+  const rawRows = await readRows(buffer, isCsv, signal);
 
   // 寻找表头行（寻找包含“姓名”或“手机”的最早一行）
   let headerIndex = -1;
@@ -130,6 +101,7 @@ export async function parseUploadedFile(file) {
 
   const headers = rawRows[headerIndex].map(c => sanitizeCellValue(String(c).trim()));
   const dataRows = rawRows.slice(headerIndex + 1).filter(row => row.some(cell => String(cell).trim() !== ''));
+  if (dataRows.length > 10000) throw new Error('单次导入最多支持 10,000 条记录，请分批导入');
 
   const mapping = guessColumnMapping(headers);
 
@@ -139,6 +111,32 @@ export async function parseUploadedFile(file) {
     mapping,
     totalRows: dataRows.length
   };
+}
+
+function readRows(buffer, isCsv, signal) {
+  // The Node test/runtime has no browser Worker. Both paths enforce identical budgets.
+  if (typeof Worker === 'undefined') {
+    if (globalThis.process?.versions?.node) return parseImportBuffer(buffer, isCsv);
+    throw new Error('当前浏览器无法安全解析文件，请使用新版 Chrome、Edge、Firefox 或 Safari');
+  }
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./import-worker.js', import.meta.url), { type: 'module' });
+    let timer, settled = false;
+    const finish = (error, rows) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer); signal?.removeEventListener('abort', abort); worker.terminate();
+      if (error) reject(error); else resolve(rows);
+    };
+    const abort = () => finish(signal.reason || new DOMException('已取消文件解析', 'AbortError'));
+    worker.onmessage = ({ data }) => finish(data.error ? new Error(data.error) : null, data.rows);
+    worker.onerror = () => finish(new Error('文件解析失败，请检查格式后重试'));
+    timer = setTimeout(() => finish(new Error('文件解析超时，请缩小文件或工作表范围后重试')), 10000);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) return abort();
+    try { worker.postMessage({ buffer, isCsv }, [buffer]); }
+    catch (error) { finish(error); }
+  });
 }
 
 /**
@@ -156,7 +154,10 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
       new Set(columns).size !== columns.length) throw new Error('请为姓名、手机号及金额分别选择不同的列');
   const existingMap = new Map();
   existingMembers.forEach(m => {
-    if (!m.isArchived && m.phone) existingMap.set(String(m.phone).replace(/\D/g, ''), m);
+    if (!m.isArchived && m.phone) {
+      const phone = normalizeMemberPhone(String(m.phone));
+      existingMap.set(phone, [...(existingMap.get(phone) || []), m]);
+    }
   });
 
   const filePhoneSet = new Set();
@@ -186,7 +187,7 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
     }
 
     // 2. 手机号校验与清洗
-    const cleanPhone = rawPhone.replace(/\D/g, '');
+    const cleanPhone = normalizeMemberPhone(rawPhone);
     if (!cleanPhone) {
       errors.push('联系电话不能为空');
     } else if (cleanPhone.length !== 11) {
@@ -218,8 +219,9 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
     let existingMember = null;
     let isConflict = false;
     if (cleanPhone && existingMap.has(cleanPhone)) {
-      existingMember = existingMap.get(cleanPhone);
-      isConflict = true;
+      const candidates = existingMap.get(cleanPhone);
+      if (candidates.length !== 1) errors.push('系统中有多个档案使用相同手机号，请按会员单号核对后再导入');
+      else { existingMember = candidates[0]; isConflict = true; }
     }
     if (isConflict && strategy === 'merge_balance' && balanceCents >= 0 && giftCents > 0 && options.rechargeSettings?.giftEnabled === false) {
       errors.push('当前充值赠送已关闭，请先核对赠送规则');

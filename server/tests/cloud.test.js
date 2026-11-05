@@ -94,6 +94,46 @@ async function initialAccount() {
   const account = await service.bootstrap(owner.identity, { id: randomUUID(), data: ledger.readBackupState() });
   return { ...account, member };
 }
+
+test('HTTP cloud sync reads legacy duplicate pairs, blocks accounting and permits individual profile repairs', async () => {
+  const ledger = createLocalDb(new MemoryStorage()); ledger.init();
+  const members = Array.from({ length: 4 }, (_, i) => ledger.createMember({
+    name: '旧客户' + i, phone: String(13800000000 + i), initialBalance: 100
+  }));
+  const account = await service.bootstrap(owner.identity, { id: randomUUID(), data: ledger.readBackupState() });
+  // Retain an old valid operation to prove the server independently blocks it.
+  const financial = operation(account.data, owner, 'recharge', [{ memberId: members[0].id, actualPay: 10 }]).operation;
+  const legacy = structuredClone(account.data);
+  legacy.members.find(m => m.id === members[1].id).phone = '138 0000 0000';
+  legacy.members.find(m => m.id === members[3].id).phone = '(138) 0000-0002';
+  await pool.query('UPDATE accounts SET data=$1,integrity=$2 WHERE store_id=$3', [legacy, integrity(legacy), owner.identity.store_id]);
+  let online = false;
+  const mobile = await connectedClient({ online: () => online });
+  await mobile.useCloudLedger();
+  assert.deepEqual(localDb.readBackupState(), legacy);
+  assert.throws(() => localDb.recharge({ memberId: members[0].id, actualPay: 10 }), /会员单号/);
+  const rejected = await api('/sync', { operations: [financial] });
+  assert.equal(rejected.status, 409);
+  assert.match((await rejected.json()).error, /会员单号/);
+  assert.equal((await service.account(owner.identity)).revision, account.revision);
+  localDb.updateMember(members[1].id, { phone: '13900000001' });
+  online = true;
+  await mobile.sync();
+  online = false;
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.throws(() => localDb.consume({ memberId: members[0].id, amount: 10 }), /会员单号/);
+  localDb.updateMember(members[3].id, { phone: '13900000003' });
+  online = true;
+  await mobile.sync();
+  online = false;
+  const repaired = await service.account(owner.identity);
+  assert.deepEqual(repaired.data.ledgers, legacy.ledgers);
+  assert.ok(repaired.data.members.every(m => m.balance === 10000 && m.total_recharge === 10000 && m.total_consume === 0));
+  localDb.recharge({ memberId: members[0].id, actualPay: 10 });
+  online = true;
+  await mobile.sync();
+  assert.equal((await service.account(owner.identity)).data.members.find(m => m.id === members[0].id).balance, 11000);
+});
 async function api(path, body, accessToken = owner.accessToken, method = body === undefined ? 'GET' : 'POST') {
   return fetch(url + '/api/v1' + path, { method, headers: { ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
@@ -107,6 +147,38 @@ async function connectedClient({ requestFetch, online = () => true, vault, usern
   for (let count = 0; client.snapshot().busy && count < 100; count++) await new Promise(resolve => setTimeout(resolve, 5));
   return client;
 }
+
+test('failed mobile head checks persist an unconfirmed state until a successful synchronization', async () => {
+  let fail = false;
+  const client = await connectedClient({ requestFetch: (path, options) => {
+    if (String(path).endsWith('/account/head') && fail) return Promise.resolve(new Response(JSON.stringify({ error: '服务器繁忙', code: 'SERVER_BUSY' }), { status: 503 }));
+    return fetch(path, options);
+  } });
+  assert.equal(client.snapshot().syncStatus, 'confirmed');
+  const original = localDb.readBackupState(), successfulTime = client.snapshot().lastSync;
+  fail = true;
+  await assert.rejects(client.sync(), { status: 503 });
+  assert.equal(client.snapshot().syncStatus, 'error'); assert.equal(client.snapshot().online, true);
+  assert.equal(client.snapshot().lastSync, successfulTime);
+  assert.equal(getCloudState().syncError, '服务器繁忙');
+  assert.deepEqual(localDb.readBackupState(), original);
+  fail = false; await client.sync();
+  assert.equal(client.snapshot().syncStatus, 'confirmed'); assert.equal(client.snapshot().syncError, '');
+});
+
+test('equal-revision mobile head checks reject changed integrity without overwriting the local account', async () => {
+  let alter = false;
+  const client = await connectedClient({ requestFetch: async (path, options) => {
+    const response = await fetch(path, options);
+    if (String(path).endsWith('/account/head') && alter) {
+      const head = await response.json(); return new Response(JSON.stringify({ ...head, integrity: 'f'.repeat(64) }));
+    }
+    return response;
+  } });
+  const original = localDb.readBackupState(); alter = true;
+  await assert.rejects(client.sync(), /版本核验失败/);
+  assert.equal(client.snapshot().syncStatus, 'error'); assert.deepEqual(localDb.readBackupState(), original);
+});
 
 test('passwords are salted hashes and login failures are rate limited', async () => {
   const stored = (await pool.query('SELECT password_hash FROM users WHERE username=$1', ['owner'])).rows[0].password_hash;

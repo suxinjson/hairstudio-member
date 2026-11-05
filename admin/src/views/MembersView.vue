@@ -263,6 +263,7 @@
     <div v-if="editingMember" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div class="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-100">
         <h3 class="text-lg font-black text-slate-900 mb-4">{{ editingMember.id ? '修改会员档案' : '登记新会员' }}</h3>
+        <p v-if="editingMember.id" class="mb-3 text-xs text-slate-500 break-all">会员单号：{{ editingMember.id }}</p>
 
         <div class="space-y-3">
           <div>
@@ -345,6 +346,7 @@ import { formatYuan, maskPhone } from '../utils/security.js';
 import { exportMembersToExcel } from '../utils/exporter.js';
 import { useOperationSubmission } from '../composables/useOperationSubmission.js';
 import { isValidMoney, moneyToCent } from '../../../src/money.js';
+import { normalizeMemberPhone } from '../../../src/accounting.js';
 
 const props = defineProps({
   members: { type: Array, default: () => [] },
@@ -498,7 +500,7 @@ function openEditModal(member) {
 async function submitMemberForm() {
   if (isSubmitting.value) return;
   const name = editForm.value.name.trim();
-  const phone = editForm.value.phone.replace(/\D/g, '');
+  const phone = normalizeMemberPhone(editForm.value.phone);
 
   if (!name) {
     editError.value = '会员姓名不能为空';

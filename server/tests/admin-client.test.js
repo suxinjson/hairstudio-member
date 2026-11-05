@@ -7,6 +7,7 @@ import { createService } from '../service.js';
 import { createApi, defaultAllowedOrigins } from '../http.js';
 import { createLocalDb } from '../../src/storage.js';
 import { validateImportBatch } from '../../admin/src/utils/importer.js';
+import { integrity } from '../security.js';
 
 class MemoryStorage {
   values = new Map(); failPending = false;
@@ -47,6 +48,160 @@ async function seed(count = 1, initialBalance = 100) {
   await service.bootstrap(identity, { id: randomUUID(), data: local.readBackupState() });
   await client.getAccount(); return client.accountData.value;
 }
+
+test('the retained legacy completed task is archived before a new import replaces it', async () => {
+  const data = await seed();
+  const items = amount => validateImportBatch([[data.members[0].name, data.members[0].phone, String(amount), '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+  const first = items(50), plan = client.planImport(first, 'merge_balance', false);
+  await service.sync(identity, plan.batches[0].operations);
+  const signature = integrity({ strategy: 'merge_balance', rows: first.map(item => item.data) });
+  storage.setItem(client.scopedKey('import'), JSON.stringify({ id: randomUUID(), signature, status: 'complete', count: 1, total: 1 }));
+  await client.getAccount();
+  await client.executeBatchImport(items(20), 'merge_balance');
+  const restored = newClient(storage); await restored.getAccount();
+  assert.equal((await restored.executeBatchImport(first, 'merge_balance')).resumed, true);
+  assert.equal(restored.accountData.value.members[0].balance, 17000);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 2);
+  restored.dispose();
+});
+
+for (const interrupted of ['old uncertain batch', 'receipt migration', 'resolved receipt migration']) {
+  test(`legacy import upgrade survives ${interrupted} without replaying money`, async () => {
+    const data = await seed(101);
+    const items = validateImportBatch(data.members.map(m => [m.name, m.phone, '50', '0']), mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+    const plan = client.planImport(items, 'merge_balance', false);
+    const job = { id: randomUUID(), signature: integrity({ strategy: 'merge_balance', rows: items.map(item => item.data) }),
+      status: 'pending', cursor: 2, count: 100, ...plan };
+    for (let index = 0; index < 2; index++) await service.sync(identity, job.batches[index].operations);
+    storage.setItem(client.scopedKey('import'), JSON.stringify(job));
+    if (interrupted === 'old uncertain batch') {
+      await service.sync(identity, job.batches[2].operations);
+      storage.setItem(client.scopedKey('pending'), JSON.stringify({ operations: job.batches[2].operations, uncertain: false }));
+    } else {
+      let receipts = 0;
+      client.requestFetch = async (path, options) => {
+        const response = await fetch(url + path, options);
+        if (path === '/api/v1/sync' && ++receipts === 2) { await response.clone().json(); throw new Error('lost receipt migration'); }
+        return response;
+      };
+      await assert.rejects(client.resumeBatchImport(), /lost receipt migration/);
+      assert.equal(JSON.parse(storage.getItem(client.scopedKey('import'))).receiptCursor, 1);
+    }
+    const restored = newClient(storage); await restored.getAccount();
+    if (interrupted === 'resolved receipt migration') {
+      await restored.resolvePending();
+      const progress = JSON.parse(storage.getItem(restored.scopedKey('import')));
+      assert.equal(progress.cursor, 2); assert.equal(progress.count, 100);
+    }
+    assert.equal((await restored.resumeBatchImport()).count, 101);
+    assert.ok(restored.accountData.value.members.every(m => m.balance === 15000));
+    assert.equal((await service.importStatus(identity, job.signature)).status, 'complete');
+    const device = newClient(new MemoryStorage()); await device.login('owner', password); await device.getAccount();
+    assert.equal((await device.executeBatchImport(items, 'merge_balance')).resumed, true);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 101);
+    restored.dispose(); device.dispose();
+  });
+}
+
+test('admin can load and repair several legacy phone conflicts without changing balances or history', async () => {
+  const data = JSON.parse(JSON.stringify(await seed(4)));
+  data.members[1].phone = data.members[0].phone.slice(0, 3) + ' ' + data.members[0].phone.slice(3);
+  data.members[3].phone = data.members[2].phone.slice(0, 3) + '-' + data.members[2].phone.slice(3);
+  await pool.query('UPDATE accounts SET data=$1,integrity=$2 WHERE store_id=$3', [data, integrity(data), identity.store_id]);
+  await client.getAccount();
+  assert.deepEqual(client.accountData.value, data);
+  assert.throws(() => buildAdminOperation('recharge', [{ memberId: data.members[0].id, actualPay: 10 }], data, client.identity()), /会员单号/);
+  for (const index of [1, 3]) await client.sync([buildAdminOperation('updateMember', [data.members[index].id, { phone: String(13900000000 + index) }], client.accountData.value, client.identity())]);
+  assert.deepEqual(client.accountData.value.ledgers, data.ledgers);
+  assert.ok(client.accountData.value.members.every(m => m.balance === 10000));
+  await client.sync([buildAdminOperation('recharge', [{ memberId: data.members[0].id, actualPay: 10 }], client.accountData.value, client.identity())]);
+  assert.equal(client.accountData.value.members.find(m => m.id === data.members[0].id).balance, 11000);
+});
+
+test('A-B-A imports stay deduplicated across history, reload, fresh devices and other store writers', async () => {
+  await seed();
+  const items = amount => validateImportBatch([['客户0', '13800000000', String(amount), '0']], mapping, client.accountData.value.members, { conflictStrategy: 'merge_balance' }).results;
+  await client.executeBatchImport(items(50), 'merge_balance');
+  await client.executeBatchImport(items(20), 'merge_balance');
+  assert.equal((await client.executeBatchImport(items(50), 'merge_balance')).resumed, true);
+  assert.equal(client.accountData.value.members[0].balance, 17000);
+  const reload = newClient(storage); await reload.getAccount();
+  assert.equal((await reload.executeBatchImport(items(50), 'merge_balance')).resumed, true);
+  const device = newClient(new MemoryStorage()); await device.login('owner', password); await device.getAccount();
+  assert.equal((await device.executeBatchImport(items(50), 'merge_balance')).resumed, true);
+  await service.createUser(identity, { username: 'cashier', displayName: '店员', password, role: 'clerk' });
+  const cashier = newClient(new MemoryStorage()); await cashier.login('cashier', password); await cashier.getAccount();
+  assert.equal((await cashier.executeBatchImport(items(50), 'merge_balance')).resumed, true);
+  assert.equal(cashier.accountData.value.members[0].balance, 17000);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 2);
+  reload.dispose(); device.dispose(); cashier.dispose();
+});
+
+test('a stale absent-task check cannot duplicate an import committed by another device', async () => {
+  const data = await seed();
+  const items = validateImportBatch([[data.members[0].name, data.members[0].phone, '50', '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+  await client.executeBatchImport(items, 'merge_balance');
+  const other = newClient(new MemoryStorage(), (path, options) => {
+    if (new URL(path).pathname.startsWith('/api/v1/imports/')) return Promise.resolve(new Response(JSON.stringify({ signature: new URL(path).pathname.split('/').at(-1), status: 'absent', count: 0 })));
+    return fetch(path, options);
+  });
+  await other.login('owner', password); await other.getAccount();
+  await other.executeBatchImport(items, 'merge_balance');
+  assert.equal(other.accountData.value.members[0].balance, 15000);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 1);
+  other.dispose();
+});
+
+test('failed completion-history persistence retains progress and can finish without recharging', async () => {
+  const data = await seed(), set = storage.setItem.bind(storage);
+  let fail = true;
+  storage.setItem = (key, value) => { if (key.includes('_import_history:') && fail) { fail = false; throw new Error('history quota exceeded'); } set(key, value); };
+  const items = validateImportBatch([[data.members[0].name, data.members[0].phone, '50', '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+  await assert.rejects(client.executeBatchImport(items, 'merge_balance'), /history quota/);
+  assert.equal(client.hasPending.value, true);
+  const reload = newClient(storage); await reload.resumeBatchImport();
+  assert.equal(reload.hasPending.value, false); assert.equal(reload.accountData.value, null);
+  await reload.getAccount(); assert.equal(reload.accountData.value.members[0].balance, 15000);
+  await reload.executeBatchImport(items, 'merge_balance');
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 1);
+  reload.dispose();
+});
+
+test('partially cancelled imports block a full restart on every device while remaining rows may be imported', async () => {
+  const data = await seed(51);
+  const items = validateImportBatch(data.members.map(member => [member.name, member.phone, '50', '0']), mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+  let batches = 0;
+  client.requestFetch = (path, options) => {
+    if (path === '/api/v1/sync' && ++batches === 2) return Promise.resolve(new Response(JSON.stringify({ error: 'stale batch', code: 'SYNC_CONFLICT' }), { status: 409 }));
+    return fetch(url + path, options);
+  };
+  await assert.rejects(client.executeBatchImport(items, 'merge_balance'), { status: 409 });
+  assert.equal(client.pendingImport.value.count, 50);
+  await client.cancelRemainingImport();
+  await assert.rejects(client.executeBatchImport(items, 'merge_balance'), /部分入库/);
+  const other = newClient(new MemoryStorage()); await other.login('owner', password); await other.getAccount();
+  await assert.rejects(other.executeBatchImport(items, 'merge_balance'), /部分导入/);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 50);
+  await other.executeBatchImport(items.slice(50), 'merge_balance');
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 51);
+  other.dispose();
+});
+
+test('import receipt failures roll back accounting and receipts reject altered batches and viewers', async () => {
+  const data = await seed(), op = recharge(data), signature = 'e'.repeat(64);
+  const meta = { signature, taskId: randomUUID(), batchIndex: 0, totalBatches: 1, total: 2, count: 1 };
+  await assert.rejects(service.sync(identity, [op], meta), { status: 400 });
+  assert.equal((await service.account(identity)).data.members[0].balance, 10000);
+  assert.equal((await service.importStatus(identity, signature)).status, 'absent');
+  meta.total = 1;
+  await service.sync(identity, [op], meta);
+  assert.equal((await service.importStatus(identity, signature)).status, 'complete');
+  await assert.rejects(service.sync(identity, [{ ...op, args: [{ ...op.args[0], actualPay: 60 }] }], meta), { status: 409 });
+  await service.createUser(identity, { username: 'reader', displayName: '只读', password, role: 'viewer' });
+  const session = await service.login({ username: 'reader', password, deviceId: randomUUID() }, '127.0.0.1');
+  await assert.rejects(service.importStatus(await service.authenticate(session.accessToken), signature), { status: 403 });
+  assert.equal((await service.account(identity)).data.members[0].balance, 15000);
+});
 function recharge(data, target = data.members[0], amount = 50) {
   return buildAdminOperation('recharge', [{ memberId: target.id, actualPay: amount }], data, client.identity());
 }
@@ -318,7 +473,10 @@ test('resolution rejects foreign actors or altered original data without cancell
 test('uncertain imports can be resolved then safely cancelled without resuming cancelled batch IDs', async () => {
   const data = await seed();
   const items = validateImportBatch([[data.members[0].name, data.members[0].phone, '50', '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
-  client.requestFetch = async () => { throw new Error('lost import request'); };
+  client.requestFetch = (path, options) => {
+    if (path === '/api/v1/sync') throw new Error('lost import request');
+    return fetch(url + path, options);
+  };
   await assert.rejects(client.executeBatchImport(items, 'merge_balance'), /lost import/);
   client.requestFetch = (path, options) => fetch(url + path, options);
   await client.resolvePending();

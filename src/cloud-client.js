@@ -95,7 +95,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
   async function verifyAccount(account) {
     if (!account || !Number.isSafeInteger(account.revision) || account.revision < 0 ||
       typeof account.integrity !== 'string' || await sha256(canonicalJSON(account.data)) !== account.integrity) throw new Error('收到的云端账本校验失败，本机数据未覆盖');
-    account.data = localDb.parseAndValidateBackup(JSON.stringify({ data: account.data })).data;
+    account.data = localDb.parseAndValidateBackup(JSON.stringify({ data: account.data }), { allowPhoneConflicts: true }).data;
     return account;
   }
   async function accept(account, acknowledged = [], { bind = false } = {}) {
@@ -113,8 +113,9 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       throw error;
     }
     localDb.applyCloudSnapshot(data, CLOUD_STATE_KEY, { ...state, binding: bind ? { storeId: state.user.storeId } : state.binding,
-      revision: account.revision, outbox: pending, bootstrap: null,
-      remoteConflict: null, conflictReason: null, status: pending.length ? 'pending' : 'synced', lastSync: clock() });
+      revision: account.revision, remoteIntegrity: account.integrity, outbox: pending, bootstrap: null,
+      syncStatus: state.syncStatus === 'checking' ? 'checking' : pending.length ? 'pending' : 'confirmed', syncError: '',
+      remoteConflict: null, conflictReason: null, status: pending.length ? 'pending' : 'synced', lastSync: clock() }, { allowPhoneConflicts: true });
     onData(); emit();
   }
   async function run(callback) {
@@ -232,18 +233,32 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       }
       const state = getCloudState();
       if (!state.binding || !state.user || !state.serverUrl || !isOnline() || state.status === 'conflict' || busy) return;
+      const syncAccessVersion = ledgerAccessVersion();
       return run(async () => {
-        if (getCloudState().bootstrap) await accept(await sendOperations('/account/bootstrap', getCloudState().bootstrap));
-        for (let count = 0; count < 10; count++) {
-          const operations = selectSyncBatch(getCloudState().outbox);
-          if (!operations.length) break;
-          const response = await sendOperations('/sync', { operations });
-          if (canonicalJSON(response.acknowledged) !== canonicalJSON(operations.map(operation => operation.id))) throw new Error('云端确认单号不匹配，待同步记录已保留');
-          await accept(response, response.acknowledged);
+        setState({ ...getCloudState(), syncStatus: 'checking', syncError: '' });
+        try {
+          if (getCloudState().bootstrap) await accept(await sendOperations('/account/bootstrap', getCloudState().bootstrap));
+          for (let count = 0; count < 10; count++) {
+            const operations = selectSyncBatch(getCloudState().outbox);
+            if (!operations.length) break;
+            const response = await sendOperations('/sync', { operations });
+            if (canonicalJSON(response.acknowledged) !== canonicalJSON(operations.map(operation => operation.id))) throw new Error('云端确认单号不匹配，待同步记录已保留');
+            await accept(response, response.acknowledged);
+          }
+          const head = await request('/account/head'), observed = getCloudState();
+          if (!Number.isSafeInteger(head.revision) || head.revision < observed.revision ||
+              !/^[a-f0-9]{64}$/.test(head.integrity || '') || head.revision === observed.revision &&
+              observed.remoteIntegrity && head.integrity !== observed.remoteIntegrity) throw new Error('云端账本版本核验失败，请重新确认账本');
+          if (head.revision > observed.revision || !observed.remoteIntegrity) await accept(await request('/account'));
+          await flushActivity();
+          const current = getCloudState();
+          setState({ ...current, syncStatus: current.outbox.length ? 'pending' : 'confirmed', syncError: '', lastSync: clock() });
+        } catch (error) {
+          // An older page may finish after another page has acquired the ledger.
+          try { assertLedgerAccess(syncAccessVersion); } catch { throw error; }
+          setState({ ...getCloudState(), syncStatus: 'error', syncError: error.message });
+          throw error;
         }
-        const head = await request('/account/head');
-        if (head.revision > getCloudState().revision) await accept(await request('/account'));
-        await flushActivity();
       });
     },
     async useCloudLedger() {
@@ -255,7 +270,8 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         if (remote.revision < state.revision) throw new Error('云端版本发生回退，不能替换本机账本');
         preserveLocal(state);
         localDb.applyCloudSnapshot(remote.data, CLOUD_STATE_KEY, { ...state, binding: { storeId: state.user.storeId },
-          outbox: [], bootstrap: null, status: 'synced', revision: remote.revision, lastSync: clock(), remoteConflict: null, conflictReason: null }, { allowRecovery: true });
+          outbox: [], bootstrap: null, status: 'synced', revision: remote.revision, remoteIntegrity: remote.integrity,
+          syncStatus: 'confirmed', syncError: '', lastSync: clock(), remoteConflict: null, conflictReason: null }, { allowRecovery: true, allowPhoneConflicts: true });
         onData(); emit();
         this.recordConnection('sync_conflict_resolved');
       });

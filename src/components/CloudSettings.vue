@@ -4,7 +4,7 @@
       <h2 v-if="props.showTitle" class="font-black text-lg">{{ sectionTitles[props.section] }}</h2>
       <p v-if="props.section === 'account'" class="text-sm text-slate-600 mt-1">{{ loginHint }}</p>
     </div>
-    <p v-if="message || state.error" class="rounded-xl bg-amber-50 text-amber-900 p-3" role="status">{{ message || state.error }}</p>
+    <p v-if="message || state.error || state.syncError" class="rounded-xl bg-amber-50 text-amber-900 p-3" role="status">{{ message || state.error || state.syncError }}</p>
     <template v-if="props.section === 'account'">
     <p v-if="state.user && state.syncLoginRequired" class="rounded-xl bg-emerald-50 text-emerald-900 p-3 text-sm">已保留本机账号与账本，可继续离线使用。联网后登录原账号即可同步待办。</p>
     <form v-if="!state.user || state.syncLoginRequired" @submit.prevent="login" class="space-y-3">
@@ -20,7 +20,7 @@
       <div class="rounded-xl bg-slate-50 p-3">
         <p class="font-bold"><button class="copyable-text" @click="copyIdentity(state.user.displayName, '姓名')" aria-label="复制账号姓名">{{ state.user.displayName }}</button> · {{ roles[state.user.role] }}</p>
         <p v-if="state.user.username" class="text-sm mt-1">账号：<button class="copyable-text" @click="copyIdentity(state.user.username, '账号')" aria-label="复制用户名">{{ state.user.username }}</button></p>
-        <p class="text-sm mt-1">{{ state.syncLoginRequired ? '本机账本可用 · 云端同步需登录' : !state.online ? '离线使用 · 联网后自动同步' : '设备已联网 · ' + (statuses[state.status] || state.status) }}</p>
+        <p class="text-sm mt-1">{{ state.syncLoginRequired ? '本机账本可用 · 云端同步需登录' : !state.online ? '离线使用 · 联网后自动同步' : '设备已联网 · ' + (state.syncStatus === 'checking' ? '正在核验账本' : state.syncStatus === 'error' ? '同步失败，请重试' : statuses[state.status] || state.status) }}</p>
         <p v-if="state.binding" class="text-sm mt-1">待同步 {{ state.outbox.length }} 笔<span v-if="state.lastSync"> · 上次成功 {{ new Date(state.lastSync).toLocaleString() }}</span></p>
       </div>
       <div v-if="state.status === 'needs-bootstrap'" class="rounded-xl p-3 bg-blue-50 space-y-2">

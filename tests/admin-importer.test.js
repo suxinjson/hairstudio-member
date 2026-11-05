@@ -10,6 +10,82 @@ import {
   validateImportBatch
 } from '../admin/src/utils/importer.js';
 import { maskPhone, formatYuan } from '../admin/src/utils/security.js';
+import { createMembersWorkbook, createLedgersWorkbook } from '../admin/src/utils/exporter.js';
+
+test('ambiguous legacy phone identities are rejected rather than choosing a financial target', () => {
+  const members = [{ id: 'a', name: 'A', phone: '13800001111', balance: 10000 }, { id: 'b', name: 'B', phone: '138 0000-1111', balance: 20000 }];
+  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: null, tag: null };
+  for (const conflictStrategy of ['skip', 'merge_balance', 'overwrite_profile']) {
+    const report = validateImportBatch([['B', '(138)00001111', '50', '0']], mapping, members, { conflictStrategy });
+    assert.equal(report.invalidCount, 1); assert.match(report.results[0].reason, /多个档案/);
+    assert.equal(report.results[0].existingMember, undefined);
+  }
+});
+
+test('financial Excel cells remain numeric and summable after serialization while text stays protected', () => {
+  const members = [{ name: '=1+1', phone: '13800001111', balance: 12345 }, { name: '欠款', phone: '13900002222', balance: -2000 }];
+  const book = createMembersWorkbook(members);
+  const roundtrip = XLSX.read(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer', cellNF: true });
+  const sheet = roundtrip.Sheets[roundtrip.SheetNames[0]];
+  assert.equal(sheet.C2.t, 'n'); assert.equal(sheet.D3.t, 'n'); assert.equal(sheet.C2.z, '0.00');
+  assert.equal(sheet.C2.v + sheet.C3.v, 103.45); assert.equal(sheet.D3.v, 20);
+  assert.equal(sheet.A2.t, 's'); assert.equal(sheet.A2.f, undefined); assert.equal(sheet.B2.t, 's');
+  const ledgers = createLedgersWorkbook([{ id: '@cmd', type: 'RECHARGE', changeAmount: 12345, balanceAfter: 12345 }, { id: '2', type: 'CONSUME', changeAmount: -2345, balanceAfter: 10000 }]);
+  const result = XLSX.read(XLSX.write(ledgers, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer', cellNF: true });
+  const ledgerSheet = result.Sheets[result.SheetNames[0]];
+  assert.equal(ledgerSheet.F2.t, 'n'); assert.equal(ledgerSheet.G3.t, 'n'); assert.equal(ledgerSheet.F2.z, '0.00');
+  assert.equal(ledgerSheet.F2.v + ledgerSheet.F3.v, 100); assert.equal(ledgerSheet.A2.f, undefined);
+});
+
+function rangedWorkbook(ref) {
+  const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['姓名', '手机号'], ['客户', '13800001111']]), '会员');
+  const archive = XLSX.CFB.read(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' });
+  const entry = archive.FileIndex[archive.FullPaths.findIndex(path => path.endsWith('/xl/worksheets/sheet1.xml'))];
+  entry.content = Buffer.from(Buffer.from(entry.content).toString('utf8').replace('ref="A1:B2"', 'ref="' + ref + '"')); entry.size = entry.content.length;
+  return XLSX.CFB.write(archive, { type: 'buffer', fileType: 'zip', compression: true });
+}
+
+test('small Excel files with enormous declared dimensions are rejected before row expansion', async () => {
+  for (const ref of ['A1:XFD1048576', 'A1:B10006', 'A1:DY2', 'A1:DX10000']) {
+    const bytes = rangedWorkbook(ref);
+    assert.ok(bytes.length < 10000);
+    await assert.rejects(parseUploadedFile({ name: 'range.xlsx', size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) }), /范围|10,000/);
+  }
+});
+
+test('CSV conversion limits columns and rejects truncated oversized row sets', async () => {
+  for (const content of [Array.from({ length: 129 }, () => 'x').join(',') + '\na,b', '姓名,手机号\n' + '客户,13800001111\n'.repeat(10006)]) {
+    const bytes = new TextEncoder().encode(content);
+    await assert.rejects(parseUploadedFile({ name: 'range.csv', size: bytes.length, arrayBuffer: async () => bytes.buffer }), /范围|10,000/);
+  }
+});
+
+test('Excel ZIP expansion and actual upload bytes are bounded before parsing', async () => {
+  const bytes = rangedWorkbook('A1:B2');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for (let offset = 0; offset + 46 < bytes.length; offset++) {
+    if (view.getUint32(offset, true) === 0x02014b50) { view.setUint32(offset + 24, 65 * 1024 * 1024, true); break; }
+  }
+  await assert.rejects(parseUploadedFile({ name: 'zip.xlsx', size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) }), /解压数据过大/);
+  const large = new ArrayBuffer(10 * 1024 * 1024 + 1);
+  await assert.rejects(parseUploadedFile({ name: 'large.csv', size: 1, arrayBuffer: async () => large }), /文件过大/);
+});
+
+test('worker parsing can be aborted or timed out and always terminates the worker', async t => {
+  const workers = [], original = globalThis.Worker;
+  globalThis.Worker = class { constructor() { workers.push(this); this.terminated = false; } postMessage() {} terminate() { this.terminated = true; } };
+  t.after(() => { globalThis.Worker = original; });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const bytes = new TextEncoder().encode('姓名,手机号\n客户,13800001111');
+  const file = { name: 'members.csv', size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(0) };
+  const controller = new AbortController(), aborted = parseUploadedFile(file, { signal: controller.signal });
+  const checkedAbort = assert.rejects(aborted, { name: 'AbortError' });
+  await Promise.resolve(); await Promise.resolve(); controller.abort(); await checkedAbort;
+  assert.equal(workers[0].terminated, true);
+  const timed = parseUploadedFile(file), checkedTimeout = assert.rejects(timed, /超时/);
+  await Promise.resolve(); await Promise.resolve(); t.mock.timers.tick(10000); await checkedTimeout;
+  assert.equal(workers[1].terminated, true);
+});
 
 test('sanitizeCellValue prevents formula injection by escaping dangerous leading characters', () => {
   assert.equal(sanitizeCellValue('=1+1'), "'=1+1");

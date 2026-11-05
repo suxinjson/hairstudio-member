@@ -4,13 +4,13 @@ import { sanitizeCellValue } from './importer.js';
 /**
  * 导出会员列表为 Excel
  */
-export function exportMembersToExcel(members, filename = '会员档案明细') {
+export function createMembersWorkbook(members) {
   const exportData = members.map(m => {
     return {
       '会员姓名': sanitizeCellValue(m.name),
       '手机号码': sanitizeCellValue(m.phone),
-      '卡内本金余额(元)': ((m.balance || 0) / 100).toFixed(2),
-      '累计欠款(元)': m.balance < 0 ? ((Math.abs(m.balance)) / 100).toFixed(2) : '0.00',
+      '卡内本金余额(元)': (m.balance || 0) / 100,
+      '累计欠款(元)': Math.max(0, -(m.balance || 0)) / 100,
       '会员标签': sanitizeCellValue(m.tags?.join('、') || m.tag || '普通会员'),
       '备注信息': sanitizeCellValue(m.notes || m.remark || ''),
       '建卡时间': m.created_at ? new Date(m.created_at).toLocaleString('zh-CN') : '—',
@@ -19,6 +19,7 @@ export function exportMembersToExcel(members, filename = '会员档案明细') {
   });
 
   const ws = XLSX.utils.json_to_sheet(exportData);
+  formatMoneyColumns(ws, members.length, ['C', 'D']);
   ws['!cols'] = [
     { wch: 14 },
     { wch: 16 },
@@ -32,6 +33,11 @@ export function exportMembersToExcel(members, filename = '会员档案明细') {
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '会员档案');
+  return wb;
+}
+
+export function exportMembersToExcel(members, filename = '会员档案明细') {
+  const wb = createMembersWorkbook(members);
   const dateStr = new Date().toISOString().slice(0, 10);
   XLSX.writeFile(wb, `${filename}_${dateStr}.xlsx`);
 }
@@ -39,7 +45,7 @@ export function exportMembersToExcel(members, filename = '会员档案明细') {
 /**
  * 导出财务流水账单为 Excel
  */
-export function exportLedgersToExcel(ledgers, filename = '财务流水对账单') {
+export function createLedgersWorkbook(ledgers) {
   const exportData = ledgers.map(l => {
     let typeName = '消费扣款';
     if (l.type === 'RECHARGE') typeName = '充值入账';
@@ -51,14 +57,15 @@ export function exportLedgersToExcel(ledgers, filename = '财务流水对账单'
       '会员姓名': sanitizeCellValue(l.memberName || '散客'),
       '联系电话': sanitizeCellValue(l.memberPhone || '—'),
       '业务类型': typeName,
-      '变动金额(元)': ((l.changeAmount || 0) / 100).toFixed(2),
-      '变动后余额(元)': ((l.balanceAfter || 0) / 100).toFixed(2),
+      '变动金额(元)': (l.changeAmount || 0) / 100,
+      '变动后余额(元)': (l.balanceAfter || 0) / 100,
       '项目明细/备注': sanitizeCellValue(l.remark || '无'),
       '冲正状态': l.isRefunded ? '已冲正撤销' : '正常'
     };
   });
 
   const ws = XLSX.utils.json_to_sheet(exportData);
+  formatMoneyColumns(ws, ledgers.length, ['F', 'G']);
   ws['!cols'] = [
     { wch: 24 },
     { wch: 20 },
@@ -73,8 +80,19 @@ export function exportLedgersToExcel(ledgers, filename = '财务流水对账单'
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '流水对账明细');
+  return wb;
+}
+
+export function exportLedgersToExcel(ledgers, filename = '财务流水对账单') {
+  const wb = createLedgersWorkbook(ledgers);
   const dateStr = new Date().toISOString().slice(0, 10);
   XLSX.writeFile(wb, `${filename}_${dateStr}.xlsx`);
+}
+
+function formatMoneyColumns(sheet, count, columns) {
+  for (let row = 2; row <= count + 1; row++) {
+    for (const column of columns) sheet[column + row].z = '0.00';
+  }
 }
 
 /**

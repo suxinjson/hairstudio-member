@@ -325,7 +325,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onUnmounted } from 'vue';
 import { adminApi } from '../api/client.js';
 import {
   parseUploadedFile,
@@ -357,6 +357,8 @@ const validationReport = ref(null);
 const isImporting = ref(false);
 const importProgress = ref(0);
 const mappingConfirmed = ref(false);
+let parseController = null;
+onUnmounted(() => parseController?.abort());
 const debtImportConfirmed = ref(false);
 watch(customMapping, () => { validationReport.value = null; mappingConfirmed.value = false; debtImportConfirmed.value = false; }, { deep: true });
 watch(conflictStrategy, () => { validationReport.value = null; debtImportConfirmed.value = false; });
@@ -394,19 +396,26 @@ async function handleFileDrop(e) {
 }
 
 async function processFile(file) {
+  parseController?.abort();
+  const controller = new AbortController(); parseController = controller;
   currentFile.value = file;
+  parseResult.value = null;
+  mappingConfirmed.value = false; debtImportConfirmed.value = false;
   validationReport.value = null;
   try {
-    const res = await parseUploadedFile(file);
+    const res = await parseUploadedFile(file, { signal: controller.signal });
+    if (controller.signal.aborted) return;
     parseResult.value = res;
     customMapping.value = { ...res.mapping };
   } catch (err) {
+    if (controller.signal.aborted) return;
     alert(err.message || '文件解析失败，请检查文件格式');
     resetUpload();
   }
 }
 
 function resetUpload() {
+  parseController?.abort(); parseController = null;
   currentFile.value = null;
   parseResult.value = null;
   validationReport.value = null;

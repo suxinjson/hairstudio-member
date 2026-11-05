@@ -29,6 +29,66 @@ beforeEach(() => {
 const newMember = (initialBalance = 100) => localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance });
 const backup = () => localDb.exportBackupData({ archiveSnapshot: false });
 
+test('legacy phone conflicts remain readable and repairable by ID while all financial writes stay blocked', () => {
+  const members = Array.from({ length: 5 }, (_, i) => localDb.createMember({
+    name: '旧客户' + i, phone: String(13800000000 + i), initialBalance: i === 4 ? 0 : 100
+  }));
+  const legacy = localDb.readBackupState();
+  legacy.members.find(m => m.id === members[1].id).phone = '138 0000 0000';
+  legacy.members.find(m => m.id === members[3].id).phone = '(138) 0000-0002';
+  localStorage.setItem(membersKey, JSON.stringify(legacy.members));
+  const history = structuredClone(legacy.ledgers);
+  assert.doesNotThrow(() => localDb.init());
+  assert.equal(localDb.getMembers().length, 5);
+  assert.deepEqual(localDb.readBackupState(), legacy);
+  assert.throws(() => localDb.parseAndValidateBackup(JSON.stringify({ data: legacy })), /重复/);
+  assert.throws(() => localDb.applyCloudSnapshot(legacy, 'metadata', {}), /重复/);
+  assert.doesNotThrow(() => localDb.applyCloudSnapshot(legacy, 'metadata', {}, { allowPhoneConflicts: true }));
+  const before = new Map(localStorage.values);
+  for (const write of [
+    () => localDb.createMember({ name: '新客户', phone: '13900000000' }),
+    () => localDb.recharge({ memberId: members[0].id, actualPay: 10 }),
+    () => localDb.consume({ memberId: members[0].id, amount: 10 }),
+    () => localDb.refundLedger(history[0].id),
+    () => localDb.deleteMember(members[4].id),
+    () => localDb.updateMember(members[1].id, { phone: '---' }),
+    () => localDb.updateMember(members[1].id, { phone: '138-0000-0002' })
+  ]) {
+    assert.throws(write, /会员单号|不能为空|占用/);
+    assert.deepEqual(localStorage.values, before);
+  }
+  localDb.updateMember(members[1].id, { phone: '13900000001' });
+  assert.throws(() => localDb.recharge({ memberId: members[0].id, actualPay: 10 }), /会员单号/);
+  localDb.updateMember(members[3].id, { phone: '13900000003' });
+  assert.deepEqual(localDb.readBackupState().ledgers, history);
+  for (const m of localDb.readBackupState().members) {
+    assert.equal(m.balance, m.id === members[4].id ? 0 : 10000);
+    assert.equal(m.total_consume, 0);
+  }
+  localDb.recharge({ memberId: members[0].id, actualPay: 10 });
+  assert.equal(localDb.getMemberById(members[0].id).balance, 11000);
+});
+
+test('all phone formats share one identity across creation, edits, backup validation and merging', () => {
+  const member = localDb.createMember({ name: '张姐', phone: '(138) 0000-1111' });
+  assert.equal(member.phone, '13800001111');
+  assert.throws(() => localDb.createMember({ name: '重复', phone: '138 0000 1111' }), /已存在/);
+  const other = localDb.createMember({ name: '另一客户', phone: '13900002222' });
+  assert.throws(() => localDb.updateMember(other.id, { phone: '138-0000-1111' }), /占用/);
+  const legacy = JSON.parse(backup());
+  legacy.data.members.find(m => m.id === member.id).phone = '138 0000 1111';
+  localDb.importBackupData(JSON.stringify(legacy));
+  assert.throws(() => localDb.createMember({ name: '重复', phone: '13800001111' }), /已存在/);
+  const incoming = JSON.parse(backup()); incoming.data.members = incoming.data.members.filter(m => m.id === member.id);
+  incoming.data.members[0].id = 'older-backup-id'; incoming.data.members[0].phone = '13800001111';
+  assert.equal(localDb.previewBackup(JSON.stringify(incoming)).diff.existingMembersCount, 1);
+  assert.equal(localDb.importBackupData(JSON.stringify(incoming), { mode: 'merge' }).newMembersAdded, 0);
+  const invalid = JSON.parse(backup()); invalid.data.members.find(m => m.id === other.id).phone = '138-0000-1111';
+  const before = backup();
+  assert.throws(() => localDb.importBackupData(JSON.stringify(invalid)), /重复/);
+  assert.deepEqual(JSON.parse(backup()).data, JSON.parse(before).data);
+});
+
 test('restored padded phone numbers cannot be duplicated by creation or editing', () => {
   const member = newMember(), other = localDb.createMember({ name: '另一客户', phone: '13900002222' });
   const imported = JSON.parse(backup());
@@ -683,6 +743,9 @@ test('a later reversal and consumption can reactivate an archive even when the f
 
 test('CSV exports untrusted cells as text while keeping numeric amounts and ordinary text intact', () => {
   const member = localDb.createMember({ name: '=1+1', phone: '+13800002222', initialBalance: 100 });
+  // Historic phone display text remains untrusted even though new profiles normalize it.
+  const legacy = JSON.parse(backup()); legacy.data.members[0].phone = '+13800002222';
+  localDb.importBackupData(JSON.stringify(legacy));
   for (const value of ['=SUM(1,1)', '+1+1', '-1+1', '@SUM(1,1)', '\t=1+1', '\r=1+1', '\n=1+1', ' \t=1+1', '\u00a0=1+1']) {
     localDb.consume({ memberId: member.id, amount: 1, itemsSummary: value });
     const rows = parse(localDb.exportCSV(), { bom: true });

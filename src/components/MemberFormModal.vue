@@ -12,6 +12,7 @@
         <button @click="emit('update:modelValue', false)" class="text-slate-400 text-xl font-bold btn-press">✕</button>
       </div>
 
+      <p v-if="editingId" class="text-xs text-slate-500 break-all">会员单号：{{ editingId }}</p>
       <div class="space-y-4 text-sm">
         <div>
           <label class="font-black text-slate-800 block mb-1.5">会员姓名 <span class="text-rose-500">*</span></label>

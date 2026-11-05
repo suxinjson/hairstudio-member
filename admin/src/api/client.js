@@ -3,6 +3,7 @@ import { newId, mutationPrecondition, validateOperation, canonicalJSON, selectSy
 import { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS, localDb } from '../../../src/storage.js';
 import { sha256 } from '../../../src/cloud-client.js';
 import { withBrowserLock } from '../utils/browser-lock.js';
+import { normalizeMemberPhone, validateActiveMemberPhones } from '../../../src/accounting.js';
 
 const STORAGE_KEY = 'hairstudio_admin_auth';
 export const ADMIN_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -217,7 +218,7 @@ export class AdminApiClient {
   async acceptAccount(response, generation) {
     if (!response || !Number.isSafeInteger(response.revision) || response.revision < 0 ||
         await sha256(canonicalJSON(response.data)) !== response.integrity) throw new Error('云端账本校验失败，待确认操作已保留');
-    const data = localDb.parseAndValidateBackup(JSON.stringify({ data: response.data })).data;
+    const data = localDb.parseAndValidateBackup(JSON.stringify({ data: response.data }), { allowPhoneConflicts: true }).data;
     this.assertSession(generation);
     if (response.revision < this.accountRevision.value) throw new Error('云端账本版本回退，请联系管理员');
     this.accountData.value = data; this.accountRevision.value = response.revision;
@@ -241,7 +242,7 @@ export class AdminApiClient {
     }
   }
 
-  async sync(operations, importId = null) {
+  async sync(operations, importId = null, importBatch = null) {
     this.restoreSession();
     const generation = this.generation, key = this.scopedKey('pending');
     return this.lock('writes', async () => {
@@ -258,13 +259,16 @@ export class AdminApiClient {
       if (pending && canonicalJSON(pending.operations) !== canonicalJSON(operations)) throw new Error('存在待确认操作，请先重试原操作');
       // A reload can interrupt any sent request before its response is handled.
       // Existing pending IDs, including legacy uncertain:false records, remain uncertain.
-      pending = { ...(pending || { operations }), uncertain: true };
+      pending = { ...(pending || { operations, ...(importBatch ? { importBatch } : {}) }), uncertain: true };
       this.storage.setItem(key, JSON.stringify(pending));
       this.readPending(); this.loadSequence++;
       this.accountStatus.value = 'saving'; this.accountError.value = '';
       try {
-        const response = await this.request('/api/v1/sync', { method: 'POST', body: JSON.stringify({ operations: pending.operations }) });
+        const response = await this.request('/api/v1/sync', { method: 'POST', body: JSON.stringify({ operations: pending.operations, ...(pending.importBatch ? { importBatch: pending.importBatch } : {}) }) });
         if (canonicalJSON(response.acknowledged) !== canonicalJSON(pending.operations.map(operation => operation.id))) throw new Error('云端确认单号不匹配，请重试原操作');
+        if (pending.importBatch && (response.importReceipt?.signature !== pending.importBatch.signature ||
+            !['pending', 'complete'].includes(response.importReceipt.status) || !Number.isInteger(response.importReceipt.count) ||
+            response.importReceipt.count < 0 || response.importReceipt.count > pending.importBatch.total || response.importReceipt.total !== pending.importBatch.total)) throw new Error('云端导入进度核验失败，请重试原操作');
         await this.acceptAccount(response, generation);
         this.storage.removeItem(key); this.readPending();
         this.accountStatus.value = this.hasPending.value ? 'pending' : 'synced';
@@ -286,7 +290,7 @@ export class AdminApiClient {
     const pending = JSON.parse(this.storage.getItem(this.scopedKey('pending')) || 'null');
     if (pending?.resolving) return this.resolvePending();
     if (this.pendingImport.value) return this.resumeBatchImport(onProgress);
-    if (pending) return this.sync(pending.operations);
+    if (pending) return this.sync(pending.operations, null, pending.importBatch);
   }
 
   async resolvePending() {
@@ -314,8 +318,9 @@ export class AdminApiClient {
         const resolutionIds = pending.operations.map(op => op.id);
         if (job?.status === 'pending' && canonicalJSON(job.resolutionIds) !== canonicalJSON(resolutionIds)) {
           const committed = response.resolved.every(row => row.status === 'committed');
+          const registeringLegacyReceipt = job.protocolVersion !== 2 && pending.importBatch && pending.importBatch.batchIndex < job.cursor;
           this.storage.setItem(importKey, JSON.stringify({ ...job, canCancel: true, resolvedBatch: !committed, resolutionIds,
-            ...(committed ? { cursor: job.cursor + 1, count: job.count + job.batches[job.cursor].count } : {}) }));
+            ...(committed && !registeringLegacyReceipt ? { cursor: job.cursor + 1, count: job.count + job.batches[job.cursor].count } : {}) }));
         }
         this.storage.removeItem(key); this.readPending();
         this.accountStatus.value = this.hasPending.value ? 'pending' : 'synced';
@@ -371,7 +376,7 @@ export class AdminApiClient {
         const create = buildAdminOperation('createMember', [{ name: item.data.name, phone: item.data.phone, initialBalance: centToAmount(Math.max(0, credit)), notes }], data, this.identity());
         operations.push(create);
         if (credit < 0) {
-          const member = { id: create.generated.ids[0], name: item.data.name.trim(), phone: item.data.phone.trim(), balance: 0,
+          const member = { id: create.generated.ids[0], name: item.data.name.trim(), phone: normalizeMemberPhone(item.data.phone), balance: 0,
             total_recharge: 0, total_consume: 0, notes: notes.trim(), created_at: create.generated.times[0], updated_at: create.generated.times[0] };
           operations.push(buildAdminOperation('consume', [{ memberId: member.id, amount: centToAmount(-credit), itemsSummary: '期初导入欠款', allowDebt: true }], { ...data, members: [member] }, this.identity()));
         }
@@ -403,15 +408,51 @@ export class AdminApiClient {
     return this.lock('import', async () => {
       this.assertSession(generation);
       const key = this.scopedKey('import'); let job = JSON.parse(this.storage.getItem(key) || 'null');
-      if (job?.signature === signature && job.status === 'complete') return { success: true, count: job.count, resumed: true };
       if (job?.status === 'pending' && job.signature !== signature) throw new Error('存在未完成的导入任务，请先继续原任务');
+      if (job?.status === 'complete' || job?.status === 'cancelled' && job.count > 0) this.archiveImport(job);
+      const completed = this.readImportHistory()[signature];
+      if (completed) {
+        if (completed.status !== 'complete') throw new Error('这份数据已部分入库，请核对后仅导入剩余记录');
+        if (this.storage.getItem(this.scopedKey('pending'))) throw new Error('请先确认之前的财务操作');
+        if (job?.signature === signature) this.storage.setItem(key, JSON.stringify(completed));
+        await this.getAccount(); this.readPending();
+        return { success: true, count: completed.count, resumed: true };
+      }
       if (!job || job.signature !== signature || job.status === 'cancelled') {
         if (this.storage.getItem(this.scopedKey('pending'))) throw new Error('请先确认之前的财务操作');
-        job = { id: newId(), signature, status: 'pending', cursor: 0, count: 0, ...this.planImport(items, strategy, allowDebt) };
+        const previous = await this.request('/api/v1/imports/' + signature);
+        this.assertSession(generation);
+        if (previous.signature !== signature || !['absent', 'pending', 'complete'].includes(previous.status) ||
+            !Number.isInteger(previous.count) || previous.count < 0 || previous.count > 10000) throw new Error('云端导入历史核验失败');
+        if (previous.status === 'complete') {
+          if (!Number.isInteger(previous.total) || previous.total !== previous.count || !/^[a-zA-Z0-9-]{16,80}$/.test(previous.taskId || '')) throw new Error('云端导入历史核验失败');
+          const completed = { id: previous.taskId, signature, status: 'complete', count: previous.count, total: previous.total };
+          this.archiveImport(completed); await this.getAccount();
+          return { success: true, count: previous.count, resumed: true };
+        }
+        if (previous.status === 'pending') throw new Error('这份数据已部分导入，请在原设备继续确认，或核对后仅导入剩余记录');
+        job = { id: newId(), signature, protocolVersion: 2, status: 'pending', cursor: 0, count: 0, ...this.planImport(items, strategy, allowDebt) };
         this.storage.setItem(key, JSON.stringify(job));
       }
       return this.runImport(job, key, generation, onProgress);
     });
+  }
+
+  readImportHistory() {
+    const history = JSON.parse(this.storage.getItem(this.scopedKey('import_history')) || '{}');
+    if (!history || typeof history !== 'object' || Array.isArray(history) || Object.entries(history).some(([signature, job]) =>
+      !/^[a-f0-9]{64}$/.test(signature) || !job || job.signature !== signature || !['complete', 'cancelled'].includes(job.status) ||
+      !Number.isInteger(job.count) || job.count < 0 || job.count > 10000)) throw new Error('导入历史损坏，请保留浏览器数据并联系管理员');
+    return history;
+  }
+
+  archiveImport(job) {
+    const record = { id: job.id, signature: job.signature, status: job.status, count: job.count, total: job.total };
+    this.storage.setItem(this.scopedKey('import_history'), JSON.stringify({ ...this.readImportHistory(), [job.signature]: record }));
+  }
+
+  importBatch(job, index) {
+    return { signature: job.signature, taskId: job.id, batchIndex: index, totalBatches: job.batches.length, total: job.total, count: job.batches[index].count };
   }
 
   async resumeBatchImport(onProgress = () => {}) {
@@ -429,7 +470,9 @@ export class AdminApiClient {
       this.restoreSession();
       const key = this.scopedKey('import'), job = JSON.parse(this.storage.getItem(key) || 'null');
       if (!job?.canCancel || this.storage.getItem(this.scopedKey('pending'))) throw new Error('操作结果尚未确认，不能取消');
-      this.storage.setItem(key, JSON.stringify({ ...job, status: 'cancelled', batches: [] }));
+      const status = job.count === job.total && job.cursor === job.batches.length ? 'complete' : 'cancelled';
+      if (job.count > 0) this.archiveImport({ ...job, status });
+      this.storage.setItem(key, JSON.stringify({ ...job, status, batches: [] }));
       this.readPending();
     });
   }
@@ -438,16 +481,36 @@ export class AdminApiClient {
     if (job.resolvedBatch) throw new Error('原批次的未入账操作已取消，请取消剩余导入后重新预检');
     this.importing.value = true; this.readPending();
     try {
+      // Upgrade retained old tasks by replaying their confirmed operation IDs;
+      // the server records receipts in the same transaction without recharging.
+      if (job.protocolVersion !== 2) {
+        const pending = JSON.parse(this.storage.getItem(this.scopedKey('pending')) || 'null');
+        if (pending && !pending.importBatch) {
+          const batch = job.batches[job.cursor];
+          if (!batch || canonicalJSON(batch.operations) !== canonicalJSON(pending.operations)) throw new Error('旧导入待办与原批次不一致，请保留浏览器数据并联系管理员');
+          await this.sync(batch.operations, job.id);
+          job = { ...job, cursor: job.cursor + 1, count: job.count + batch.count };
+          this.storage.setItem(key, JSON.stringify(job));
+        }
+        for (let index = job.receiptCursor || 0; index < job.cursor; index++) {
+          await this.sync(job.batches[index].operations, job.id, this.importBatch(job, index));
+          job = { ...job, receiptCursor: index + 1 }; this.storage.setItem(key, JSON.stringify(job));
+        }
+        job = { ...job, protocolVersion: 2 }; this.storage.setItem(key, JSON.stringify(job));
+      }
       while (job.cursor < job.batches.length) {
         this.assertSession(generation);
         const batch = job.batches[job.cursor];
-        await this.sync(batch.operations, job.id);
+        const response = await this.sync(batch.operations, job.id, this.importBatch(job, job.cursor));
         this.assertSession(generation);
-        job = { ...job, cursor: job.cursor + 1, count: job.count + batch.count, canCancel: false };
+        job = { ...job, cursor: response.importReceipt?.status === 'complete' ? job.batches.length : job.cursor + 1,
+          count: response.importReceipt?.count ?? job.count + batch.count, canCancel: false };
         this.storage.setItem(key, JSON.stringify(job));
         this.readPending(); onProgress(Math.round(job.count * 100 / job.total));
       }
-      this.storage.setItem(key, JSON.stringify({ id: job.id, signature: job.signature, status: 'complete', count: job.count, total: job.total }));
+      const completed = { id: job.id, signature: job.signature, status: 'complete', count: job.count, total: job.total };
+      this.archiveImport(completed);
+      this.storage.setItem(key, JSON.stringify(completed));
       this.readPending(); this.accountStatus.value = 'synced'; onProgress(100);
       return { success: true, count: job.count };
     } catch (error) {
@@ -462,6 +525,8 @@ export class AdminApiClient {
 export function buildAdminOperation(method, args, accountData = null, identity = null) {
   const user = identity || adminApi.identity();
   if (!user.id || !user.deviceId) throw new Error('请先登录');
+  const data = accountData || adminApi.accountData.value || emptyData();
+  if (['createMember', 'deleteMember', 'recharge', 'consume', 'refundLedger'].includes(method)) validateActiveMemberPhones(data.members);
   const now = new Date().toISOString(); let ids = [], times = [now];
   if (method === 'createMember') {
     ids = Number(args[0]?.initialBalance || 0) > 0 ? [newId(), newId()] : [newId()];
@@ -469,7 +534,7 @@ export function buildAdminOperation(method, args, accountData = null, identity =
   } else if (['recharge', 'consume', 'refundLedger'].includes(method)) ids = [newId()];
   else if (method === 'saveService' && !args[0]?.id) ids = [newId()];
   const operation = { id: newId(), method, args, actorId: user.id, deviceId: user.deviceId,
-    generated: { ids, times }, precondition: mutationPrecondition(accountData || adminApi.accountData.value || emptyData(), method, args) };
+    generated: { ids, times }, precondition: mutationPrecondition(data, method, args) };
   validateOperation(operation); return operation;
 }
 

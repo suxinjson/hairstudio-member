@@ -5,6 +5,7 @@ import { migrate, configureRuntimeRole, assertRuntimeRole } from '../database.js
 import { createService } from '../service.js';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { createLocalDb } from '../../src/storage.js';
 
 test('migration preserves existing accounts and runtime grants support business work while denying administrator actions', async () => {
   let db, query, cleanup;
@@ -41,6 +42,13 @@ test('migration preserves existing accounts and runtime grants support business 
     assert.equal(identity.store_id, created.storeId);
     const data = (await service.account(identity)).data;
     await service.bootstrap(identity, { id: randomUUID(), data });
+    let captured;
+    const values = new Map(), storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+    const ledger = createLocalDb(storage, { beforeWrite(entries, operation) { captured = { ...operation, id: randomUUID(), actorId: identity.id, deviceId: identity.device_id, precondition: {} }; return entries; } });
+    ledger.init(); ledger.createMember({ name: '导入客户', phone: '13800001111' });
+    const signature = 'a'.repeat(64);
+    await service.sync(identity, [captured], { signature, taskId: randomUUID(), batchIndex: 0, totalBatches: 1, total: 1, count: 1 });
+    assert.equal((await service.importStatus(identity, signature)).status, 'complete');
     const next = await service.createUser(identity, { username: 'clerk', password, displayName: '店员', role: 'clerk' });
     await service.updateUser(identity, next.id, { active: false, role: 'viewer' });
     await service.refresh(session.refreshToken);

@@ -322,6 +322,7 @@ const db = {
     if (phone !== undefined) {
       if (typeof phone !== 'string' || !phone.trim()) throw new Error('手机号码不能为空');
       const cleanPhone = normalizeMemberPhone(phone);
+      if (!cleanPhone) throw new Error('手机号码不能为空');
       if (members.some(item => !item.isArchived && item.id !== id && normalizeMemberPhone(item.phone) === cleanPhone)) {
         throw new Error(`手机号 ${cleanPhone} 已被其他会员占用`);
       }
@@ -338,7 +339,8 @@ const db = {
     }
     m.updated_at = nowISO();
 
-    validateActiveMemberPhones(members);
+    // Legacy accounts may contain several conflicting pairs. Repair one ID at
+    // a time without rewriting historical phones or changing financial data.
     save(STORAGE_KEYS.MEMBERS, members);
     return m;
   },
@@ -492,7 +494,7 @@ const db = {
 
     target.isRefunded = true;
     if (m.isArchived && after !== 0) {
-      if (!m.phone.trim()) throw new Error('该注销会员缺少手机号，无法重新启用；请先核对并恢复完整会员档案后再撤销');
+      if (!normalizeMemberPhone(m.phone)) throw new Error('该注销会员缺少手机号，无法重新启用；请先核对并恢复完整会员档案后再撤销');
       m.isArchived = false;
       delete m.deleted_at;
       validateActiveMemberPhones(members);
@@ -655,7 +657,7 @@ const db = {
   },
 
   // --- 备份解析与格式校验内部工具 ---
-  parseAndValidateBackup(jsonString) {
+  parseAndValidateBackup(jsonString, { allowPhoneConflicts = false } = {}) {
     if (typeof jsonString !== 'string') throw new Error('备份必须是 JSON 文本');
     if (byteLength(jsonString) > DATA_LIMITS.backupBytes) throw new DataLimitError('备份文件过大');
     let parsed;
@@ -721,7 +723,7 @@ const db = {
     }));
     ledgers = normalizeRefunds(ledgers);
     members = restoreArchivedMembers(members, ledgers);
-    validateActiveMemberPhones(members);
+    if (!allowPhoneConflicts) validateActiveMemberPhones(members);
     validateAccountHistory(members, ledgers);
     if (services.some(item => !item || typeof item.id !== 'string' || typeof item.name !== 'string' ||
         !item.name.trim() || !Number.isFinite(item.price) || item.price < 0)) {
@@ -753,7 +755,7 @@ const db = {
       services: load(STORAGE_KEYS.SERVICES, DEFAULT_SERVICES),
       rechargePlans: load(STORAGE_KEYS.RECHARGE_PLANS, DEFAULT_RECHARGE_PLANS),
       ...(rechargeSettings === null ? {} : { rechargeSettings })
-    } })).data;
+    } }), { allowPhoneConflicts: true }).data;
   },
 
   readRecoveryState() {
@@ -765,9 +767,9 @@ const db = {
     catch (error) { return { ...current, data: null, dataError: error.message }; }
   },
 
-  applyCloudSnapshot(data, metadataKey, metadata, { allowRecovery = false } = {}) {
+  applyCloudSnapshot(data, metadataKey, metadata, { allowRecovery = false, allowPhoneConflicts = false } = {}) {
     if (mutation) throw new Error('不能在记账过程中替换云端账本');
-    const validated = this.parseAndValidateBackup(JSON.stringify({ data })).data;
+    const validated = this.parseAndValidateBackup(JSON.stringify({ data }), { allowPhoneConflicts }).data;
     let replaceJournal = false;
     if (allowRecovery) {
       const recovery = this.readRecoveryState();
@@ -806,7 +808,7 @@ const db = {
     const incomingMemberIds = new Set(backupMembers.map(member => member.id));
     const currentPhoneMap = new Map();
     for (const m of currentMembers) {
-      if (!m.isArchived && m.phone && !incomingMemberIds.has(m.id)) currentPhoneMap.set(m.phone.trim(), m);
+      if (!m.isArchived && m.phone && !incomingMemberIds.has(m.id)) currentPhoneMap.set(normalizeMemberPhone(m.phone), m);
     }
     const currentMemberIdSet = new Set(currentMembers.map(member => member.id));
 
@@ -815,7 +817,7 @@ const db = {
     let newMembersCount = 0;
     let existingMembersCount = 0;
     for (const bm of backupMembers) {
-      const cleanPhone = (bm.phone || '').trim();
+      const cleanPhone = normalizeMemberPhone(bm.phone || '');
       if (currentMemberIdSet.has(bm.id) || (!bm.isArchived && currentPhoneMap.has(cleanPhone))) {
         existingMembersCount++;
       } else {
@@ -1048,6 +1050,9 @@ for (const method of ['createMember', 'updateMember', 'deleteMember', 'recharge'
   db[method] = function (...args) {
     if (mutation) throw new Error('不能嵌套执行账本变更');
     validateMutationArgs(method, args);
+    if (['createMember', 'deleteMember', 'recharge', 'consume', 'refundLedger', 'recordLedger'].includes(method)) {
+      validateActiveMemberPhones(load(STORAGE_KEYS.MEMBERS));
+    }
     mutation = { method, args: JSON.parse(JSON.stringify(args)), generated: { ids: [], times: [] } };
     try { return implementation.apply(this, args); } finally { mutation = null; }
   };

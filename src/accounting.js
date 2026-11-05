@@ -1,6 +1,8 @@
 const financialFields = ['balance', 'total_recharge', 'total_consume'];
 
-export const normalizeMemberPhone = phone => phone.trim();
+// Use the same identity for formatted numbers in every client and the server.
+// Keep historical display text intact; only new/edited profiles store this value.
+export const normalizeMemberPhone = phone => phone.trim().replace(/\D/g, '');
 
 function indexLedgers(records) {
   const byId = new Map(), byMember = new Map();
@@ -18,7 +20,7 @@ export function validateActiveMemberPhones(members) {
     if (member.isArchived) continue;
     const phone = normalizeMemberPhone(member.phone);
     if (!phone || phones.has(phone)) {
-      throw new Error('账本包含空手机号或重复的在用会员手机号，请核对后恢复');
+      throw new Error('账本包含空手机号或重复的在用会员手机号，请按会员单号核对并修改档案后再记账');
     }
     phones.add(phone);
   }
@@ -120,9 +122,9 @@ export function mergeAccounts(current, incoming) {
   // 先为整份备份保留固定 ID 匹配，避免复用的旧手机号抢占另一位会员。
   const incomingIds = new Set(incoming.members.map(member => member.id));
   const incomingPhoneOwners = new Map(incoming.members.filter(member => !member.isArchived)
-    .map(member => [member.phone.trim(), member.id]));
-  const phoneMap = new Map(members.filter(member => !member.isArchived && member.phone.trim() && !incomingIds.has(member.id))
-    .map(member => [member.phone.trim(), member]));
+    .map(member => [normalizeMemberPhone(member.phone), member.id]));
+  const phoneMap = new Map(members.filter(member => !member.isArchived && normalizeMemberPhone(member.phone) && !incomingIds.has(member.id))
+    .map(member => [normalizeMemberPhone(member.phone), member]));
   const ledgerMap = new Map(ledgers.map(record => [record.id, record]));
   const historyOrder = new Map(ledgers.map((record, index) => [record.id, index]));
   const usedCurrentIds = new Set();
@@ -131,7 +133,7 @@ export function mergeAccounts(current, incoming) {
 
   for (const backupMember of incoming.members) {
     const currentMember = idMap.get(backupMember.id) ||
-      (!backupMember.isArchived && phoneMap.get(backupMember.phone.trim()));
+      (!backupMember.isArchived && phoneMap.get(normalizeMemberPhone(backupMember.phone)));
     if (currentMember && usedCurrentIds.has(currentMember.id)) {
       throw new Error('备份中的多个会员指向同一档案，无法自动合并');
     }
@@ -149,7 +151,7 @@ export function mergeAccounts(current, incoming) {
       const added = { ...backupMember };
       members.push(added);
       idMap.set(added.id, added);
-      if (!added.isArchived && added.phone.trim()) phoneMap.set(added.phone.trim(), added);
+      if (!added.isArchived && normalizeMemberPhone(added.phone)) phoneMap.set(normalizeMemberPhone(added.phone), added);
       if (!added.isArchived) newMembersAdded++;
       backupHistory.forEach((record, index) => historyOrder.set(record.id, index));
     } else {
@@ -173,7 +175,7 @@ export function mergeAccounts(current, incoming) {
 
       const incomingTime = Date.parse(backupMember.updated_at);
       const currentTime = Date.parse(currentMember.updated_at);
-      const phoneOwner = incomingPhoneOwners.get(currentMember.phone.trim());
+      const phoneOwner = incomingPhoneOwners.get(normalizeMemberPhone(currentMember.phone));
       // 同一毫秒内改号并复用旧号时，按固定 ID 对应的号码归属同步资料。
       const phoneReassigned = currentMember.id === backupMember.id && phoneOwner && phoneOwner !== backupMember.id;
       if (newRecords.length || (!localOnly.length && (incomingTime > currentTime ||

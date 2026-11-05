@@ -6,9 +6,9 @@ import { replayOperation } from '../src/cloud-storage.js';
 import { canWrite, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
 import { DATA_LIMITS, assertAccountLimits, assertJsonBudget, boundedText } from '../src/data-limits.js';
 
-export function validateSnapshot(data) {
+export function validateSnapshot(data, options) {
   assertAccountLimits(data && { ...data, ledgers: data.ledgers ?? [], services: data.services ?? DEFAULT_SERVICES, rechargePlans: data.rechargePlans ?? DEFAULT_RECHARGE_PLANS });
-  const validated = createLocalDb(null).parseAndValidateBackup(JSON.stringify({ data })).data;
+  const validated = createLocalDb(null).parseAndValidateBackup(JSON.stringify({ data }), options).data;
   for (const [items, label] of [[validated.services, '服务项目'], [validated.members, '会员']]) {
     if (new Set(items.map(item => item.id)).size !== items.length) throw new Error(label + '单号重复');
   }
@@ -16,8 +16,29 @@ export function validateSnapshot(data) {
 }
 const emptyData = () => ({ members: [], ledgers: [], services: DEFAULT_SERVICES, rechargePlans: DEFAULT_RECHARGE_PLANS });
 const sessionTimes = () => [new Date(Date.now() + 15 * 60000), new Date(Date.now() + 30 * 86400000)];
+const importReceiptId = (signature, index) => 'IMPORT-' + signature + '-' + index;
+function validateImportReceipt(value, operations) {
+  if (!value || !/^[a-f0-9]{64}$/.test(value.signature || '') ||
+      !/^[a-zA-Z0-9-]{16,80}$/.test(value.taskId || '') ||
+      !Number.isInteger(value.totalBatches) || value.totalBatches < 1 || value.totalBatches > 10000 ||
+      !Number.isInteger(value.batchIndex) || value.batchIndex < 0 || value.batchIndex >= value.totalBatches ||
+      !Number.isInteger(value.total) || value.total < 1 || value.total > 10000 ||
+      !Number.isInteger(value.count) || value.count < 1 || value.count > 50 || value.count > value.total ||
+      operations.length < value.count || operations.length > value.count * 2 ||
+      operations.some(op => !['createMember', 'updateMember', 'consume', 'recharge'].includes(op.method))) {
+    throw new ApiError(400, '导入批次标识无效');
+  }
+}
 
 export function createService(pool) {
+  async function importReceipts(client, user, signature) {
+    return (await client.query("SELECT request_hash,result FROM operations WHERE store_id=$1 AND method='admin_import_batch' AND id LIKE $2 ORDER BY (result->>'batchIndex')::int", [user.store_id, 'IMPORT-' + signature + '-%'])).rows;
+  }
+  const importStatus = rows => rows.length ? {
+    taskId: rows[0].result.taskId, total: rows[0].result.total,
+    count: rows.reduce((sum, row) => sum + row.result.count, 0),
+    status: rows.length === rows[0].result.totalBatches ? 'complete' : 'pending'
+  } : null;
   async function audit(client, user, event, details = {}, occurredAt = null) {
     await client.query('INSERT INTO audit_events(store_id,user_id,device_id,event,details,occurred_at) VALUES($1,$2,$3,$4,$5,$6)',
       [user.store_id, user.id, user.device_id || null, event, details, occurredAt]);
@@ -154,7 +175,15 @@ export function createService(pool) {
         return { data: next.data, revision: next.revision, integrity: next.integrity, acknowledged: [request.id] };
       });
     },
-    async sync(identity, operations) {
+    async importStatus(identity, signature) {
+      if (!/^[a-f0-9]{64}$/.test(signature)) throw new ApiError(400, '导入任务标识无效');
+      return transaction(pool, async client => {
+        const user = await lockedUser(client, identity);
+        if (user.role === 'viewer') throw new ApiError(403, '当前账号没有导入权限', 'FORBIDDEN');
+        return { signature, ...(importStatus(await importReceipts(client, user, signature)) || { status: 'absent', count: 0 }) };
+      });
+    },
+    async sync(identity, operations, importBatch = null) {
       if (!Array.isArray(operations) || operations.length > 100 || new Set(operations.map(op => op?.id)).size !== operations.length) throw new ApiError(400, '同步批次格式无效');
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
@@ -162,9 +191,26 @@ export function createService(pool) {
         try {
           assertJsonBudget(operations, operations.some(op => op?.method === 'importBackupData') ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes, DATA_LIMITS.backupBytes);
           operations.forEach(validateOperation);
+          if (importBatch !== null) { assertJsonBudget(importBatch, 1024); validateImportReceipt(importBatch, operations); }
         } catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
+        for (const operation of operations) if (operation.actorId !== user.id || operation.deviceId !== user.device_id) throw new ApiError(403, '操作账号或设备不匹配', 'FORBIDDEN');
         const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
         if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败', 'INTEGRITY_FAILED');
+        let receiptRows = [], receiptHash;
+        if (importBatch !== null) {
+          receiptRows = await importReceipts(client, user, importBatch.signature);
+          const previous = importStatus(receiptRows);
+          if (previous && previous.taskId !== importBatch.taskId) {
+            if (previous.status === 'complete') return { data: account.data, revision: account.revision, integrity: account.integrity,
+              acknowledged: operations.map(op => op.id), importReceipt: { signature: importBatch.signature, ...previous } };
+            throw new ApiError(409, '这份数据已部分导入，请在原设备继续确认，或核对后仅导入剩余记录', 'IMPORT_ALREADY_STARTED');
+          }
+          if (previous && (previous.total !== importBatch.total || receiptRows[0].result.totalBatches !== importBatch.totalBatches)) throw new ApiError(409, '原导入任务的批次声明已变化', 'SYNC_CONFLICT');
+          receiptHash = integrity({ operations, importBatch });
+          const existingReceipt = receiptRows.find(row => row.result.batchIndex === importBatch.batchIndex);
+          if (existingReceipt && existingReceipt.request_hash !== receiptHash) throw new ApiError(409, '原导入批次内容已变化', 'SYNC_CONFLICT');
+          if (!existingReceipt && importBatch.batchIndex !== receiptRows.length) throw new ApiError(409, '请按原导入批次顺序继续确认', 'SYNC_CONFLICT');
+        }
         let data = account.data, revision = account.revision;
         for (const operation of operations) {
           if (!canWrite(user.role, operation.method)) throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
@@ -177,7 +223,7 @@ export function createService(pool) {
             continue;
           }
           let applied;
-          try { applied = replayOperation(data, operation); data = validateSnapshot(applied.data); }
+          try { applied = replayOperation(data, operation); data = validateSnapshot(applied.data, { allowPhoneConflicts: operation.method === 'updateMember' }); }
           catch (error) { throw new ApiError(error.status || 409, error.message, error.code || 'SYNC_CONFLICT'); }
           revision++;
           await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
@@ -186,7 +232,17 @@ export function createService(pool) {
         }
         const checksum = integrity(data);
         await client.query('UPDATE accounts SET data=$1,revision=$2,integrity=$3 WHERE store_id=$4', [data, revision, checksum, user.store_id]);
-        return { data, revision, integrity: checksum, acknowledged: operations.map(op => op.id) };
+        let receipt;
+        if (importBatch !== null) {
+          if (!receiptRows.some(row => row.result.batchIndex === importBatch.batchIndex)) {
+            const count = receiptRows.reduce((sum, row) => sum + row.result.count, 0) + importBatch.count;
+            if (count > importBatch.total || importBatch.batchIndex === importBatch.totalBatches - 1 && count !== importBatch.total) throw new ApiError(400, '导入进度与记录总数不一致');
+            await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+              [user.store_id, importReceiptId(importBatch.signature, importBatch.batchIndex), user.id, user.device_id, 'admin_import_batch', receiptHash, importBatch, revision]);
+          }
+          receipt = { signature: importBatch.signature, ...importStatus(await importReceipts(client, user, importBatch.signature)) };
+        }
+        return { data, revision, integrity: checksum, acknowledged: operations.map(op => op.id), ...(receipt ? { importReceipt: receipt } : {}) };
       });
     },
     async resolveOperations(identity, operations) {

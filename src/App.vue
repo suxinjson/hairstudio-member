@@ -613,15 +613,19 @@ const connectionLabel = computed(() => {
   if (!cloudState.value.online) return '当前离线（已保存在本机）';
   if (cloudState.value.syncLoginRequired) return '登录失效 · 待重新登录';
   if (cloudState.value.status === 'conflict') return '需核对云端版本';
+  if (cloudState.value.syncStatus === 'checking') return '正在核验云端账本';
+  if (cloudState.value.syncStatus === 'error') return '同步失败 · 待重新确认';
   if (cloudState.value.outbox.length) return `联网 · 待同步 ${cloudState.value.outbox.length} 笔`;
-  return '在线同步';
+  return cloudState.value.syncStatus === 'confirmed' ? '在线同步' : '账本待确认';
 });
 const compactConnectionLabel = computed(() => {
   if (!cloudState.value.user) return isNativeApp && !cloudState.value.binding ? '本机' : '未登录';
   if (!cloudState.value.online) return '离线';
   if (cloudState.value.syncLoginRequired) return '待登录';
   if (cloudState.value.status === 'conflict') return '待核对';
-  return cloudState.value.outbox.length ? '待同步' : '已同步';
+  if (cloudState.value.syncStatus === 'checking') return '同步中';
+  if (cloudState.value.syncStatus === 'error') return '同步失败';
+  return cloudState.value.outbox.length ? '待同步' : cloudState.value.syncStatus === 'confirmed' ? '已同步' : '待确认';
 });
 const stopCloudSubscription = cloudClient.subscribe((state) => {
   cloudState.value = state;
