@@ -151,6 +151,10 @@
           :submit-operations="handleSyncOperations"
         />
 
+        <VoiceSettingsView
+          v-else-if="activeTab === 'voice'"
+        />
+
         <UsersView
           v-else-if="activeTab === 'users'"
         />
@@ -215,6 +219,7 @@ import MembersView from './views/MembersView.vue';
 import LedgersView from './views/LedgersView.vue';
 import ImportExportView from './views/ImportExportView.vue';
 import ServicesView from './views/ServicesView.vue';
+import VoiceSettingsView from './views/VoiceSettingsView.vue';
 import UsersView from './views/UsersView.vue';
 import AuditLogView from './views/AuditLogView.vue';
 
@@ -250,6 +255,7 @@ const navItems = [
   { key: 'ledgers', label: '财务流水', icon: '📑' },
   { key: 'import-export', label: '批量导入导出', icon: '📥', badge: '核心' },
   { key: 'services', label: '服务与卡项', icon: '💇' },
+  { key: 'voice', label: '语音播报', icon: '📢' },
   { key: 'users', label: '员工权限', icon: '🛡️' },
   { key: 'audit', label: '安全审计', icon: '🔍' }
 ];

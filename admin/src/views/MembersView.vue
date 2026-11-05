@@ -347,6 +347,7 @@ import { exportMembersToExcel } from '../utils/exporter.js';
 import { useOperationSubmission } from '../composables/useOperationSubmission.js';
 import { isValidMoney, moneyToCent } from '../../../src/money.js';
 import { normalizeMemberPhone } from '../../../src/accounting.js';
+import { voicePlayer } from '../utils/voice-player.js';
 
 const props = defineProps({
   members: { type: Array, default: () => [] },
@@ -457,6 +458,11 @@ async function submitRecharge() {
 
   isSubmitting.value = true;
   try {
+    const memberName = rechargingMember.value.name;
+    const balanceBefore = Number(rechargingMember.value.balance || 0);
+    const addedCents = moneyToCent(amt) + moneyToCent(giftAmt);
+    const balanceAfter = formatYuan(balanceBefore + addedCents);
+
     await submitOperation('recharge', [{
       memberId: rechargingMember.value.id,
       actualPay: amt,
@@ -465,6 +471,12 @@ async function submitRecharge() {
       remark: rechargeRemark.value.trim() || '后台管理充值'
     }]);
     rechargingMember.value = null;
+
+    voicePlayer.broadcast('recharge', {
+      name: memberName,
+      amount: amt,
+      balance: balanceAfter
+    });
   } catch (error) {
     alert('充值提交失败：' + error.message);
   } finally {

@@ -1,0 +1,566 @@
+<template>
+  <div class="space-y-6 max-w-4xl mx-auto pb-12">
+    <!-- 顶栏标题与操作 -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+      <div class="flex items-center gap-4">
+        <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center text-2xl shadow-inner shrink-0">
+          📢
+        </div>
+        <div>
+          <h2 class="text-lg font-black text-slate-900">语音播报服务配置</h2>
+          <p class="text-xs text-slate-400 mt-0.5">支持 Fish Audio 与 HeyGen 双引擎，收银结算与会员充值自动语音到账提示</p>
+        </div>
+      </div>
+
+      <!-- 全局启用开关 -->
+      <div class="flex items-center gap-3 bg-slate-50 px-4 py-2.5 rounded-xl border border-slate-200">
+        <span class="text-xs font-bold text-slate-700">播报总开关</span>
+        <button
+          type="button"
+          :disabled="!isOwner || isSaving"
+          @click="toggleEnabled"
+          class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50"
+          :class="form.enabled ? 'bg-emerald-600' : 'bg-slate-300'"
+        >
+          <span
+            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out"
+            :class="form.enabled ? 'translate-x-5' : 'translate-x-0'"
+          />
+        </button>
+        <span class="text-xs font-black" :class="form.enabled ? 'text-emerald-700' : 'text-slate-400'">
+          {{ form.enabled ? '已开启' : '已停用' }}
+        </span>
+      </div>
+    </div>
+
+    <!-- 权限提示 (非店主) -->
+    <div v-if="!isOwner" class="p-4 bg-amber-50 text-amber-900 rounded-2xl border border-amber-200 text-xs font-bold flex items-center gap-2">
+      <span>🔒</span> 提示：您当前以收银员/店员身份登录，仅支持查看与试听。修改语音播报配置需店主权限。
+    </div>
+
+    <!-- 消息提示栏 -->
+    <div v-if="message" class="p-4 rounded-2xl text-xs font-bold transition flex items-center justify-between"
+      :class="messageType === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'">
+      <div class="flex items-center gap-2">
+        <span>{{ messageType === 'success' ? '✅' : '⚠️' }}</span>
+        <span>{{ message }}</span>
+      </div>
+      <button @click="message = ''" class="text-slate-400 hover:text-slate-600">✕</button>
+    </div>
+
+    <!-- 1. 服务商选择 -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
+          <span>1. 选择 TTS 语音合成服务引擎</span>
+        </h3>
+        <span class="text-[11px] text-slate-400 font-medium">支持两套完全不同的 API 规范与返回流</span>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <!-- Fish Audio 卡片 -->
+        <div
+          @click="selectProvider('fish_audio')"
+          class="p-4 rounded-xl border-2 transition cursor-pointer relative"
+          :class="form.provider === 'fish_audio' ? 'border-emerald-600 bg-emerald-50/40 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'"
+        >
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <span class="text-2xl">🐟</span>
+              <div>
+                <div class="text-sm font-black text-slate-900">Fish Audio</div>
+                <div class="text-[10px] text-slate-400">api.fish.audio / v1 / tts</div>
+              </div>
+            </div>
+            <span v-if="form.provider === 'fish_audio'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前生效</span>
+          </div>
+          <p class="text-xs text-slate-500 leading-relaxed">
+            极速流式返回 MP3 二进制音频，低延迟，人声自然流畅，支持丰富音色克隆模型。
+          </p>
+        </div>
+
+        <!-- HeyGen 卡片 -->
+        <div
+          @click="selectProvider('heygen')"
+          class="p-4 rounded-xl border-2 transition cursor-pointer relative"
+          :class="form.provider === 'heygen' ? 'border-emerald-600 bg-emerald-50/40 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'"
+        >
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+              <span class="text-2xl">🤖</span>
+              <div>
+                <div class="text-sm font-black text-slate-900">HeyGen</div>
+                <div class="text-[10px] text-slate-400">api.heygen.com / v3 / audio</div>
+              </div>
+            </div>
+            <span v-if="form.provider === 'heygen'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前生效</span>
+          </div>
+          <p class="text-xs text-slate-500 leading-relaxed">
+            国际知名 AI 语音引擎，通过 X-Api-Key 鉴权，支持情感表达与高品质 WAV 音频生成。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. API 凭据与模型参数设置 -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
+          <span>2. {{ form.provider === 'fish_audio' ? 'Fish Audio' : 'HeyGen' }} 接口参数设置</span>
+        </h3>
+        <button
+          v-if="isOwner"
+          type="button"
+          @click="fillPresetCredentials"
+          class="text-xs text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 hover:bg-emerald-100 transition"
+        >
+          ✨ 填入我的配置预设
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- API URL -->
+        <div class="md:col-span-2 space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">API 接口地址 (URL)</label>
+            <button
+              v-if="isOwner"
+              type="button"
+              @click="resetDefaultUrl"
+              class="text-[11px] text-slate-500 hover:text-emerald-700 underline font-medium"
+            >
+              恢复默认地址
+            </button>
+          </div>
+          <input
+            v-model="form.apiUrl"
+            :disabled="!isOwner"
+            type="text"
+            :placeholder="defaultUrl"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+          />
+        </div>
+
+        <!-- API Key -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">
+              API Key 凭据
+              <span v-if="hasSavedKey" class="ml-1 text-[10px] text-emerald-700 font-bold bg-emerald-100 px-1.5 py-0.5 rounded">云端已配置</span>
+            </label>
+            <button
+              type="button"
+              @click="showKey = !showKey"
+              class="text-[11px] text-slate-500 hover:text-slate-800 font-medium"
+            >
+              {{ showKey ? '隐藏' : '显示' }}
+            </button>
+          </div>
+          <div class="relative">
+            <input
+              v-model="form.apiKey"
+              :disabled="!isOwner"
+              :type="showKey ? 'text' : 'password'"
+              :placeholder="hasSavedKey ? '已加密存储 (留空表示不修改)' : (form.provider === 'fish_audio' ? 'sk-fish-...' : 'sk_V2_...')"
+              class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+            />
+          </div>
+          <p class="text-[10px] text-slate-400">
+            {{ form.provider === 'fish_audio' ? '通过 Authorization: Bearer 鉴权' : '通过 X-Api-Key 请求头鉴权' }}
+          </p>
+        </div>
+
+        <!-- Model 模型名称 -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">模型标识 (Model)</label>
+            <button
+              v-if="isOwner"
+              type="button"
+              @click="resetDefaultModel"
+              class="text-[11px] text-slate-500 hover:text-emerald-700 underline font-medium"
+            >
+              恢复默认
+            </button>
+          </div>
+          <input
+            v-model="form.model"
+            :disabled="!isOwner"
+            type="text"
+            :placeholder="defaultModel"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+          />
+          <p class="text-[10px] text-slate-400">
+            {{ form.provider === 'fish_audio' ? '在 HTTP 请求头 model 中传递' : '在 JSON 请求体 model 中传递' }}
+          </p>
+        </div>
+
+        <!-- Voice ID / Reference ID -->
+        <div class="md:col-span-2 space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">
+              {{ form.provider === 'fish_audio' ? '参考音色 ID (reference_id)' : '音色 ID (voice_id)' }}
+            </label>
+            <button
+              v-if="isOwner"
+              type="button"
+              @click="resetDefaultVoiceId"
+              class="text-[11px] text-slate-500 hover:text-emerald-700 underline font-medium"
+            >
+              恢复默认
+            </button>
+          </div>
+          <input
+            v-model="form.voiceId"
+            :disabled="!isOwner"
+            type="text"
+            :placeholder="defaultVoiceId"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+          />
+          <p class="text-[10px] text-slate-400">
+            指定用于发音的声音角色编号（可在服务商控制台获取）
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. 播报文案模板 -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
+          <span>3. 业务播报文案模板</span>
+        </h3>
+        <span class="text-[11px] text-slate-400 font-medium">支持变量：{name} 姓名、{amount} 金额、{balance} 余额</span>
+      </div>
+
+      <div class="space-y-4">
+        <!-- 消费扣款模板 -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">会员消费扣款播报文案</label>
+            <div class="flex gap-1.5">
+              <button
+                type="button"
+                v-for="v in ['{name}', '{amount}', '{balance}']"
+                :key="v"
+                @click="insertVar('consume', v)"
+                class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-mono transition"
+              >
+                +{{ v }}
+              </button>
+            </div>
+          </div>
+          <input
+            v-model="form.templates.consume"
+            :disabled="!isOwner"
+            type="text"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+          />
+        </div>
+
+        <!-- 充值成功模板 -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">会员充值到账播报文案</label>
+            <div class="flex gap-1.5">
+              <button
+                type="button"
+                v-for="v in ['{name}', '{amount}', '{balance}']"
+                :key="v"
+                @click="insertVar('recharge', v)"
+                class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-mono transition"
+              >
+                +{{ v }}
+              </button>
+            </div>
+          </div>
+          <input
+            v-model="form.templates.recharge"
+            :disabled="!isOwner"
+            type="text"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 试听测试与音量控制 -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
+          <span>4. 实时试听测试与音量调节</span>
+        </h3>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500 font-bold">音量: {{ Math.round(form.volume * 100) }}%</span>
+          <input
+            v-model.number="form.volume"
+            type="range"
+            min="0.1"
+            max="1.0"
+            step="0.05"
+            class="w-24 accent-emerald-600 cursor-pointer"
+          />
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input
+            v-model="testText"
+            type="text"
+            placeholder="输入需要试听的测试文本..."
+            class="flex-1 h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600"
+            @keyup.enter="handleTestPlay"
+          />
+          <button
+            type="button"
+            :disabled="isTesting || !testText.trim()"
+            @click="handleTestPlay"
+            class="h-11 px-6 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-md shadow-emerald-900/20 disabled:opacity-50 shrink-0"
+          >
+            <span v-if="isTesting" class="animate-spin text-sm">⏳</span>
+            <span v-else>▶</span>
+            <span>{{ isTesting ? '合成中...' : (isPlaying ? '正在播放中' : '试听测试') }}</span>
+          </button>
+          <button
+            v-if="isPlaying"
+            type="button"
+            @click="handleStopPlay"
+            class="h-11 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition shrink-0"
+          >
+            ⏹ 停止
+          </button>
+        </div>
+        <p class="text-[11px] text-slate-400">
+          💡 点击试听测试将实时调用后端合成接口验证当前的 API Key、服务商与音色 ID，确认生效后点击下方保存。
+        </p>
+      </div>
+    </div>
+
+    <!-- 底部保存按钮 -->
+    <div v-if="isOwner" class="flex justify-end gap-3 pt-2">
+      <button
+        type="button"
+        @click="loadConfig"
+        :disabled="isSaving"
+        class="h-11 px-5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition disabled:opacity-50"
+      >
+        取消修改
+      </button>
+      <button
+        type="button"
+        @click="handleSave"
+        :disabled="isSaving"
+        class="h-11 px-8 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition shadow-lg shadow-emerald-900/30 flex items-center gap-2 disabled:opacity-50"
+      >
+        <span v-if="isSaving" class="animate-spin">⏳</span>
+        <span>{{ isSaving ? '保存中...' : '保存播报配置' }}</span>
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { adminApi } from '../api/client.js';
+import { voicePlayer } from '../utils/voice-player.js';
+
+const DEFAULTS = {
+  fish_audio: {
+    apiUrl: 'https://api.fish.audio/v1/tts',
+    model: 's2.1-pro-free',
+    voiceId: '74c6aba5cbf94a15bbdc547ffce5cb38'
+  },
+  heygen: {
+    apiUrl: 'https://api.heygen.com/v3/models/audio/tts',
+    model: 'heygen-voice-1-turbo-free',
+    voiceId: '83548de556df48ba8c09c42a57c51d85'
+  }
+};
+
+// 预设用户提供的测试凭证，方便一键快捷填入
+const PRESETS = {
+  fish_audio: {
+    apiKey: 'sk-fish-rIZLqffVSL97Y_D8p825oOP4KmXBmZxF6NFPDRaU6V4',
+    voiceId: '74c6aba5cbf94a15bbdc547ffce5cb38',
+    model: 's2.1-pro-free'
+  },
+  heygen: {
+    apiKey: 'sk_V2_hgu_kkKageLNzi1_JcihQIEY0JuhqYqc8iUFLWlkzHgwsnDF',
+    voiceId: '83548de556df48ba8c09c42a57c51d85',
+    model: 'heygen-voice-1-turbo-free'
+  }
+};
+
+const isOwner = computed(() => adminApi.user.value?.role === 'owner');
+
+const form = reactive({
+  enabled: false,
+  provider: 'fish_audio',
+  apiUrl: '',
+  apiKey: '',
+  model: '',
+  voiceId: '',
+  volume: 1.0,
+  templates: {
+    consume: '{name} 消费 {amount} 元，卡内余额 {balance} 元',
+    recharge: '{name} 充值 {amount} 元，卡内余额 {balance} 元'
+  }
+});
+
+const hasSavedKey = ref(false);
+const showKey = ref(false);
+const testText = ref('欢迎光临梦飞空间，张三消费 50 元，卡内余额 200 元');
+const isTesting = ref(false);
+const isPlaying = ref(false);
+const isSaving = ref(false);
+const message = ref('');
+const messageType = ref('success');
+
+const defaultUrl = computed(() => DEFAULTS[form.provider]?.apiUrl || '');
+const defaultModel = computed(() => DEFAULTS[form.provider]?.model || '');
+const defaultVoiceId = computed(() => DEFAULTS[form.provider]?.voiceId || '');
+
+function showTip(text, type = 'success') {
+  message.value = text;
+  messageType.value = type;
+  setTimeout(() => {
+    if (message.value === text) message.value = '';
+  }, 5000);
+}
+
+function selectProvider(provider) {
+  if (!isOwner.value) return;
+  form.provider = provider;
+  if (!form.model || form.model === DEFAULTS[provider === 'fish_audio' ? 'heygen' : 'fish_audio'].model) {
+    form.model = DEFAULTS[provider].model;
+  }
+  if (!form.voiceId || form.voiceId === DEFAULTS[provider === 'fish_audio' ? 'heygen' : 'fish_audio'].voiceId) {
+    form.voiceId = DEFAULTS[provider].voiceId;
+  }
+}
+
+function toggleEnabled() {
+  if (!isOwner.value) return;
+  form.enabled = !form.enabled;
+}
+
+function resetDefaultUrl() {
+  form.apiUrl = DEFAULTS[form.provider]?.apiUrl || '';
+}
+
+function resetDefaultModel() {
+  form.model = DEFAULTS[form.provider]?.model || '';
+}
+
+function resetDefaultVoiceId() {
+  form.voiceId = DEFAULTS[form.provider]?.voiceId || '';
+}
+
+function fillPresetCredentials() {
+  const preset = PRESETS[form.provider];
+  if (!preset) return;
+  form.apiKey = preset.apiKey;
+  form.voiceId = preset.voiceId;
+  form.model = preset.model;
+  form.apiUrl = DEFAULTS[form.provider].apiUrl;
+  showTip(`已载入 ${form.provider === 'fish_audio' ? 'Fish Audio' : 'HeyGen'} 预设凭证，可直接点击试听`, 'success');
+}
+
+function insertVar(type, variable) {
+  if (!isOwner.value) return;
+  if (!form.templates[type]) form.templates[type] = '';
+  form.templates[type] += variable;
+}
+
+async function loadConfig() {
+  try {
+    const data = await adminApi.getVoiceConfig();
+    form.enabled = Boolean(data.enabled);
+    form.provider = data.provider || 'fish_audio';
+    form.apiUrl = data.apiUrl || '';
+    form.apiKey = data.apiKey || '';
+    form.model = data.model || DEFAULTS[form.provider].model;
+    form.voiceId = data.voiceId || DEFAULTS[form.provider].voiceId;
+    form.volume = typeof data.volume === 'number' ? data.volume : 1.0;
+    if (data.templates) {
+      form.templates.consume = data.templates.consume || '{name} 消费 {amount} 元，卡内余额 {balance} 元';
+      form.templates.recharge = data.templates.recharge || '{name} 充值 {amount} 元，卡内余额 {balance} 元';
+    }
+    hasSavedKey.value = Boolean(data.hasApiKey);
+  } catch (err) {
+    showTip('加载语音配置失败: ' + err.message, 'error');
+  }
+}
+
+async function handleTestPlay() {
+  if (!testText.value.trim()) return;
+  isTesting.value = true;
+  isPlaying.value = true;
+  message.value = '';
+
+  try {
+    await voicePlayer.queueSpeak(testText.value.trim(), {
+      volume: form.volume,
+      testOptions: {
+        provider: form.provider,
+        apiUrl: form.apiUrl || defaultUrl.value,
+        apiKey: form.apiKey,
+        model: form.model || defaultModel.value,
+        voiceId: form.voiceId || defaultVoiceId.value
+      }
+    });
+    showTip('音频合成并播放成功！', 'success');
+  } catch (err) {
+    showTip('试听失败: ' + err.message, 'error');
+  } finally {
+    isTesting.value = false;
+    isPlaying.value = false;
+  }
+}
+
+function handleStopPlay() {
+  voicePlayer.stop();
+  isPlaying.value = false;
+  isTesting.value = false;
+}
+
+async function handleSave() {
+  if (!isOwner.value) return;
+  isSaving.value = true;
+  message.value = '';
+
+  try {
+    const payload = {
+      enabled: form.enabled,
+      provider: form.provider,
+      apiUrl: form.apiUrl.trim(),
+      apiKey: form.apiKey.trim(),
+      model: form.model.trim(),
+      voiceId: form.voiceId.trim(),
+      volume: form.volume,
+      templates: {
+        consume: form.templates.consume.trim(),
+        recharge: form.templates.recharge.trim()
+      }
+    };
+
+    const result = await adminApi.saveVoiceConfig(payload);
+    hasSavedKey.value = Boolean(result.hasApiKey);
+    voicePlayer.invalidateConfig();
+    showTip('语音播报配置已成功保存！', 'success');
+  } catch (err) {
+    showTip('保存配置失败: ' + err.message, 'error');
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+onMounted(() => {
+  loadConfig();
+});
+
+onUnmounted(() => {
+  voicePlayer.stop();
+});
+</script>

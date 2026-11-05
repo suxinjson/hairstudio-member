@@ -27,11 +27,11 @@ export async function configureRuntimeRole(pool, password) {
     await client.query('GRANT USAGE ON SCHEMA public TO member_app');
     await client.query('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM member_app');
     await client.query('REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM member_app');
-    await client.query('REVOKE ALL ON stores,users,accounts,sessions,login_limits,operations,audit_events,releases FROM PUBLIC');
+    await client.query('REVOKE ALL ON stores,users,accounts,sessions,login_limits,operations,audit_events,releases,store_settings FROM PUBLIC');
     await client.query('REVOKE ALL ON SEQUENCE audit_events_id_seq FROM PUBLIC');
     await client.query('GRANT SELECT ON stores,releases TO member_app');
     await client.query('GRANT UPDATE(id) ON stores TO member_app'); // FOR UPDATE store serialization.
-    await client.query('GRANT SELECT,INSERT,UPDATE ON users TO member_app');
+    await client.query('GRANT SELECT,INSERT,UPDATE ON users,store_settings TO member_app');
     await client.query('GRANT SELECT,UPDATE ON accounts TO member_app');
     await client.query('GRANT SELECT,INSERT,UPDATE,DELETE ON sessions,login_limits TO member_app');
     await client.query('GRANT SELECT,INSERT ON operations,audit_events TO member_app');

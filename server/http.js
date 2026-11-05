@@ -104,6 +104,22 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       if (route === 'GET /api/v1/activity') return send(200, await service.auditLog(identity, {
         before: url.searchParams.get('before'), limit: url.searchParams.get('limit') ?? 100
       }));
+      if (route === 'GET /api/v1/voice/config') return send(200, await service.getVoiceConfig(identity));
+      if (route === 'POST /api/v1/voice/config') {
+        await service.authorize(identity, 'owner'); guard.take('admin:' + identity.id, 10);
+        return send(200, await service.saveVoiceConfig(identity, await body(request, 8 * 1024)));
+      }
+      if (route === 'POST /api/v1/voice/synthesize') {
+        guard.take('voice:' + identity.id, 30);
+        const input = await body(request, 8 * 1024);
+        const { buffer, contentType } = await service.synthesizeVoice(identity, input);
+        response.writeHead(200, {
+          'Content-Type': contentType,
+          'Content-Length': buffer.length,
+          'Cache-Control': 'no-store'
+        });
+        return response.end(buffer);
+      }
       if (route === 'GET /api/v1/updates/latest') {
         const { rows: [release] } = await pool.query('SELECT * FROM releases ORDER BY version_code DESC LIMIT 1');
         return send(200, release ? {

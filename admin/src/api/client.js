@@ -12,8 +12,13 @@ const identityKey = user => user ? user.storeId + ':' + user.id : '';
 const sessionError = () => Object.assign(new Error('登录账号已变化，请重新加载账本'), { status: 401, code: 'SESSION_CHANGED' });
 const centToAmount = cents => (BigInt(cents) / 100n).toString() + '.' + (BigInt(cents) % 100n).toString().padStart(2, '0');
 
+const memoryStorage = () => {
+  const map = new Map();
+  return { getItem: k => map.get(k) ?? null, setItem: (k, v) => map.set(k, String(v)), removeItem: k => map.delete(k) };
+};
+
 export class AdminApiClient {
-  constructor({ storage = globalThis.localStorage, fetch: requestFetch = (...args) => fetch(...args),
+  constructor({ storage = globalThis.localStorage || memoryStorage(), fetch: requestFetch = (...args) => fetch(...args),
     locks, indexedDB, eventTarget = globalThis.window } = {}) {
     this.storage = storage; this.requestFetch = requestFetch; this.lockOptions = { locks, indexedDB };
     this.accessToken = ref(''); this.refreshToken = ref(''); this.user = ref(null);
@@ -519,6 +524,59 @@ export class AdminApiClient {
       }
       throw error;
     } finally { this.importing.value = false; }
+  }
+
+  async getVoiceConfig() {
+    return this.request('/api/v1/voice/config');
+  }
+
+  async saveVoiceConfig(config) {
+    return this.request('/api/v1/voice/config', {
+      method: 'POST',
+      body: JSON.stringify(config)
+    });
+  }
+
+  async synthesizeVoice(options) {
+    this.restoreSession();
+    const generation = this.generation;
+    const previousAccess = this.accessToken.value;
+    const execute = async token => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      try {
+        const response = await this.requestFetch('/api/v1/voice/synthesize', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: 'Bearer ' + token } : {})
+          },
+          body: JSON.stringify(options),
+          signal: controller.signal
+        });
+        if (!response.ok) {
+          let errMessage = '语音合成失败 (' + response.status + ')';
+          try {
+            const data = await response.json();
+            errMessage = data.error || errMessage;
+          } catch {}
+          throw Object.assign(new Error(errMessage), { status: response.status });
+        }
+        return await response.blob();
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    try {
+      return await execute(previousAccess);
+    } catch (error) {
+      if (error.status !== 401) throw error;
+      this.assertSession(generation);
+      if (!await this.refresh(previousAccess)) throw Object.assign(new Error('登录会话已过期，请重新登录'), { status: 401 });
+      this.assertSession(generation);
+      return await execute(this.accessToken.value);
+    }
   }
 }
 

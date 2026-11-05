@@ -5,6 +5,7 @@ import { createLocalDb, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from '../src/
 import { replayOperation } from '../src/cloud-storage.js';
 import { canWrite, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
 import { DATA_LIMITS, assertAccountLimits, assertJsonBudget, boundedText } from '../src/data-limits.js';
+import { sanitizeVoiceConfig, synthesizeTTS, maskApiKey } from './voice.js';
 
 export function validateSnapshot(data, options) {
   assertAccountLimits(data && { ...data, ledgers: data.ledgers ?? [], services: data.services ?? DEFAULT_SERVICES, rechargePlans: data.rechargePlans ?? DEFAULT_RECHARGE_PLANS });
@@ -30,7 +31,7 @@ function validateImportReceipt(value, operations) {
   }
 }
 
-export function createService(pool) {
+export function createService(pool, { fetchFn = fetch } = {}) {
   async function importReceipts(client, user, signature) {
     return (await client.query("SELECT request_hash,result FROM operations WHERE store_id=$1 AND method='admin_import_batch' AND id LIKE $2 ORDER BY (result->>'batchIndex')::int", [user.store_id, 'IMPORT-' + signature + '-%'])).rows;
   }
@@ -337,6 +338,78 @@ export function createService(pool) {
         if (!/^[1-9]\d{0,2}$/.test(String(limit)) || Number(limit) > 500 ||
             before !== null && (!/^[1-9]\d{0,18}$/.test(String(before)) || BigInt(before) > 9223372036854775807n)) throw new ApiError(400, '审计日志分页参数无效');
         return (await client.query('SELECT a.id,a.event,a.device_id,a.details,a.occurred_at,a.received_at,u.display_name FROM audit_events a LEFT JOIN users u ON u.id=a.user_id WHERE a.store_id=$1 AND ($2::bigint IS NULL OR a.id<$2::bigint) ORDER BY a.id DESC LIMIT $3', [user.store_id, before, Number(limit)])).rows;
+      });
+    },
+    async getVoiceConfig(identity) {
+      return transaction(pool, async client => {
+        const user = await lockedUser(client, identity);
+        const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
+        const saved = rows[0]?.voice_config || {};
+        const config = sanitizeVoiceConfig(saved);
+        return {
+          ...config,
+          apiKey: user.role === 'owner' ? config.apiKey : maskApiKey(config.apiKey),
+          hasApiKey: Boolean(config.apiKey)
+        };
+      });
+    },
+    async saveVoiceConfig(identity, input) {
+      return transaction(pool, async client => {
+        await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
+        const user = await lockedUser(client, identity);
+        if (user.role !== 'owner') throw new ApiError(403, '仅店主可以修改语音播报配置');
+        const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1 FOR UPDATE', [user.store_id]);
+        const previous = rows[0]?.voice_config || {};
+        const next = sanitizeVoiceConfig(input, previous);
+        await client.query(
+          'INSERT INTO store_settings(store_id, voice_config, updated_at) VALUES($1, $2, now()) ON CONFLICT(store_id) DO UPDATE SET voice_config=$2, updated_at=now()',
+          [user.store_id, JSON.stringify(next)]
+        );
+        await audit(client, user, 'voice_config_updated', { provider: next.provider, enabled: next.enabled });
+        return {
+          ...next,
+          apiKey: next.apiKey,
+          hasApiKey: Boolean(next.apiKey)
+        };
+      });
+    },
+    async synthesizeVoice(identity, options = {}) {
+      return transaction(pool, async client => {
+        const user = await lockedUser(client, identity);
+        const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
+        const saved = rows[0]?.voice_config || {};
+        const config = sanitizeVoiceConfig(saved);
+
+        let provider = config.provider;
+        let apiUrl = config.apiUrl;
+        let apiKey = config.apiKey;
+        let model = config.model;
+        let voiceId = config.voiceId;
+        const text = options.text;
+
+        if (user.role === 'owner' && options.test) {
+          if (options.provider && ['fish_audio', 'heygen'].includes(options.provider)) provider = options.provider;
+          if (typeof options.apiUrl === 'string') apiUrl = options.apiUrl.trim();
+          if (typeof options.apiKey === 'string' && options.apiKey.trim() && !options.apiKey.includes('****')) {
+            apiKey = options.apiKey.trim();
+          }
+          if (typeof options.model === 'string') model = options.model.trim();
+          if (typeof options.voiceId === 'string') voiceId = options.voiceId.trim();
+        }
+
+        if (!config.enabled && !options.test) {
+          throw new ApiError(400, '语音播报功能未启用');
+        }
+
+        return synthesizeTTS({
+          provider,
+          apiUrl,
+          apiKey,
+          model,
+          voiceId,
+          text,
+          fetchFn
+        });
       });
     }
   };

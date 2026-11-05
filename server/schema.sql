@@ -40,3 +40,8 @@ CREATE TABLE IF NOT EXISTS releases (
   certificate_sha256 text NOT NULL, min_sdk integer NOT NULL DEFAULT 24,
   notes text NOT NULL DEFAULT '', published_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS store_settings (
+  store_id uuid PRIMARY KEY REFERENCES stores(id),
+  voice_config jsonb NOT NULL DEFAULT '{}',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
