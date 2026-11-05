@@ -839,6 +839,26 @@ test('update publication checks file integrity, fixed certificate and strictly i
   assert.equal(response.status, 200); assert.equal(digest(Buffer.from(await response.arrayBuffer())), manifest.sha256);
 });
 
+test('release retention cleans up older physical APK files and database records beyond retention limit', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'member-release-retention-'));
+  t.after(async () => { assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep)); await rm(directory, { recursive: true }); });
+  const certificate = 'a'.repeat(64);
+  const files = [];
+  for (let version = 10; version <= 13; version++) {
+    const bytes = Buffer.from('APK-version-' + version);
+    const manifest = buildUpdateManifest(bytes, { versionCode: version, versionName: '1.0.' + version, certificateSha256: certificate });
+    await publishRelease(pool, manifest, bytes, directory, certificate, { retentionCount: 2 });
+    files.push(join(directory, manifest.sha256 + '.apk'));
+  }
+  const { stat } = await import('node:fs/promises');
+  await assert.rejects(stat(files[0]));
+  await assert.rejects(stat(files[1]));
+  assert.ok(await stat(files[2]));
+  assert.ok(await stat(files[3]));
+  const { rows } = await pool.query('SELECT version_code FROM releases WHERE version_code >= 10 ORDER BY version_code ASC');
+  assert.deepEqual(rows.map(r => r.version_code), [12, 13]);
+});
+
 test('a token refresh does not erase operations recorded while secure storage is saving', async () => {
   const account = await initialAccount(); let delay = false, saved = null, seen, release;
   const saving = new Promise(resolve => { seen = resolve; });
