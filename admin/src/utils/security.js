@@ -38,14 +38,16 @@ export function useAutoLock(onLock, timeoutMinutes = 15) {
     }, timeoutMs);
   };
 
+  const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+
   onMounted(() => {
-    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
     events.forEach(evt => window.addEventListener(evt, resetTimer, { passive: true }));
     resetTimer();
   });
 
   onUnmounted(() => {
     if (timer) clearTimeout(timer);
+    events.forEach(evt => window.removeEventListener(evt, resetTimer));
   });
 
   return { resetTimer };

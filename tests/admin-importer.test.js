@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as XLSX from 'xlsx';
 import {
   sanitizeCellValue,
   guessColumnMapping,
+  parseImportMoney,
+  parseUploadedFile,
   validateImportBatch
 } from '../admin/src/utils/importer.js';
 import { maskPhone, formatYuan } from '../admin/src/utils/security.js';
@@ -72,4 +75,49 @@ test('formatYuan accurately formats integer cents to 2-decimal string', () => {
   assert.equal(formatYuan(10050), '100.50');
   assert.equal(formatYuan(0), '0.00');
   assert.equal(formatYuan(-3500), '-35.00');
+});
+
+test('column ownership is independent of order and ambiguous money columns stay unselected', () => {
+  assert.deepEqual(guessColumnMapping(['赠金余额', '本金余额', '会员标签', '手机号码', '会员姓名']),
+    { name: 4, phone: 3, balance: 1, gift: 0, remark: null, tag: 2 });
+  assert.equal(guessColumnMapping(['本金余额', '可用余额', '手机号', '姓名']).balance, null);
+});
+
+test('money parsing preserves cents and rejects rounding, exponent notation, malformed grouping and overflow', () => {
+  assert.equal(parseImportMoney('￥1,234.56元'), 123456);
+  assert.equal(parseImportMoney('-100.01', { signed: true }), -10001);
+  assert.equal(parseImportMoney('90071992547409.91'), Number.MAX_SAFE_INTEGER);
+  for (const text of ['1.005', '1e3', '1,2', '90071992547409.92', 'Infinity', '0x10']) assert.throws(() => parseImportMoney(text));
+  assert.throws(() => parseImportMoney('-1'));
+});
+
+test('import precheck matches only active phone holders and counts explicit debt entries', () => {
+  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: null, tag: null };
+  const active = { id: 'active', name: '在用', phone: '13800001111', balance: 0 };
+  const archived = { ...active, id: 'archived', isArchived: true };
+  const rows = [['欠款', active.phone, '-100.01', '0']];
+  const report = validateImportBatch(rows, mapping, [active, archived], { conflictStrategy: 'merge_balance' });
+  assert.equal(report.results[0].existingMember.id, active.id);
+  assert.equal(report.debtCount, 1);
+  assert.equal(validateImportBatch(rows, mapping, [archived]).results[0].status, 'valid_new');
+  assert.equal(validateImportBatch([['精度错误', active.phone, '1.005', '0']], mapping).invalidCount, 1);
+  assert.throws(() => validateImportBatch(rows, { ...mapping, gift: 2 }));
+});
+
+test('uploaded CSV notation and underlying Excel precision reach precheck without coercion or display rounding', async () => {
+  const csv = new TextEncoder().encode('姓名,手机号,本金余额\n指数金额,13800001111,1e3\n十六进制,13800001112,0x10\n正常金额,13800001113,12.34');
+  const csvResult = await parseUploadedFile({ name: 'members.csv', size: csv.byteLength, arrayBuffer: async () => csv.buffer });
+  const csvReport = validateImportBatch(csvResult.dataRows, csvResult.mapping);
+  assert.equal(csvReport.invalidCount, 2); assert.equal(csvReport.validCount, 1);
+  assert.equal(csvReport.results[2].data.balanceCents, 1234);
+
+  const sheet = XLSX.utils.aoa_to_sheet([['姓名', '手机号', '本金余额'], ['隐藏小数', '13800001111', 1.005], ['正常金额', '13800001112', 12.34]]);
+  sheet.C2.z = '0.00';
+  const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, '会员');
+  const bytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
+  const excelResult = await parseUploadedFile({ name: 'members.xlsx', size: bytes.byteLength,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
+  const excelReport = validateImportBatch(excelResult.dataRows, excelResult.mapping);
+  assert.equal(excelReport.invalidCount, 1); assert.equal(excelReport.validCount, 1);
+  assert.equal(excelReport.results[1].data.balanceCents, 1234);
 });

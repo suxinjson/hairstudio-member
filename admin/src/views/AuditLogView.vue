@@ -7,9 +7,10 @@
       </div>
       <button
         @click="exportLogs"
+        :disabled="isExporting"
         class="h-10 px-4 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black shadow transition flex items-center gap-1.5"
       >
-        <span>📤</span> 导出审计 Excel 归档
+        <span>📤</span> {{ isExporting ? `正在收集 ${exportCount} 条日志…` : '导出全部审计 Excel 归档' }}
       </button>
     </div>
 
@@ -57,6 +58,7 @@
         </table>
       </div>
     </div>
+    <button v-if="hasMore" @click="loadLogs(true)" :disabled="loading" class="px-4 py-2 bg-white border rounded-xl text-sm">加载更早记录</button>
   </div>
 </template>
 
@@ -67,11 +69,17 @@ import { exportAuditLogsToExcel } from '../utils/exporter.js';
 
 const logs = ref([]);
 const loading = ref(false);
+const hasMore = ref(false);
+const isExporting = ref(false);
+const exportCount = ref(0);
 
-async function loadLogs() {
+async function loadLogs(append = false) {
+  if (loading.value) return;
   loading.value = true;
   try {
-    logs.value = await adminApi.getActivity();
+    const page = await adminApi.getActivity({ before: append ? logs.value.at(-1)?.id : undefined });
+    logs.value = append ? [...logs.value, ...page] : page;
+    hasMore.value = page.length === 100;
   } catch (err) {
     alert('加载审计日志失败: ' + err.message);
   } finally {
@@ -79,8 +87,14 @@ async function loadLogs() {
   }
 }
 
-function exportLogs() {
-  exportAuditLogsToExcel(logs.value, '梦飞空间安全审计日志');
+async function exportLogs() {
+  if (isExporting.value) return;
+  isExporting.value = true; exportCount.value = 0;
+  try {
+    const all = await adminApi.getAllActivity(count => { exportCount.value = count; });
+    exportAuditLogsToExcel(all, '梦飞空间安全审计日志');
+  } catch (error) { alert('完整审计导出失败：' + error.message); }
+  finally { isExporting.value = false; }
 }
 
 function formatDateTime(isoStr) {

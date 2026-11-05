@@ -174,7 +174,14 @@
           <div><span class="text-slate-400">会员：</span><strong class="text-slate-800">{{ refundingItem.memberName }}</strong></div>
           <div><span class="text-slate-400">金额：</span><strong class="text-slate-800">{{ (refundingItem.changeAmount / 100).toFixed(2) }} 元</strong></div>
           <div><span class="text-slate-400">类型：</span><strong class="text-slate-800">{{ refundingItem.type === 'RECHARGE' ? '充值入账' : '消费扣款' }}</strong></div>
+          <div><span class="text-slate-400">当前余额：</span>{{ formatYuan(observedBalance) }} 元</div>
+          <div :class="refundBalanceAfter < 0 ? 'text-rose-700' : 'text-slate-800'">撤销后余额：{{ formatYuan(refundBalanceAfter) }} 元</div>
         </div>
+        <label v-if="refundBalanceAfter < 0" class="flex gap-2 text-xs text-rose-700 mb-4">
+          <input v-model="debtAcknowledged" type="checkbox" />
+          我已核对，确认撤销后将产生 {{ formatYuan(-refundBalanceAfter) }} 元欠款。
+        </label>
+        <p v-if="refundError" class="text-xs text-rose-700 mb-4" role="alert">{{ refundError }}</p>
 
         <div class="flex gap-2.5">
           <button
@@ -185,7 +192,7 @@
           </button>
           <button
             @click="executeRefund"
-            :disabled="isSubmitting"
+            :disabled="isSubmitting || (refundBalanceAfter < 0 && !debtAcknowledged)"
             class="flex-1 h-11 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-black text-sm disabled:opacity-50"
           >
             {{ isSubmitting ? '冲正处理中...' : '确认撤单冲正' }}
@@ -197,15 +204,19 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { formatYuan, maskPhone } from '../utils/security.js';
 import { exportLedgersToExcel } from '../utils/exporter.js';
+import { adminApi } from '../api/client.js';
+import { useOperationSubmission } from '../composables/useOperationSubmission.js';
 
 const props = defineProps({
-  ledgers: { type: Array, default: () => [] }
+  ledgers: { type: Array, default: () => [] },
+  members: { type: Array, default: () => [] },
+  submitOperations: { type: Function, required: true }
 });
 
-const emit = defineEmits(['sync-operations']);
+const submitOperation = useOperationSubmission(operations => props.submitOperations(operations));
 
 const searchQuery = ref('');
 const activeType = ref('all');
@@ -267,28 +278,41 @@ function formatDateTime(isoStr) {
 // 冲正撤销操作
 const refundingItem = ref(null);
 const isSubmitting = ref(false);
+const observedBalance = ref(0);
+const debtAcknowledged = ref(false);
+const refundError = ref('');
+const refundBalanceAfter = computed(() => observedBalance.value - (refundingItem.value?.changeAmount || 0));
+watch(() => props.members.find(member => member.id === refundingItem.value?.memberId)?.balance, value => {
+  if (value !== undefined && value !== observedBalance.value) { observedBalance.value = value; debtAcknowledged.value = false; }
+});
 
 function confirmRefund(item) {
   refundingItem.value = item;
+  observedBalance.value = props.members.find(member => member.id === item.memberId)?.balance || 0;
+  debtAcknowledged.value = false; refundError.value = '';
 }
 
 async function executeRefund() {
-  if (!refundingItem.value) return;
+  if (!refundingItem.value || isSubmitting.value || (refundBalanceAfter.value < 0 && !debtAcknowledged.value)) return;
   isSubmitting.value = true;
+  refundError.value = '';
   try {
-    const opId = 'op-ref-' + Date.now().toString(36);
-    const op = {
-      id: opId,
-      method: 'refundLedger',
-      args: [{
-        ledgerId: refundingItem.value.id,
-        reason: 'PC后台管理撤单冲正'
-      }],
-      generated: { ids: [opId], times: [new Date().toISOString()] }
-    };
-    emit('sync-operations', [op]);
+    const before = observedBalance.value;
+    const account = await adminApi.getAccount();
+    const member = account.data.members.find(member => member.id === refundingItem.value.memberId);
+    if (!member) throw new Error('关联会员不存在');
+    if (member.balance !== before) {
+      observedBalance.value = member.balance; debtAcknowledged.value = false;
+      throw new Error('会员余额已变化，请重新核对撤销后的余额和欠款');
+    }
+    await submitOperation('refundLedger', [
+      refundingItem.value.id,
+      'PC后台管理撤单冲正',
+      refundBalanceAfter.value < 0 && debtAcknowledged.value
+    ], account.data);
     refundingItem.value = null;
-  } finally {
+  } catch (error) { refundError.value = error.message; }
+  finally {
     isSubmitting.value = false;
   }
 }

@@ -24,7 +24,11 @@ async function body(request, maximum = 16 * 1024) {
   return parsed;
 }
 
-export function createApi({ service, pool, allowedOrigins = ['https://localhost'], releaseDirectory = './releases', production = false, trustedProxyIPs = [], rateLimits = production }) {
+export function defaultAllowedOrigins(production = false) {
+  return production ? ['https://localhost'] : ['https://localhost', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174'];
+}
+
+export function createApi({ service, pool, production = false, allowedOrigins = defaultAllowedOrigins(production), releaseDirectory = './releases', trustedProxyIPs = [], rateLimits = production }) {
   const origins = new Set(allowedOrigins);
   const trustedProxies = new Set(trustedProxyIPs.map(value => {
     const ip = normalizeIP(value); if (!ip) throw new Error('可信代理必须配置为明确的 IP 地址'); return ip;
@@ -40,7 +44,8 @@ export function createApi({ service, pool, allowedOrigins = ['https://localhost'
     response.once('close', finish); response.once('finish', finish);
     try {
       const ip = proxyIdentity(request, production, trustedProxies);
-      const path = new URL(request.url, 'http://internal').pathname;
+      const url = new URL(request.url, 'http://internal');
+      const path = url.pathname;
       const route = request.method + ' ' + path;
       const heavy = /^(GET|POST) \/api\/v1\/(account(?:\/head|\/bootstrap)?|sync)$/.test(route);
       release = guard.enter(heavy ? 'account' : null, 2);
@@ -92,7 +97,9 @@ export function createApi({ service, pool, allowedOrigins = ['https://localhost'
         return send(200, await service.updateUser(identity, path.split('/').at(-1), await body(request)));
       }
       if (route === 'POST /api/v1/activity') return send(200, await service.activity(identity, (await body(request, 64 * 1024)).events));
-      if (route === 'GET /api/v1/activity') return send(200, await service.auditLog(identity));
+      if (route === 'GET /api/v1/activity') return send(200, await service.auditLog(identity, {
+        before: url.searchParams.get('before'), limit: url.searchParams.get('limit') ?? 100
+      }));
       if (route === 'GET /api/v1/updates/latest') {
         const { rows: [release] } = await pool.query('SELECT * FROM releases ORDER BY version_code DESC LIMIT 1');
         return send(200, release ? {

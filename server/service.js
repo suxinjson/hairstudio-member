@@ -245,11 +245,13 @@ export function createService(pool) {
         return { success: true };
       });
     },
-    async auditLog(identity) {
+    async auditLog(identity, { before = null, limit = 100 } = {}) {
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以查看使用记录');
-        return (await client.query('SELECT a.id,a.event,a.device_id,a.details,a.occurred_at,a.received_at,u.display_name FROM audit_events a LEFT JOIN users u ON u.id=a.user_id WHERE a.store_id=$1 ORDER BY a.id DESC LIMIT 100', [user.store_id])).rows;
+        if (!/^[1-9]\d{0,2}$/.test(String(limit)) || Number(limit) > 500 ||
+            before !== null && (!/^[1-9]\d{0,18}$/.test(String(before)) || BigInt(before) > 9223372036854775807n)) throw new ApiError(400, '审计日志分页参数无效');
+        return (await client.query('SELECT a.id,a.event,a.device_id,a.details,a.occurred_at,a.received_at,u.display_name FROM audit_events a LEFT JOIN users u ON u.id=a.user_id WHERE a.store_id=$1 AND ($2::bigint IS NULL OR a.id<$2::bigint) ORDER BY a.id DESC LIMIT $3', [user.store_id, before, Number(limit)])).rows;
       });
     }
   };

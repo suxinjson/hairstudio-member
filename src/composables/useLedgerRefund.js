@@ -27,12 +27,12 @@ export function useLedgerRefund({
     if (!confirmed) return;
 
     try {
-      const refund = localDb.refundLedger(item.id, { allowNegativeBalance: balanceAfter < 0 });
+      const refund = localDb.refundLedger(item.id, '店主手工撤销', balanceAfter < 0);
       refreshAll();
       if (selectedMember.value && selectedMember.value.id === item.memberId) {
         selectedMember.value = localDb.getMemberById(item.memberId);
       }
-      showToast(`已成功冲正（${refund.remark}）`);
+      showToast('已成功冲正流水');
     } catch (err) {
       showFeedback(err.message, 'error', { title: '撤单冲正失败' });
     }

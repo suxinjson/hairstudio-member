@@ -24,7 +24,7 @@
           <div>
             <div class="font-black text-slate-900 text-sm">{{ s.name }}</div>
             <div class="text-xs font-black text-emerald-700 mt-0.5">
-              标准定价：¥{{ (s.price / 100).toFixed(2) }}
+              标准定价：¥{{ Number(s.price).toFixed(2) }}
             </div>
           </div>
           <button
@@ -53,9 +53,9 @@
           class="p-4 rounded-2xl border border-emerald-100 bg-emerald-50/40 text-center"
         >
           <div class="text-xs text-slate-500 font-bold">充值档位</div>
-          <div class="text-xl font-black text-slate-900 mt-1">¥{{ (p.pay / 100).toFixed(0) }}</div>
+          <div class="text-xl font-black text-slate-900 mt-1">¥{{ p.pay }}</div>
           <div class="text-xs font-black text-emerald-700 mt-1">
-            送 ¥{{ (p.gift / 100).toFixed(0) }}
+            送 ¥{{ p.gift }}
           </div>
         </div>
       </div>
@@ -97,7 +97,7 @@
           </button>
           <button
             @click="saveService"
-            :disabled="!serviceForm.name.trim() || !Number(serviceForm.priceStr)"
+            :disabled="isSubmitting || !serviceForm.name.trim() || serviceForm.priceStr === '' || isNaN(Number(serviceForm.priceStr)) || Number(serviceForm.priceStr) < 0"
             class="flex-1 h-11 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-sm disabled:opacity-50"
           >
             保存项目
@@ -110,13 +110,16 @@
 
 <script setup>
 import { ref } from 'vue';
+import { useOperationSubmission } from '../composables/useOperationSubmission.js';
 
 const props = defineProps({
   services: { type: Array, default: () => [] },
-  rechargePlans: { type: Array, default: () => [] }
+  rechargePlans: { type: Array, default: () => [] },
+  submitOperations: { type: Function, required: true }
 });
 
-const emit = defineEmits(['sync-operations']);
+const submitOperation = useOperationSubmission(operations => props.submitOperations(operations));
+const isSubmitting = ref(false);
 
 const editingService = ref(null);
 const serviceForm = ref({ name: '', priceStr: '' });
@@ -130,27 +133,26 @@ function openEditService(s) {
   editingService.value = s;
   serviceForm.value = {
     name: s.name,
-    priceStr: (s.price / 100).toFixed(2)
+    priceStr: String(s.price)
   };
 }
 
-function saveService() {
+async function saveService() {
+  if (isSubmitting.value) return;
   const name = serviceForm.value.name.trim();
-  const price = Math.round(Number(serviceForm.priceStr) * 100);
-  if (!name || isNaN(price)) return;
+  const price = Number(serviceForm.value.priceStr);
+  if (!name || isNaN(price) || price < 0) return;
 
-  const opId = 'op-srv-' + Date.now().toString(36);
-  const op = {
-    id: opId,
-    method: 'saveService',
-    args: [{
-      id: editingService.value.id || ('S' + Date.now().toString(36)),
-      name,
-      price
-    }],
-    generated: { ids: [opId], times: [new Date().toISOString()] }
-  };
-  emit('sync-operations', [op]);
-  editingService.value = null;
+  const payload = { name, price };
+  if (editingService.value?.id) {
+    payload.id = editingService.value.id;
+  }
+
+  isSubmitting.value = true;
+  try {
+    await submitOperation('saveService', [payload], { services: props.services });
+    editingService.value = null;
+  } catch (error) { alert('服务保存失败：' + error.message); }
+  finally { isSubmitting.value = false; }
 }
 </script>

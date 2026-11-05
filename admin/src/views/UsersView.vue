@@ -104,7 +104,7 @@
             <input
               v-model="newUserForm.password"
               type="password"
-              placeholder="至少6位密码"
+              placeholder="至少12位密码"
               class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-semibold focus:outline-none focus:border-emerald-600"
             />
           </div>

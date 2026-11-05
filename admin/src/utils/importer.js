@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { moneyToCent } from '../../../src/money.js';
 
 // 防 CSV / Excel 公式注入 (Formula Injection) 安全清洗
 export function sanitizeCellValue(val) {
@@ -18,7 +19,7 @@ const HEADER_ALIASES = {
   balance: ['可用余额', '本金余额', '本金', '余额', '卡内余额', '当前余额', '储值余额', '账户余额', 'balance', 'amount'],
   gift: ['赠送金', '赠金余额', '赠送金额', '赠送', '赠金', '活动金', '奖励金', 'gift'],
   remark: ['备注', '说明', '剪发偏好', '喜好', '历史卡项', '客户备注', 'remark', 'notes', 'memo'],
-  tag: ['会员等级', '标签', '会员类别', '客户分组', '分组', '类型', 'tag', 'tier']
+  tag: ['会员等级', '会员标签', '会员分组', '客户标签', '标签', '会员类别', '客户分组', '分组', '类型', 'tag', 'tier']
 };
 
 /**
@@ -34,19 +35,27 @@ export function guessColumnMapping(headers) {
     tag: null
   };
 
+  const candidates = new Map(Object.keys(mapping).map(field => [field, []]));
   headers.forEach((header, index) => {
-    const cleanHeader = String(header || '').trim().toLowerCase();
-    for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
-      if (mapping[field] === null) {
-        if (aliases.some(alias => cleanHeader.includes(alias.toLowerCase()))) {
-          mapping[field] = index;
-          break;
-        }
-      }
-    }
+    const text = String(header || '').trim().toLowerCase();
+    const scores = Object.entries(HEADER_ALIASES).map(([field, aliases]) => ({ field,
+      score: Math.max(0, ...aliases.map(alias => text === alias ? 1000 + alias.length : text.includes(alias) ? alias.length : 0))
+    })).sort((a, b) => b.score - a.score);
+    if (scores[0].score && scores[0].score !== scores[1].score) candidates.get(scores[0].field).push(index);
   });
+  // Multiple plausible columns require an explicit choice; column order never decides money ownership.
+  for (const [field, indices] of candidates) if (indices.length === 1) mapping[field] = indices[0];
 
   return mapping;
+}
+
+export function parseImportMoney(value, { signed = false } = {}) {
+  const text = String(value ?? '').trim().replace(/^[¥￥]\s*/, '').replace(/\s*元$/, '');
+  if (!text) return 0;
+  if (!/^-?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(text)) throw new Error('金额须为最多两位小数的十进制数');
+  if (text.startsWith('-') && !signed) throw new Error('赠送金不能为负数');
+  const cents = moneyToCent(text.replace(/^-/, '').replaceAll(',', ''));
+  return text.startsWith('-') ? -cents : cents;
 }
 
 /**
@@ -72,19 +81,20 @@ export async function parseUploadedFile(file) {
   let workbook;
 
   if (isCsv) {
-    // 处理 CSV，考虑 UTF-8 / GBK 编码兼容性
-    const decoder = new TextDecoder('utf-8');
-    let text = decoder.decode(buffer);
-    // 检测是否为乱码（如未带 BOM 的 GBK 导出），若出现过多替换字符可降级处理
-    if (text.includes('')) {
+    // 处理 CSV，优先使用严格 UTF-8 解析；遇到非法字节序列降级为 GBK
+    let text;
+    try {
+      const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+      text = utf8Decoder.decode(buffer);
+    } catch {
       try {
         const gbkDecoder = new TextDecoder('gbk');
         text = gbkDecoder.decode(buffer);
       } catch {
-        // 环境不支持 gbk 则维持 utf-8
+        text = new TextDecoder('utf-8').decode(buffer);
       }
     }
-    workbook = XLSX.read(text, { type: 'string' });
+    workbook = XLSX.read(text, { type: 'string', raw: true });
   } else {
     workbook = XLSX.read(buffer, { type: 'array' });
   }
@@ -93,8 +103,8 @@ export async function parseUploadedFile(file) {
   if (!sheetName) throw new Error('文件中未找到任何工作表数据');
 
   const sheet = workbook.Sheets[sheetName];
-  // 转换为二维数组，保留原始字符串格式
-  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+  // 使用底层值，避免 Excel 显示格式先把三位小数舍入成合法金额。
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: '' });
 
   if (rawRows.length < 2) {
     throw new Error('导入表格中没有有效的数据行');
@@ -140,9 +150,13 @@ export async function parseUploadedFile(file) {
  */
 export function validateImportBatch(dataRows, mapping, existingMembers = [], options = {}) {
   const strategy = options.conflictStrategy || 'skip';
+  if (!['skip', 'merge_balance', 'overwrite_profile'].includes(strategy)) throw new Error('导入策略无效');
+  const columns = Object.values(mapping).filter(index => index != null);
+  if (mapping.name == null || mapping.phone == null || columns.some(index => !Number.isInteger(index) || index < 0) ||
+      new Set(columns).size !== columns.length) throw new Error('请为姓名、手机号及金额分别选择不同的列');
   const existingMap = new Map();
   existingMembers.forEach(m => {
-    if (m.phone) existingMap.set(String(m.phone).replace(/\s+/g, ''), m);
+    if (!m.isArchived && m.phone) existingMap.set(String(m.phone).replace(/\D/g, ''), m);
   });
 
   const filePhoneSet = new Set();
@@ -181,26 +195,13 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
 
     // 3. 余额金额校验
     let balanceCents = 0;
-    if (rawBalance) {
-      const num = Number(rawBalance.replace(/[¥,元]/g, '').trim());
-      if (isNaN(num)) {
-        errors.push(`本金余额金额无效: "${rawBalance}"`);
-      } else {
-        balanceCents = Math.round(num * 100);
-      }
-    }
+    try { balanceCents = parseImportMoney(rawBalance, { signed: true }); }
+    catch (error) { errors.push(`本金余额金额无效: "${rawBalance}"（${error.message}）`); }
 
     let giftCents = 0;
-    if (rawGift) {
-      const num = Number(rawGift.replace(/[¥,元]/g, '').trim());
-      if (isNaN(num)) {
-        errors.push(`赠送金金额无效: "${rawGift}"`);
-      } else if (num < 0) {
-        errors.push('赠送金不能为负数');
-      } else {
-        giftCents = Math.round(num * 100);
-      }
-    }
+    try { giftCents = parseImportMoney(rawGift); }
+    catch (error) { errors.push(`赠送金金额无效: "${rawGift}"（${error.message}）`); }
+    if (!Number.isSafeInteger(balanceCents + giftCents)) errors.push('到账金额超出可处理范围');
 
     // 4. 重复检测 (文件内部)
     let isFileDuplicate = false;
@@ -219,6 +220,9 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
     if (cleanPhone && existingMap.has(cleanPhone)) {
       existingMember = existingMap.get(cleanPhone);
       isConflict = true;
+    }
+    if (isConflict && strategy === 'merge_balance' && balanceCents >= 0 && giftCents > 0 && options.rechargeSettings?.giftEnabled === false) {
+      errors.push('当前充值赠送已关闭，请先核对赠送规则');
     }
 
     if (errors.length > 0) {
@@ -281,6 +285,8 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
     conflictCount,
     invalidCount,
     strategy,
+    debtCount: results.filter(item => item.status !== 'invalid' && item.data.balanceCents + item.data.giftCents < 0 &&
+      (item.status === 'valid_new' || strategy === 'merge_balance')).length,
     results
   };
 }

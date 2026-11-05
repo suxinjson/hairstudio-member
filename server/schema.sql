@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
   occurred_at timestamptz, received_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS audit_client_event ON audit_events(store_id,client_event_id);
+CREATE INDEX IF NOT EXISTS audit_store_page ON audit_events(store_id,id DESC);
 CREATE TABLE IF NOT EXISTS releases (
   version_code integer PRIMARY KEY CHECK (version_code > 0), version_name text NOT NULL,
   app_id text NOT NULL, sha256 text NOT NULL, size bigint NOT NULL, file_name text NOT NULL,

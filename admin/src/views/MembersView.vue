@@ -136,13 +136,13 @@
                 <span v-if="member.balance < 0" class="block text-[10px] text-rose-500 font-bold">已挂账</span>
               </td>
               <td class="py-3.5 px-4 text-xs text-slate-500">
-                <span v-if="member.tag || (member.tags && member.tags.length)" class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
-                  {{ member.tags ? member.tags.join('、') : member.tag }}
+                <span v-if="member.tag || (member.tags && member.tags.length) || member.notes?.startsWith('[')" class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
+                  {{ member.tags ? member.tags.join('、') : (member.tag || (/^\[([^\]]+)\]/.exec(member.notes || '')?.[1] || '')) }}
                 </span>
                 <span v-else class="text-slate-300">—</span>
               </td>
-              <td class="py-3.5 px-4 text-xs text-slate-500 max-w-xs truncate" :title="member.remark">
-                {{ member.remark || '—' }}
+              <td class="py-3.5 px-4 text-xs text-slate-500 max-w-xs truncate" :title="member.notes || member.remark">
+                {{ (member.notes ? member.notes.replace(/^\[[^\]]+\]\s*/, '') : member.remark) || '—' }}
               </td>
               <td class="py-3.5 px-4 text-xs text-slate-400 font-mono">
                 {{ formatDate(member.created_at) }}
@@ -343,12 +343,16 @@
 import { ref, computed } from 'vue';
 import { formatYuan, maskPhone } from '../utils/security.js';
 import { exportMembersToExcel } from '../utils/exporter.js';
+import { useOperationSubmission } from '../composables/useOperationSubmission.js';
+import { isValidMoney, moneyToCent } from '../../../src/money.js';
 
 const props = defineProps({
-  members: { type: Array, default: () => [] }
+  members: { type: Array, default: () => [] },
+  submitOperations: { type: Function, required: true }
 });
 
-const emit = defineEmits(['switch-tab', 'sync-operations']);
+const emit = defineEmits(['switch-tab']);
+const submitOperation = useOperationSubmission(operations => props.submitOperations(operations));
 
 const searchQuery = ref('');
 const activeFilter = ref('all');
@@ -381,6 +385,7 @@ const filteredMembers = computed(() => {
     list = list.filter(m =>
       (m.name && m.name.toLowerCase().includes(q)) ||
       (m.phone && m.phone.includes(q)) ||
+      (m.notes && m.notes.toLowerCase().includes(q)) ||
       (m.remark && m.remark.toLowerCase().includes(q))
     );
   }
@@ -441,27 +446,23 @@ function openRechargeModal(member) {
 }
 
 async function submitRecharge() {
-  const amt = Number(rechargeAmountStr.value);
-  if (isNaN(amt) || amt <= 0) return;
-  const giftAmt = Number(rechargeGiftStr.value) || 0;
+  if (isSubmitting.value) return;
+  const amt = String(rechargeAmountStr.value).trim();
+  const giftAmt = String(rechargeGiftStr.value || '0').trim();
+  if (!isValidMoney(amt) || moneyToCent(amt) <= 0 || !isValidMoney(giftAmt)) { alert('请输入大于零的充值金额，赠送金额须为非负且最多两位小数'); return; }
 
   isSubmitting.value = true;
   try {
-    const opId = 'op-rec-' + Date.now().toString(36);
-    const op = {
-      id: opId,
-      method: 'recharge',
-      args: [{
-        memberId: rechargingMember.value.id,
-        amount: Math.round(amt * 100),
-        gift: Math.round(giftAmt * 100),
-        channel: 'PC后台充值',
-        remark: rechargeRemark.value.trim() || '后台管理充值'
-      }],
-      generated: { ids: [opId], times: [new Date().toISOString()] }
-    };
-    emit('sync-operations', [op]);
+    await submitOperation('recharge', [{
+      memberId: rechargingMember.value.id,
+      actualPay: amt,
+      giftAmount: giftAmt,
+      payMethod: 'PC后台充值',
+      remark: rechargeRemark.value.trim() || '后台管理充值'
+    }]);
     rechargingMember.value = null;
+  } catch (error) {
+    alert('充值提交失败：' + error.message);
   } finally {
     isSubmitting.value = false;
   }
@@ -480,17 +481,20 @@ function openNewModal() {
 
 function openEditModal(member) {
   editingMember.value = member;
+  const noteStr = member.notes || member.remark || '';
+  const tagMatch = /^\[([^\]]+)\]\s*(.*)$/.exec(noteStr);
   editForm.value = {
     name: member.name || '',
     phone: member.phone || '',
     initialBalanceStr: '',
-    tag: member.tags ? member.tags.join('、') : member.tag || '',
-    remark: member.remark || ''
+    tag: tagMatch ? tagMatch[1] : (member.tags ? member.tags.join('、') : member.tag || ''),
+    remark: tagMatch ? tagMatch[2] : noteStr
   };
   editError.value = '';
 }
 
 async function submitMemberForm() {
+  if (isSubmitting.value) return;
   const name = editForm.value.name.trim();
   const phone = editForm.value.phone.replace(/\D/g, '');
 
@@ -506,41 +510,31 @@ async function submitMemberForm() {
   isSubmitting.value = true;
   editError.value = '';
   try {
-    const opId = 'op-mem-' + Date.now().toString(36);
-    let op;
+    const tagPart = editForm.value.tag ? editForm.value.tag.trim() : '';
+    const remarkPart = editForm.value.remark ? editForm.value.remark.trim() : '';
+    const notes = [tagPart ? `[${tagPart}]` : '', remarkPart].filter(Boolean).join(' ');
 
     if (editingMember.value.id) {
-      // 修改已有
-      op = {
-        id: opId,
-        method: 'updateMember',
-        args: [{
-          id: editingMember.value.id,
+      // 修改已有：两参数 (memberId, patch)
+      await submitOperation('updateMember', [
+        editingMember.value.id,
+        {
           name,
           phone,
-          tag: editForm.value.tag.trim(),
-          remark: editForm.value.remark.trim()
-        }],
-        generated: { ids: [opId], times: [new Date().toISOString()] }
-      };
+          notes
+        }
+      ]);
     } else {
-      // 新建
-      const initBal = Number(editForm.value.initialBalanceStr) || 0;
-      op = {
-        id: opId,
-        method: 'createMember',
-        args: [{
-          name,
-          phone,
-          initialBalance: Math.round(initBal * 100),
-          tag: editForm.value.tag.trim(),
-          remark: editForm.value.remark.trim()
-        }],
-        generated: { ids: [opId], times: [new Date().toISOString()] }
-      };
+      // 新建：初始储值金额为元 (initBal)
+      const initBal = String(editForm.value.initialBalanceStr || '0').trim();
+      await submitOperation('createMember', [{
+        name,
+        phone,
+        initialBalance: initBal,
+        notes
+      }]);
     }
 
-    emit('sync-operations', [op]);
     editingMember.value = null;
   } catch (err) {
     editError.value = err.message || '操作失败';

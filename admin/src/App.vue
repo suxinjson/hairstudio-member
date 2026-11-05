@@ -1,6 +1,6 @@
 <template>
   <!-- 未登录状态：展示安全登录屏 -->
-  <LoginView v-if="!currentUser" @login-success="handleLoginSuccess" />
+  <LoginView v-if="!currentUser" />
 
   <!-- 已登录状态：展示全功能大屏 PC 管理系统 -->
   <div v-else class="flex h-screen bg-slate-100/90 text-slate-800 overflow-hidden font-sans select-text">
@@ -76,11 +76,15 @@
         <!-- 右侧连接状态与快捷功能 -->
         <div class="flex items-center gap-3">
           <!-- 云端同步正常指示灯 -->
-          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-200">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>云端账本已同步</span>
+          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border"
+            :class="accountStatus === 'synced' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-200'" role="status">
+            <span>{{ syncLabel }}</span>
             <span class="text-[10px] text-emerald-500 font-mono">v{{ accountRevision }}</span>
           </div>
+          <button v-if="hasPending" @click="retryPending" :disabled="isLoading || isSubmittingOperations"
+            class="h-9 px-3 bg-amber-100 text-amber-900 rounded-xl text-xs font-bold disabled:opacity-50">继续确认待办</button>
+          <button v-if="pendingImport?.canCancel" @click="cancelRemainingImport" :disabled="isLoading"
+            class="h-9 px-3 text-rose-700 rounded-xl text-xs font-bold">取消剩余导入</button>
 
           <!-- 刷新数据 -->
           <button
@@ -104,9 +108,13 @@
       </header>
 
       <!-- 动态路由工作台主体 -->
-      <main class="flex-1 overflow-y-auto p-6">
+      <div v-if="accountError" class="px-6 py-3 bg-amber-50 text-amber-900 text-sm" role="alert">{{ accountError }}</div>
+      <main :key="currentUser.storeId + ':' + currentUser.id" class="flex-1 overflow-y-auto p-6">
+        <div v-if="!accountData" class="p-8 text-center text-slate-600">
+          {{ isLoading ? '正在加载当前门店账本…' : '账本尚未加载，请点击刷新重试。' }}
+        </div>
         <DashboardView
-          v-if="activeTab === 'dashboard'"
+          v-else-if="activeTab === 'dashboard'"
           :members="members"
           :ledgers="ledgers"
           @switch-tab="tab => activeTab = tab"
@@ -116,13 +124,14 @@
           v-else-if="activeTab === 'members'"
           :members="members"
           @switch-tab="tab => activeTab = tab"
-          @sync-operations="handleSyncOperations"
+          :submit-operations="handleSyncOperations"
         />
 
         <LedgersView
           v-else-if="activeTab === 'ledgers'"
           :ledgers="ledgers"
-          @sync-operations="handleSyncOperations"
+          :members="members"
+          :submit-operations="handleSyncOperations"
         />
 
         <ImportExportView
@@ -136,7 +145,7 @@
           v-else-if="activeTab === 'services'"
           :services="services"
           :recharge-plans="rechargePlans"
-          @sync-operations="handleSyncOperations"
+          :submit-operations="handleSyncOperations"
         />
 
         <UsersView
@@ -194,7 +203,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { adminApi } from './api/client.js';
 import { useAutoLock } from './utils/security.js';
 import LoginView from './views/LoginView.vue';
@@ -208,18 +217,29 @@ import AuditLogView from './views/AuditLogView.vue';
 
 const currentUser = computed(() => adminApi.user.value);
 const activeTab = ref('dashboard');
-const isLoading = ref(false);
+const accountData = adminApi.accountData;
+const accountStatus = adminApi.accountStatus;
+const accountError = adminApi.accountError;
+const hasPending = adminApi.hasPending;
+const pendingImport = adminApi.pendingImport;
+const isLoading = computed(() => ['loading', 'saving'].includes(accountStatus.value) || adminApi.importing.value);
+const members = computed(() => accountData.value?.members || []);
+const ledgers = computed(() => accountData.value?.ledgers || []);
+const services = computed(() => accountData.value?.services || []);
+const rechargePlans = computed(() => accountData.value?.rechargePlans || []);
+const accountRevision = adminApi.accountRevision;
+const isSubmittingOperations = ref(false);
+const syncLabel = computed(() => ({ idle: '账本尚未加载', loading: '正在加载账本', saving: '正在确认操作',
+  synced: '云端账本已同步', pending: '有待确认操作', error: '账本确认失败，请重试' }[accountStatus.value]));
 
-const members = ref([]);
-const ledgers = ref([]);
-const services = ref([]);
-const rechargePlans = ref([]);
-const accountRevision = ref(0);
-
-const isLocked = ref(false);
+const isLocked = adminApi.isLocked;
 const unlockPassword = ref('');
 const unlockError = ref('');
 const isUnlocking = ref(false);
+watch(() => currentUser.value?.storeId + ':' + currentUser.value?.id, () => {
+  activeTab.value = 'dashboard'; unlockPassword.value = ''; unlockError.value = '';
+  if (currentUser.value && !isLocked.value) loadAccountData();
+}, { flush: 'post' });
 
 const navItems = [
   { key: 'dashboard', label: '经营大盘', icon: '📊' },
@@ -257,6 +277,7 @@ async function handleUnlock() {
     await adminApi.login(currentUser.value.username, unlockPassword.value);
     isLocked.value = false;
     unlockPassword.value = '';
+    await loadAccountData();
   } catch (err) {
     unlockError.value = '密码错误，请重新输入';
   } finally {
@@ -265,45 +286,46 @@ async function handleUnlock() {
 }
 
 async function loadAccountData() {
-  if (!currentUser.value) return;
-  isLoading.value = true;
+  if (!currentUser.value || isLocked.value) return;
   try {
-    const res = await adminApi.getAccount();
-    if (res?.data) {
-      members.value = res.data.members || [];
-      ledgers.value = res.data.ledgers || [];
-      services.value = res.data.services || [];
-      rechargePlans.value = res.data.rechargePlans || [];
-      accountRevision.value = res.revision || 0;
-    }
+    await adminApi.getAccount();
   } catch (err) {
-    console.error('拉取云端账本失败:', err);
-  } finally {
-    isLoading.value = false;
+    // The client exposes the error beside the current account; previous identities cannot populate it.
   }
 }
 
 async function handleSyncOperations(operations) {
+  if (isSubmittingOperations.value) throw new Error('正在处理上一笔操作，请稍后重试');
+  isSubmittingOperations.value = true;
   try {
-    await adminApi.sync(operations);
-    await loadAccountData();
-  } catch (err) {
-    alert('操作提交失败: ' + (err.message || '网络异常'));
+    return await adminApi.sync(operations);
+  } finally {
+    isSubmittingOperations.value = false;
   }
 }
 
-function handleLoginSuccess() {
-  loadAccountData();
+async function retryPending() {
+  if (isSubmittingOperations.value) return;
+  isSubmittingOperations.value = true;
+  try { await adminApi.retryPending(); }
+  catch (error) { alert('待办确认失败：' + error.message); }
+  finally { isSubmittingOperations.value = false; }
+}
+
+async function cancelRemainingImport() {
+  if (!confirm('已经入库的记录将保留。取消尚未入库的部分后，请重新预检剩余数据。确定继续吗？')) return;
+  try { await adminApi.cancelRemainingImport(); await loadAccountData(); }
+  catch (error) { alert(error.message); }
 }
 
 async function handleLogout() {
   if (!confirm('确定要退出登录吗？')) return;
-  await adminApi.logout();
-  isLocked.value = false;
+  try { await adminApi.logout(); }
+  catch (error) { alert('本机已退出，云端会话撤销未完成：' + error.message); }
 }
 
 onMounted(() => {
-  if (currentUser.value) {
+  if (currentUser.value && !isLocked.value) {
     loadAccountData();
   }
 });

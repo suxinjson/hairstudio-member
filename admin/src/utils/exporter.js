@@ -12,7 +12,7 @@ export function exportMembersToExcel(members, filename = '会员档案明细') {
       '卡内本金余额(元)': ((m.balance || 0) / 100).toFixed(2),
       '累计欠款(元)': m.balance < 0 ? ((Math.abs(m.balance)) / 100).toFixed(2) : '0.00',
       '会员标签': sanitizeCellValue(m.tags?.join('、') || m.tag || '普通会员'),
-      '备注信息': sanitizeCellValue(m.remark || ''),
+      '备注信息': sanitizeCellValue(m.notes || m.remark || ''),
       '建卡时间': m.created_at ? new Date(m.created_at).toLocaleString('zh-CN') : '—',
       '状态': m.isArchived ? '已归档' : m.balance < 0 ? '欠款' : '正常'
     };

@@ -69,7 +69,7 @@
       <!-- 步骤2：识别结果与表头映射配置 -->
       <div v-if="parseResult" class="space-y-4 pt-3 border-t border-slate-100">
         <h3 class="font-black text-slate-900 text-base flex items-center gap-2">
-          <span>2.</span> 智能字段映射确认 (已自动识别匹配)
+          <span>2.</span> 智能字段映射确认 (请核对匹配)
         </h3>
 
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -95,6 +95,9 @@
         </div>
       </div>
 
+      <label v-if="parseResult" class="flex items-center gap-2 text-sm text-slate-700">
+        <input v-model="mappingConfirmed" type="checkbox" />我已核对姓名、手机号、本金和赠送金分别对应的列。
+      </label>
       <!-- 步骤3：冲突处理策略与预检校验 -->
       <div v-if="parseResult" class="space-y-4 pt-3 border-t border-slate-100">
         <h3 class="font-black text-slate-900 text-base flex items-center gap-2">
@@ -120,7 +123,7 @@
             <input type="radio" v-model="conflictStrategy" value="merge_balance" class="mt-1 text-emerald-600 focus:ring-emerald-500" />
             <div>
               <div class="text-sm font-black">累加储值余额（增量合并）</div>
-              <div class="text-xs text-slate-500 mt-1">对已有会员，保留原档案，将其表格中的余额作为“期初导入充值”流水叠加累加。</div>
+              <div class="text-xs text-slate-500 mt-1">对已有会员，正数记录期初充值，负数记录期初欠款；欠款入库前须另行确认。</div>
             </div>
           </label>
 
@@ -140,7 +143,7 @@
         <div class="flex items-center gap-3 pt-2">
           <button
             @click="runValidation"
-            :disabled="isValidating || customMapping.name === null || customMapping.phone === null"
+            :disabled="isValidating || !mappingConfirmed || customMapping.name === null || customMapping.phone === null"
             class="h-11 px-6 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-black transition btn-press disabled:opacity-40 flex items-center gap-2"
           >
             <span v-if="isValidating" class="animate-spin text-sm">⏳</span>
@@ -245,13 +248,13 @@
               准备就绪：共 {{ commitTargetCount }} 条记录即将安全入库
             </div>
             <div class="text-xs text-slate-500 mt-0.5">
-              已自动备份安全快照，入库过程中保证原子性与防重复提交。
+              操作单号和批次进度会保存在本机；中断后请继续原任务，已经确认的批次不会再次入账。
             </div>
           </div>
 
           <button
             @click="executeImport"
-            :disabled="commitTargetCount === 0 || isImporting"
+            :disabled="commitTargetCount === 0 || isImporting || (validationReport.debtCount > 0 && !debtImportConfirmed)"
             class="h-12 px-8 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-xl text-sm font-black shadow-lg shadow-emerald-700/25 transition btn-press disabled:opacity-40 flex items-center gap-2"
           >
             <span v-if="isImporting" class="animate-spin text-base">⏳</span>
@@ -259,6 +262,9 @@
           </button>
         </div>
 
+        <label v-if="validationReport.debtCount > 0" class="flex items-center gap-2 text-sm text-rose-700">
+          <input v-model="debtImportConfirmed" type="checkbox" />我已核对 {{ validationReport.debtCount }} 条负余额记录，确认将期初欠款写入账本。
+        </label>
         <!-- 进度条 -->
         <div v-if="isImporting" class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
           <div
@@ -319,7 +325,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { adminApi } from '../api/client.js';
 import {
   parseUploadedFile,
@@ -350,6 +356,10 @@ const isValidating = ref(false);
 const validationReport = ref(null);
 const isImporting = ref(false);
 const importProgress = ref(0);
+const mappingConfirmed = ref(false);
+const debtImportConfirmed = ref(false);
+watch(customMapping, () => { validationReport.value = null; mappingConfirmed.value = false; debtImportConfirmed.value = false; }, { deep: true });
+watch(conflictStrategy, () => { validationReport.value = null; debtImportConfirmed.value = false; });
 
 const fieldDefinitions = {
   name: { label: '会员姓名', required: true },
@@ -404,16 +414,19 @@ function resetUpload() {
 }
 
 function runValidation() {
-  if (!parseResult.value) return;
+  if (!parseResult.value || !mappingConfirmed.value || isImporting.value) return;
   isValidating.value = true;
   try {
     const report = validateImportBatch(
       parseResult.value.dataRows,
       customMapping.value,
       props.members,
-      { conflictStrategy: conflictStrategy.value }
+      { conflictStrategy: conflictStrategy.value, rechargeSettings: adminApi.accountData.value?.rechargeSettings }
     );
     validationReport.value = report;
+    debtImportConfirmed.value = false;
+  } catch (error) {
+    alert(error.message);
   } finally {
     isValidating.value = false;
   }
@@ -430,7 +443,7 @@ function downloadErrors() {
 }
 
 async function executeImport() {
-  if (!validationReport.value) return;
+  if (!validationReport.value || isImporting.value || (validationReport.value.debtCount > 0 && !debtImportConfirmed.value)) return;
 
   const validItems = validationReport.value.results.filter(r => {
     if (r.status === 'valid_new') return true;
@@ -452,7 +465,8 @@ async function executeImport() {
       conflictStrategy.value,
       progress => {
         importProgress.value = progress;
-      }
+      },
+      { allowDebt: debtImportConfirmed.value }
     );
 
     alert(`🎉 恭喜！成功入库 ${result.count} 笔会员数据！数据已实时同步。`);
@@ -477,7 +491,7 @@ function exportLedgers() {
 
 async function exportAudit() {
   try {
-    const logs = await adminApi.getActivity();
+    const logs = await adminApi.getAllActivity();
     exportAuditLogsToExcel(logs, '梦飞空间系统安全审计日志');
   } catch (err) {
     alert('获取审计日志失败: ' + err.message);
