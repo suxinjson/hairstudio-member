@@ -340,7 +340,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { formatYuan, maskPhone } from '../utils/security.js';
 import { exportMembersToExcel } from '../utils/exporter.js';
 import { useOperationSubmission } from '../composables/useOperationSubmission.js';
@@ -394,6 +394,8 @@ const filteredMembers = computed(() => {
 });
 
 const totalPages = computed(() => Math.ceil(filteredMembers.value.length / pageSize.value));
+watch([searchQuery, activeFilter, pageSize], () => { currentPage.value = 1; });
+watch(totalPages, pages => { currentPage.value = Math.min(currentPage.value, Math.max(1, pages)); });
 
 const paginatedMembers = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value;

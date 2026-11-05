@@ -255,6 +255,8 @@ const filteredLedgers = computed(() => {
 });
 
 const totalPages = computed(() => Math.ceil(filteredLedgers.value.length / pageSize.value));
+watch([searchQuery, activeType, pageSize], () => { currentPage.value = 1; });
+watch(totalPages, pages => { currentPage.value = Math.min(currentPage.value, Math.max(1, pages)); });
 
 const paginatedLedgers = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value;

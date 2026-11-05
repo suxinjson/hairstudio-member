@@ -31,10 +31,11 @@ const { default: Members } = await import(await compile(new URL('../admin/src/vi
 const { default: Ledgers } = await import(await compile(new URL('../admin/src/views/LedgersView.vue', import.meta.url)));
 const { default: Services } = await import(await compile(new URL('../admin/src/views/ServicesView.vue', import.meta.url)));
 const { default: ImportExport } = await import(await compile(new URL('../admin/src/views/ImportExportView.vue', import.meta.url)));
-const { createApp, nextTick } = await import('vue');
+const { createApp, nextTick, ref, h } = await import('vue');
 const { adminApi } = await import('../admin/src/api/client.js');
 const { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } = await import('../src/storage.js');
 const { integrity } = await import('../server/security.js');
+const { ADMIN_IDLE_TIMEOUT_MS } = await import('../admin/src/api/client.js');
 let app, data;
 const owner = { id: 'owner-A', storeId: 'store-A', username: 'owner-A', displayName: '门店 A', role: 'owner' };
 const flush = async () => { for (let i = 0; i < 6; i++) await nextTick(); await new Promise(resolve => setTimeout(resolve, 0)); await nextTick(); };
@@ -149,3 +150,73 @@ test('import requires separate column and debt confirmations before sending a ne
   button('确认入库至系统账本').click(); await flush();
   assert.equal(submitted.items[0].data.balanceCents, -10001); assert.equal(submitted.options.allowDebt, true);
 });
+
+for (const { view, prop, filter } of [
+  { view: Members, prop: 'members', filter: '低余额' },
+  { view: Ledgers, prop: 'ledgers', filter: '消费扣款' }
+]) {
+  test(`${prop} reset pagination for search, filters and page size and clamp after data shrinks`, async () => {
+    const rows = ref(Array.from({ length: 51 }, (_, i) => ({ ...data.members[0], id: 'row-' + i,
+      name: '客户' + i, memberName: '客户' + i, balance: i === 0 ? 1000 : 10000,
+      type: i === 0 ? 'CONSUME' : 'RECHARGE', changeAmount: i === 0 ? -1000 : 10000,
+      balanceAfter: 10000, memberPhone: '13800001111' })));
+    await mount({ setup: () => () => h(view, { [prop]: rows.value, submitOperations: async () => {} }) });
+    button('下一页').click(); await nextTick(); button('下一页').click(); await nextTick();
+    assert.ok(document.body.textContent.includes('第 3 / 3 页'));
+    await input('input[type="text"]', '客户0');
+    assert.equal(document.querySelectorAll('tbody tr').length, 1);
+    assert.ok(document.querySelector('tbody').textContent.includes('客户0'));
+    assert.ok(document.body.textContent.includes('第 1 / 1 页'));
+    await input('input[type="text"]', '');
+    button('下一页').click(); await nextTick(); button(filter).click(); await nextTick();
+    assert.equal(document.querySelectorAll('tbody tr').length, 1);
+    assert.ok(document.body.textContent.includes('第 1 / 1 页'));
+    button(prop === 'members' ? '全部会员' : '全部流水').click(); await nextTick();
+    button('下一页').click(); await nextTick(); button('下一页').click(); await nextTick();
+    const select = document.querySelector('select'); select.value = '50';
+    select.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+    assert.equal(document.querySelectorAll('tbody tr').length, 50);
+    assert.ok(document.body.textContent.includes('第 1 / 2 页'));
+    select.value = '20'; select.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+    button('下一页').click(); await nextTick(); button('下一页').click(); await nextTick();
+    rows.value = rows.value.slice(0, 21); await nextTick();
+    assert.ok(document.body.textContent.includes('第 2 / 2 页'));
+    assert.equal(document.querySelectorAll('tbody tr').length, 1);
+    rows.value = []; await nextTick();
+    assert.ok(document.body.textContent.includes('第 1 / 1 页'));
+  });
+}
+
+test('admin inactivity locks at the saved deadline and removes its timer on unmount', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+  adminApi.saveSession({ accessToken: 'access', refreshToken: 'refresh', user: owner }, false, { resetIdle: true });
+  app = createApp(App); app.mount('#app'); await nextTick();
+  const deadline = adminApi.idleExpiresAt.value;
+  t.mock.timers.tick(ADMIN_IDLE_TIMEOUT_MS - 1); await nextTick();
+  assert.equal(adminApi.isLocked.value, false);
+  t.mock.timers.tick(1); await nextTick();
+  assert.equal(adminApi.isLocked.value, true);
+  assert.ok(button('解锁工作台'));
+  window.dispatchEvent(new dom.window.Event('keydown')); await nextTick();
+  assert.equal(adminApi.idleExpiresAt.value, deadline);
+  const read = t.mock.method(adminApi, 'restoreSession');
+  app.unmount(); app = null;
+  t.mock.timers.tick(ADMIN_IDLE_TIMEOUT_MS);
+  window.dispatchEvent(new dom.window.Event('focus'));
+  assert.equal(read.mock.callCount(), 0);
+});
+
+for (const event of ['focus', 'visibilitychange']) {
+  test(`admin ${event} checks expiry before any activity can renew a suspended session`, async t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+    app = createApp(App); app.mount('#app'); await nextTick();
+    const deadline = adminApi.idleExpiresAt.value;
+    t.mock.timers.setTime(deadline + 1);
+    (event === 'focus' ? window : document).dispatchEvent(new dom.window.Event(event));
+    await nextTick();
+    assert.equal(adminApi.isLocked.value, true);
+    window.dispatchEvent(new dom.window.Event('mousemove')); await nextTick();
+    assert.equal(adminApi.isLocked.value, true);
+    assert.equal(adminApi.idleExpiresAt.value, deadline);
+  });
+}

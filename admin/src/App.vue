@@ -257,11 +257,10 @@ const currentNavLabel = computed(() => {
 });
 
 // 注册 15 分钟无操作自动锁屏
-useAutoLock(() => {
-  if (currentUser.value && !isLocked.value) {
-    triggerLock();
-  }
-}, 15);
+useAutoLock(adminApi);
+watch(isLocked, locked => {
+  if (locked) { unlockPassword.value = ''; unlockError.value = ''; }
+});
 
 function triggerLock() {
   isLocked.value = true;

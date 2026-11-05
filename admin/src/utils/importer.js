@@ -231,6 +231,7 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
         rowNum,
         status: 'invalid',
         reason: errors.join('；'),
+        rawData: { name: rawName, phone: rawPhone, balance: rawBalance, gift: rawGift, remark: rawRemark, tag: rawTag },
         data: {
           name: rawName,
           phone: cleanPhone || rawPhone,
@@ -294,23 +295,29 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
 /**
  * 生成并下载失败记录 Excel 表，方便店主一键修正后再导入
  */
-export function downloadErrorReport(invalidItems, originalHeaders) {
+export function createErrorReportWorkbook(invalidItems) {
   const exportData = invalidItems.map(item => {
+    const raw = item.rawData;
     return {
       '原始行号': item.rowNum,
       '失败原因': item.reason,
-      '会员姓名': item.data.name,
-      '手机号码': item.data.phone,
-      '本金余额': (item.data.balanceCents / 100).toFixed(2),
-      '赠送金': (item.data.giftCents / 100).toFixed(2),
-      '备注': item.data.remark,
-      '标签': item.data.tag
+      '会员姓名': raw?.name ?? item.data.name,
+      '手机号码': raw?.phone ?? item.data.phone,
+      '本金余额': raw?.balance ?? (item.data.balanceCents / 100).toFixed(2),
+      '赠送金': raw?.gift ?? (item.data.giftCents / 100).toFixed(2),
+      '备注': raw?.remark ?? item.data.remark,
+      '标签': raw?.tag ?? item.data.tag
     };
   });
 
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '导入异常明细');
+  return wb;
+}
+
+export function downloadErrorReport(invalidItems) {
+  const wb = createErrorReportWorkbook(invalidItems);
   XLSX.writeFile(wb, `导入失败记录_${new Date().toISOString().slice(0, 10)}.xlsx`);
 }
 

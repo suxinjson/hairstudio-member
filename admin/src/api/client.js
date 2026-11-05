@@ -5,6 +5,7 @@ import { sha256 } from '../../../src/cloud-client.js';
 import { withBrowserLock } from '../utils/browser-lock.js';
 
 const STORAGE_KEY = 'hairstudio_admin_auth';
+export const ADMIN_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const emptyData = () => ({ members: [], ledgers: [], services: DEFAULT_SERVICES, rechargePlans: DEFAULT_RECHARGE_PLANS });
 const identityKey = user => user ? user.storeId + ':' + user.id : '';
 const sessionError = () => Object.assign(new Error('登录账号已变化，请重新加载账本'), { status: 401, code: 'SESSION_CHANGED' });
@@ -15,6 +16,7 @@ export class AdminApiClient {
     locks, indexedDB, eventTarget = globalThis.window } = {}) {
     this.storage = storage; this.requestFetch = requestFetch; this.lockOptions = { locks, indexedDB };
     this.accessToken = ref(''); this.refreshToken = ref(''); this.user = ref(null);
+    this.idleExpiresAt = ref(null);
     this.accountData = ref(null); this.accountRevision = ref(0);
     this.accountStatus = ref('idle'); this.accountError = ref('');
     this.hasPending = ref(false); this.pendingImport = ref(null); this.importing = ref(false);
@@ -48,7 +50,11 @@ export class AdminApiClient {
           value = Boolean(newValue); trigger();
           if (this.applyingSession || !this.user.value) return;
           const saved = this.readSavedSession();
-          if (identityKey(saved?.user) === identityKey(this.user.value)) this.storage.setItem(STORAGE_KEY, JSON.stringify({ ...saved, isLocked: value }));
+          if (identityKey(saved?.user) === identityKey(this.user.value)) {
+            const idleExpiresAt = value ? saved.idleExpiresAt : Date.now() + ADMIN_IDLE_TIMEOUT_MS;
+            this.idleExpiresAt.value = idleExpiresAt;
+            this.storage.setItem(STORAGE_KEY, JSON.stringify({ ...saved, isLocked: value, idleExpiresAt }));
+          }
         }
       };
     });
@@ -68,18 +74,40 @@ export class AdminApiClient {
     }
     this.accessToken.value = data?.accessToken || ''; this.refreshToken.value = data?.refreshToken || '';
     this.user.value = data?.user || null;
+    this.idleExpiresAt.value = data?.idleExpiresAt ?? null;
     this.applyingSession = true;
     try { this.isLocked.value = Boolean(data?.isLocked); } finally { this.applyingSession = false; }
     this.readPending();
   }
 
   restoreSession() {
-    try { this.applySession(this.readSavedSession()); } catch { this.applySession(null); }
+    try {
+      let saved = this.readSavedSession();
+      // Legacy sessions have no trusted activity deadline and must be unlocked once.
+      if (saved?.user && !saved.isLocked && (!Number.isSafeInteger(saved.idleExpiresAt) || saved.idleExpiresAt <= Date.now())) {
+        saved = { ...saved, isLocked: true };
+        this.storage.setItem(STORAGE_KEY, JSON.stringify(saved));
+      }
+      this.applySession(saved);
+    } catch { this.applySession(null); }
   }
 
-  saveSession(data, isLocked = this.isLocked.value) {
-    this.storage.setItem(STORAGE_KEY, JSON.stringify({ ...data, isLocked }));
-    this.applySession({ ...data, isLocked });
+  saveSession(data, isLocked = this.isLocked.value, { resetIdle = false } = {}) {
+    const saved = this.readSavedSession();
+    const idleExpiresAt = resetIdle || identityKey(saved?.user) !== identityKey(data.user)
+      ? Date.now() + ADMIN_IDLE_TIMEOUT_MS : saved?.idleExpiresAt;
+    this.storage.setItem(STORAGE_KEY, JSON.stringify({ ...data, isLocked, idleExpiresAt }));
+    this.restoreSession();
+  }
+
+  recordActivity() {
+    // Check expiry before recording input so resuming an idle tab cannot unlock it.
+    this.restoreSession();
+    if (!this.user.value || this.isLocked.value) return;
+    const saved = this.readSavedSession();
+    const next = { ...saved, idleExpiresAt: Date.now() + ADMIN_IDLE_TIMEOUT_MS };
+    this.storage.setItem(STORAGE_KEY, JSON.stringify(next));
+    this.applySession(next);
   }
 
   clearSession() { this.applySession(null); this.storage.removeItem(STORAGE_KEY); }
@@ -142,7 +170,7 @@ export class AdminApiClient {
     return this.lock('auth', async () => {
       const data = await this.fetchJSON('/api/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password, deviceId: this.deviceId }) });
-      this.saveSession(data, false);
+      this.saveSession(data, false, { resetIdle: true });
       return data;
     });
   }

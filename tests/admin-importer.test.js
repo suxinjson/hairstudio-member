@@ -6,6 +6,7 @@ import {
   guessColumnMapping,
   parseImportMoney,
   parseUploadedFile,
+  createErrorReportWorkbook,
   validateImportBatch
 } from '../admin/src/utils/importer.js';
 import { maskPhone, formatYuan } from '../admin/src/utils/security.js';
@@ -120,4 +121,33 @@ test('uploaded CSV notation and underlying Excel precision reach precheck withou
   const excelReport = validateImportBatch(excelResult.dataRows, excelResult.mapping);
   assert.equal(excelReport.invalidCount, 1); assert.equal(excelReport.validCount, 1);
   assert.equal(excelReport.results[1].data.balanceCents, 1234);
+});
+
+test('correction workbooks preserve original invalid amounts through export and reimport', async () => {
+  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: null, tag: null };
+  const rows = [
+    ['小数错误', '13800001111', '123.456', '0.789'],
+    ['指数错误', '13800001112', '1e3', '-5'],
+    ['超出范围', '13800001113', '90071992547409.92', '=1+1'],
+    ['', '13800001114', '￥1,234.56元', '12.34']
+  ];
+  const report = validateImportBatch(rows, mapping);
+  assert.equal(report.invalidCount, 4);
+  const book = createErrorReportWorkbook(report.results);
+  const sheet = book.Sheets[book.SheetNames[0]];
+  rows.forEach((row, i) => {
+    assert.equal(sheet['E' + (i + 2)].v, row[2]);
+    assert.equal(sheet['F' + (i + 2)].v, row[3]);
+    assert.equal(sheet['F' + (i + 2)].t, 's');
+    assert.equal(sheet['F' + (i + 2)].f, undefined);
+  });
+  const bytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
+  const uploaded = await parseUploadedFile({ name: 'correction.xlsx', size: bytes.byteLength,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
+  assert.equal(validateImportBatch(uploaded.dataRows, uploaded.mapping).invalidCount, 4);
+  uploaded.dataRows[3][uploaded.mapping.name] = '已修正姓名';
+  const corrected = validateImportBatch(uploaded.dataRows, uploaded.mapping);
+  assert.equal(corrected.validCount, 1);
+  assert.equal(corrected.results[3].data.balanceCents, 123456);
+  assert.equal(corrected.results[3].data.giftCents, 1234);
 });

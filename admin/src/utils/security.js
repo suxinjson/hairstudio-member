@@ -1,4 +1,4 @@
-import { ref, onMounted, onUnmounted } from 'vue';
+import { watch, onMounted, onUnmounted } from 'vue';
 
 /**
  * 手机号脱敏显示 (保护会员隐私安全)
@@ -27,27 +27,44 @@ export function formatYuan(cents) {
 /**
  * 空闲超时自动锁屏组合式函数 (默认 15 分钟)
  */
-export function useAutoLock(onLock, timeoutMinutes = 15) {
-  const timeoutMs = timeoutMinutes * 60 * 1000;
-  let timer = null;
-
-  const resetTimer = () => {
+export function useAutoLock(session) {
+  let timer = null, mounted = false;
+  const schedule = () => {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      onLock();
-    }, timeoutMs);
+    timer = null;
+    if (!mounted || !session.user.value || session.isLocked.value) return;
+    timer = setTimeout(checkExpiry, Math.max(0, session.idleExpiresAt.value - Date.now()));
+  };
+  const checkExpiry = () => {
+    session.restoreSession();
+    schedule();
+  };
+  const resetTimer = () => {
+    session.recordActivity();
+    schedule();
+  };
+  const resume = () => {
+    if (document.visibilityState !== 'hidden') checkExpiry();
   };
 
   const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+  const stopWatch = watch([session.user, session.isLocked, session.idleExpiresAt], schedule);
 
   onMounted(() => {
+    mounted = true;
     events.forEach(evt => window.addEventListener(evt, resetTimer, { passive: true }));
-    resetTimer();
+    window.addEventListener('focus', checkExpiry);
+    document.addEventListener('visibilitychange', resume);
+    checkExpiry();
   });
 
   onUnmounted(() => {
+    mounted = false;
+    stopWatch();
     if (timer) clearTimeout(timer);
     events.forEach(evt => window.removeEventListener(evt, resetTimer));
+    window.removeEventListener('focus', checkExpiry);
+    document.removeEventListener('visibilitychange', resume);
   });
 
   return { resetTimer };

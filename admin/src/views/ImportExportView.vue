@@ -439,7 +439,7 @@ function downloadTemplate() {
 function downloadErrors() {
   if (!validationReport.value) return;
   const invalids = validationReport.value.results.filter(r => r.status === 'invalid');
-  downloadErrorReport(invalids, parseResult.value.headers);
+  downloadErrorReport(invalids);
 }
 
 async function executeImport() {
