@@ -4,8 +4,20 @@ import { PGlite } from '@electric-sql/pglite';
 import { migrate } from '../database.js';
 import { createService } from '../service.js';
 import { createApi } from '../http.js';
-import { sanitizeVoiceConfig, maskApiKey, synthesizeTTS, readVoiceConfig, PROVIDER_DEFAULTS, VOICE_SYNTHESIS_TIMEOUT_MS, VOICE_DOWNLOAD_TIMEOUT_MS } from '../voice.js';
+import { sanitizeVoiceConfig, maskApiKey, synthesizeTTS, readVoiceConfig, publicVoiceConfig, PROVIDER_DEFAULTS, VOICE_SYNTHESIS_TIMEOUT_MS, VOICE_DOWNLOAD_TIMEOUT_MS } from '../voice.js';
 import { randomUUID } from 'node:crypto';
+
+test('legacy voice config enables both event types and partial updates preserve separate switches', () => {
+  const legacy = readVoiceConfig({ enabled: true });
+  assert.deepEqual(publicVoiceConfig(legacy, 'clerk').events, { consume: true, recharge: true });
+  const disabledConsume = sanitizeVoiceConfig({ events: { consume: false } }, legacy);
+  assert.deepEqual(disabledConsume.events, { consume: false, recharge: true });
+  const editedTemplate = sanitizeVoiceConfig({ templates: { consume: '', recharge: '充值成功' } }, disabledConsume);
+  assert.deepEqual(editedTemplate.events, { consume: false, recharge: true });
+  assert.equal(editedTemplate.templates.consume, '');
+  const invalidBoolean = sanitizeVoiceConfig({ events: { consume: 'true' } }, editedTemplate);
+  assert.deepEqual(invalidBoolean.events, { consume: false, recharge: true });
+});
 
 test('voice configuration sanitization and key masking', () => {
   const masked = maskApiKey('sk-fish-12345678abcdef');

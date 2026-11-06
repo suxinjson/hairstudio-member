@@ -10,7 +10,8 @@ export function useRecharge({
   receiptModal,
   showToast,
   showFeedback,
-  formatCent
+  formatCent,
+  broadcast = () => {}
 }) {
   const rechargingMember = ref(null);
   const rechargeForm = ref({
@@ -155,6 +156,10 @@ export function useRecharge({
       if (selectedMember.value) {
         selectedMember.value = localDb.getMemberById(selectedMember.value.id);
       }
+      Promise.resolve().then(() => broadcast('recharge', {
+        name: memberName, amount: confirmation.actualPay.toFixed(2), balance: (res.balanceAfter / 100).toFixed(2),
+        gift: confirmation.giftAmount.toFixed(2), totalCredit: totalCredit.toFixed(2)
+      })).catch(() => {});
     } catch (err) {
       showFeedback(err.message, 'error', { title: '充值失败' });
     } finally {

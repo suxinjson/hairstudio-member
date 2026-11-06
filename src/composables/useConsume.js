@@ -9,7 +9,8 @@ export function useConsume({
   showToast,
   showFeedback,
   formatCent,
-  openRechargeModal
+  openRechargeModal,
+  broadcast = () => {}
 }) {
   const consumingMember = ref(null);
   const consumeAmountStr = ref('');
@@ -175,6 +176,10 @@ export function useConsume({
           debt: balanceAfterCent < 0 ? formatCent(-balanceAfterCent) : null
         }
       );
+      // Audio runs independently after the local transaction succeeds.
+      Promise.resolve().then(() => broadcast('consume', {
+        name: memberName, amount: (deductedCent / 100).toFixed(2), balance: (balanceAfterCent / 100).toFixed(2)
+      })).catch(() => {});
     } catch (err) {
       showFeedback(err.message, 'error', { title: '扣款失败' });
     } finally {

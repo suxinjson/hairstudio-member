@@ -26,25 +26,33 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
   const emit = () => { for (const listener of listeners) listener(client.snapshot()); };
   const setState = state => { saveCloudState(state); emit(); };
 
-  async function raw(path, body, authorization = accessToken, method = body === undefined ? 'GET' : 'POST') {
+  async function raw(path, body, authorization = accessToken, method = body === undefined ? 'GET' : 'POST', { responseType = 'json', timeoutMs = 15000, signal } = {}) {
     const accessVersion = ledgerAccessVersion();
     const state = getCloudState();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      if (signal?.aborted) throw Object.assign(new Error('播放已停止'), { code: 'VOICE_CANCELLED' });
       const response = await requestFetch(state.serverUrl + '/api/v1' + path, {
         method, headers: { ...(authorization ? { Authorization: 'Bearer ' + authorization } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: controller.signal, credentials: 'omit', cache: 'no-store', redirect: 'error'
       });
-      const result = await response.json();
+      const result = responseType === 'blob' && response.ok ? await response.blob() : await response.json();
       assertLedgerAccess(accessVersion);
       networkUnavailable = false;
       if (!response.ok) { const error = new Error(result.error || '云端请求失败'); error.status = response.status; error.code = result.code; throw error; }
+      if (responseType === 'blob' && (!/^audio\//i.test(result.type || '') || !result.size || result.size > 8 * 1024 * 1024)) {
+        throw Object.assign(new Error('语音服务未返回有效音频'), { status: 502 });
+      }
       return result;
     } catch (error) {
+      if (signal?.aborted) throw Object.assign(new Error('播放已停止'), { code: 'VOICE_CANCELLED' });
+      if (responseType === 'blob' && controller.signal.aborted) throw Object.assign(new Error('语音合成等待超时，请稍后重试'), { status: 504 });
       if (!error.status) { networkUnavailable = true; const network = new Error('暂时无法连接服务器，仍可离线使用；本机账本和待同步记录已保留'); network.network = true; throw network; }
       throw error;
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
 
   async function keepSession(session) {
@@ -86,11 +94,11 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     })().finally(() => { refreshPromise = null; });
     return refreshPromise;
   }
-  async function request(path, body, method) {
+  async function request(path, body, method, options) {
     if (offlineEnabled() && !accessToken && !refreshToken) await client.restoreSession();
     if (!accessToken) await refreshSession();
-    try { return await raw(path, body, accessToken, method); }
-    catch (error) { if (error.status !== 401) throw error; await refreshSession(); return raw(path, body, accessToken, method); }
+    try { return await raw(path, body, accessToken, method, options); }
+    catch (error) { if (error.status !== 401) throw error; await refreshSession(); return raw(path, body, accessToken, method, options); }
   }
   async function verifyAccount(account) {
     if (!account || !Number.isSafeInteger(account.revision) || account.revision < 0 ||
@@ -375,6 +383,16 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       setState({ ...state, activity: [...state.activity, { id: newId(), type, at: clock(), actorId: state.user.id, deviceId: state.deviceId }] });
     },
     request,
+    getVoiceConfig() { return request('/voice/config'); },
+    getUsers() { return request('/users'); },
+    saveVoiceConfig(config) { return request('/voice/config', config, 'POST'); },
+    previewVoice(options, { signal } = {}) {
+      const { text, provider, apiUrl, apiKey, appId, model, voiceId } = options;
+      return request('/voice/synthesize', { text, test: true, provider, apiUrl, apiKey, appId, model, voiceId }, 'POST', { responseType: 'blob', timeoutMs: 130000, signal });
+    },
+    synthesizeVoice({ text }, { signal } = {}) {
+      return request('/voice/synthesize', { text }, 'POST', { responseType: 'blob', timeoutMs: 130000, signal });
+    },
     async downloadAuthorization() { await refreshSession(); return accessToken; },
     async start() {
       const stopRecording = installCloudRecording(() => { emit(); this.sync().catch(() => {}); }, { allowLocal: offlineEnabled });

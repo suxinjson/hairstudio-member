@@ -342,3 +342,17 @@ test('Xfyun settings preview uses the server password without exposing it to the
   assert.equal(save.mock.calls[0].arguments[0].appId, 'serverappid');
   assert.equal(save.mock.calls[0].arguments[0].apiKey, '');
 });
+
+test('PC lock, account changes and unmount stop speech immediately', async t => {
+  const { voicePlayer } = await import('../admin/src/utils/voice-player.js');
+  const stop = t.mock.method(voicePlayer, 'stop', () => {});
+  await mount();
+  const count = stop.mock.callCount();
+  adminApi.isLocked.value = true;
+  assert.equal(stop.mock.callCount(), count + 1);
+  adminApi.clearSession();
+  assert.ok(stop.mock.callCount() > count + 1);
+  const beforeUnmount = stop.mock.callCount();
+  app.unmount(); app = null;
+  assert.equal(stop.mock.callCount(), beforeUnmount + 1);
+});

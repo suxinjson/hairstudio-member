@@ -94,6 +94,7 @@
           @navigate="openSettings"
           @navigate-page="openSettingsPage"
         />
+        <AppVoiceSettings v-if="settingsPage === 'voice'" @navigate="openSettings" />
         
         <!-- 理发项目与定价管理 (独立组件) -->
         <ServiceSettings
@@ -323,9 +324,11 @@ import SettingsHelp from './components/SettingsHelp.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
 import FeedbackModal from './components/FeedbackModal.vue';
 import CloudSettings from './components/CloudSettings.vue';
+import AppVoiceSettings from './components/AppVoiceSettings.vue';
 import Customers from './components/Customers.vue';
 import { UsersRound, ReceiptText, Settings } from 'lucide-vue-next';
 import { cloudClient, copyToClipboard } from './cloud-device.js';
+import { appVoicePlayer, appVoiceContext } from './app-voice.js';
 import { canWrite } from './sync-protocol.js';
 
 import { useFeedback } from './composables/useFeedback.js';
@@ -381,6 +384,12 @@ const {
   handleConfirmModalAccept,
   handleConfirmModalCancel
 } = useFeedback();
+
+function broadcastTransaction(type, params) {
+  return appVoicePlayer.broadcast(type, params, {
+    onError: error => showToast('记账已完成，语音播报失败：' + error.message)
+  });
+}
 
 // 格式化工具
 const {
@@ -541,6 +550,7 @@ const {
   refreshAll,
   selectedMember,
   receiptModal,
+  broadcast: broadcastTransaction,
   showToast,
   showFeedback,
   formatCent
@@ -577,7 +587,8 @@ const {
   showToast,
   showFeedback,
   formatCent,
-  openRechargeModal
+  openRechargeModal,
+  broadcast: broadcastTransaction
 });
 
 // 备份与快照管理
@@ -628,6 +639,7 @@ const compactConnectionLabel = computed(() => {
   return cloudState.value.outbox.length ? '待同步' : cloudState.value.syncStatus === 'confirmed' ? '已同步' : '待确认';
 });
 const stopCloudSubscription = cloudClient.subscribe((state) => {
+  if (appVoiceContext(state) !== appVoiceContext(cloudState.value)) appVoicePlayer.stop();
   cloudState.value = state;
   if (!isNativeApp && (!state.user || !state.binding)) {
     activeTab.value = 'settings';
@@ -781,6 +793,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true;
+  appVoicePlayer.stop();
   resetExitSequence();
   clearTimeout(dailyRefreshTimer);
   document.removeEventListener('visibilitychange', handleVisibilityChange);

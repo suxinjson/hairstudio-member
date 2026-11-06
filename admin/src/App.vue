@@ -213,8 +213,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { adminApi } from './api/client.js';
+import { voicePlayer } from './utils/voice-player.js';
 import { useAutoLock } from './utils/security.js';
 import LoginView from './views/LoginView.vue';
 import DashboardView from './views/DashboardView.vue';
@@ -227,6 +228,8 @@ import UsersView from './views/UsersView.vue';
 import AuditLogView from './views/AuditLogView.vue';
 
 const currentUser = computed(() => adminApi.user.value);
+watch(() => [currentUser.value?.storeId, currentUser.value?.id, currentUser.value?.role, adminApi.isLocked.value], () => voicePlayer.stop(), { flush: 'sync' });
+onUnmounted(() => voicePlayer.stop());
 const activeTab = ref('dashboard');
 const accountData = adminApi.accountData;
 const accountStatus = adminApi.accountStatus;

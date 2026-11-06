@@ -7,6 +7,7 @@ export function useSettingsNav({ activeTab, cloudState, isNativeApp }) {
   const settingsTitles = {
     account: '账号与同步',
     services: '服务与价格',
+    voice: '语音与天猫精灵',
     backup: '数据备份',
     'backup-files': '导出与恢复',
     snapshots: '本地快照',
@@ -24,7 +25,10 @@ export function useSettingsNav({ activeTab, cloudState, isNativeApp }) {
   ];
 
   const settingsGroups = computed(() => [
-    { title: '日常经营', items: [{ page: 'services', title: '服务与价格', description: '管理理发项目与默认价格', icon: '💈' }] },
+    { title: '日常经营', items: [
+      { page: 'services', title: '服务与价格', description: '管理理发项目与默认价格', icon: '💈' },
+      { page: 'voice', title: '语音与天猫精灵', description: '播报开关、音色、语句与音箱记账设置', icon: '📢' }
+    ] },
     {
       title: '账号与云端',
       items: [

@@ -12,6 +12,7 @@ export const DEFAULT_VOICE_CONFIG = {
   model: 's2.1-pro-free',
   voiceId: '74c6aba5cbf94a15bbdc547ffce5cb38',
   volume: 1.0,
+  events: { consume: true, recharge: true },
   templates: {
     consume: '{name} 消费 {amount} 元，卡内余额 {balance} 元',
     recharge: '{name} 充值 {amount} 元，卡内余额 {balance} 元'
@@ -108,6 +109,13 @@ export function sanitizeVoiceConfig(raw, previous = {}) {
     config.volume = Math.max(0.1, Math.min(1.0, raw.volume));
   }
 
+  if (raw.events && typeof raw.events === 'object') {
+    config.events = {
+      consume: typeof raw.events.consume === 'boolean' ? raw.events.consume : config.events?.consume !== false,
+      recharge: typeof raw.events.recharge === 'boolean' ? raw.events.recharge : config.events?.recharge !== false
+    };
+  }
+
   if (raw.templates && typeof raw.templates === 'object') {
     config.templates = {
       consume: typeof raw.templates.consume === 'string'
@@ -188,7 +196,7 @@ async function assertVoiceResponse(response, label, controller) {
 
 export function publicVoiceConfig(config, role) {
   const { enabled, provider, model, voiceId, volume, templates } = config;
-  const result = { enabled, provider, model, voiceId, volume, templates, apiKey: '', hasApiKey: Boolean(config.apiKey || provider === 'xfyun' && process.env.XFYUN_API_PASSWORD) };
+  const result = { enabled, provider, model, voiceId, volume, templates, events: config.events || DEFAULT_VOICE_CONFIG.events, apiKey: '', hasApiKey: Boolean(config.apiKey || provider === 'xfyun' && process.env.XFYUN_API_PASSWORD) };
   if (role === 'owner') Object.assign(result, { apiUrl: config.apiUrl, appId: config.appId || process.env.XFYUN_APP_ID || '',
     serverXfyunConfigured: Boolean(process.env.XFYUN_APP_ID && process.env.XFYUN_API_PASSWORD), aligenie: {
     enabled: config.aligenie.enabled, actorId: config.aligenie.actorId, authVersion: config.aligenie.authVersion,

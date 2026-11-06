@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@source "../../src/components/VoiceSettings.vue";
 
 :root {
   --primary: #167c68;

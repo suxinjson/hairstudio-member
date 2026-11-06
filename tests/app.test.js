@@ -71,6 +71,7 @@ const { createApp, nextTick } = await import(vueUrl);
 const { localDb } = await import('../src/storage.js');
 const { saveCloudState, getCloudState } = await import('../src/cloud-storage.js');
 const { cloudClient } = await import('../src/cloud-device.js');
+const { appVoicePlayer, appVoicePreviewPlayer } = await import('../src/app-voice.js');
 
 class MemoryStorage {
   values = new Map();
@@ -111,7 +112,7 @@ function button(text) {
 async function settings(page = 'overview') {
   [...document.querySelectorAll('nav button')].find(element => element.textContent.includes('设置')).click();
   await nextTick();
-  const titles = { account: '账号与同步', services: '服务与价格', 'backup-files': '导出与恢复', snapshots: '本地快照' };
+  const titles = { account: '账号与同步', services: '服务与价格', voice: '语音与天猫精灵', 'backup-files': '导出与恢复', snapshots: '本地快照' };
   if (['backup-files', 'snapshots'].includes(page)) { button('数据备份').click(); await nextTick(); }
   if (page !== 'overview') { button(titles[page] || page).click(); await nextTick(); }
 }
@@ -233,6 +234,7 @@ test('external export succeeds with an explicit warning when its optional local 
 });
 
 test('the recharge form accepts decimals and credits the exact confirmed total', async t => {
+  const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => true);
   const member = localDb.createMember({ name: '张姐', phone: '13800001111' });
   await mount();
   document.querySelector('.customer-open').click(); await nextTick();
@@ -249,6 +251,10 @@ test('the recharge form accepts decimals and credits the exact confirmed total',
   button('确认充值').click();
   await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, 2006);
+  assert.equal(broadcast.mock.callCount(), 1);
+  assert.deepEqual(broadcast.mock.calls[0].arguments.slice(0, 2), ['recharge', {
+    name: '张姐', amount: '19.99', balance: '20.06', gift: '0.07', totalCredit: '20.06'
+  }]);
   // The receipt uses the real clipboard contract: success resolves without a value.
   t.mock.method(Capacitor, 'isNativePlatform', () => false);
   let copied, denied = false;
@@ -325,6 +331,70 @@ test('a gift policy changed during confirmation requires a second review', async
   assert.ok(document.body.textContent.includes('规则已变化'));
   button('确认充值').click(); await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, 10000);
+});
+
+test('consumption broadcasts only after confirmation and keeps its receipt when speech fails', async t => {
+  const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async (_type, _params, { onError }) => {
+    onError(new Error('音频解码或播放失败'));
+    return false;
+  });
+  const member = localDb.createMember({ name: '消费播报客户', phone: '13800006001', initialBalance: 100 });
+  await mount(); button('扣款').click(); await nextTick();
+  button('确认扣除').click(); await nextTick();
+  assert.equal(broadcast.mock.callCount(), 0);
+  button('返回修改').click(); await nextTick();
+  assert.equal(broadcast.mock.callCount(), 0);
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+  button('确认扣除').click(); await nextTick();
+  const confirm = button('确认扣款');
+  confirm.click(); confirm.click(); await nextTick();
+  assert.equal(broadcast.mock.callCount(), 1);
+  assert.deepEqual(broadcast.mock.calls[0].arguments.slice(0, 2), ['consume', {
+    name: '消费播报客户', amount: '38.00', balance: '62.00'
+  }]);
+  assert.equal(localDb.getMemberById(member.id).balance, 6200);
+  assert.equal(localDb.getLedgers().filter(l => l.type === 'CONSUME').length, 1);
+  assert.match(document.querySelector('#feedback-title').textContent, /消费成功/);
+  await nextTick();
+  assert.ok(document.body.textContent.includes('记账已完成，语音播报失败：音频解码或播放失败'));
+});
+
+for (const type of ['consume', 'recharge']) {
+  test(`failed ${type} bookkeeping never broadcasts`, async t => {
+    const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => true);
+    const member = localDb.createMember({ name: '写入失败客户', phone: '13800006002', initialBalance: 100 });
+    await mount();
+    if (type === 'consume') {
+      button('扣款').click(); await nextTick();
+      button('确认扣除').click(); await nextTick();
+    } else {
+      await openRecharge(); await inputValue('#recharge-pay', '10');
+      button('核对充值信息').click(); await nextTick();
+    }
+    t.mock.method(localDb, type, () => { throw new Error('本机存储写入失败'); });
+    button(type === 'consume' ? '确认扣款' : '确认充值').click(); await nextTick();
+    assert.equal(broadcast.mock.callCount(), 0);
+    assert.equal(localDb.getMemberById(member.id).balance, 10000);
+    assert.ok(document.body.textContent.includes('本机存储写入失败'));
+  });
+}
+
+test('App cancels speech on account changes and unmount while routine sync updates keep playing', async t => {
+  const state = { ...getCloudState(), serverUrl: 'https://member.example.com', deviceId: 'device-00000000001',
+    user: { id: 'owner-A', storeId: 'store-A', role: 'owner' }, binding: { storeId: 'store-A' }, online: true };
+  let listener;
+  t.mock.method(cloudClient, 'snapshot', () => state);
+  t.mock.method(cloudClient, 'subscribe', callback => { listener = callback; callback(state); return () => {}; });
+  t.mock.method(cloudClient, 'start', async () => () => {});
+  const stop = t.mock.method(appVoicePlayer, 'stop', () => {});
+  await mount();
+  const initial = stop.mock.callCount();
+  listener({ ...state, status: 'pending' }); await nextTick();
+  assert.equal(stop.mock.callCount(), initial);
+  listener({ ...state, user: { ...state.user, id: 'owner-B' } }); await nextTick();
+  assert.equal(stop.mock.callCount(), initial + 1);
+  app.unmount(); app = null;
+  assert.equal(stop.mock.callCount(), initial + 2);
 });
 
 test('service settings validate gift rates and allow switching off after an invalid entry', async () => {
@@ -1109,6 +1179,7 @@ test('recent customers follow actual non-reversed consumption instead of profile
 });
 
 test('overdraft warns about additional and total debt and requires acknowledgement on every confirmation', async t => {
+  const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => true);
   t.mock.method(console, 'warn', () => {});
   const member = localDb.createMember({ name: '欠款确认客户', phone: '13800001001', initialBalance: '20.01' });
   await mount();
@@ -1132,6 +1203,10 @@ test('overdraft warns about additional and total debt and requires acknowledgeme
   confirm.click(); confirm.click(); await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, -1799);
   assert.equal(localDb.getLedgers().filter(l => l.type === 'CONSUME').length, 1);
+  assert.equal(broadcast.mock.callCount(), 1);
+  assert.deepEqual(broadcast.mock.calls[0].arguments.slice(0, 2), ['consume', {
+    name: '欠款确认客户', amount: '38.00', balance: '-17.99'
+  }]);
   assert.ok(document.querySelector('#feedback-title').textContent.includes('已记录欠款'));
   assert.ok(document.querySelector('.feedback-amount .balance-debt').textContent.includes('17.99'));
   button('知道了').click(); await nextTick();
@@ -1155,6 +1230,7 @@ test('a changed customer balance forces renewed debt acknowledgement before savi
 });
 
 test('repayment from the consume drawer previews the remaining debt and produces a clear receipt', async t => {
+  const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => { throw new Error('speech unavailable'); });
   t.mock.method(console, 'warn', () => {});
   const member = localDb.createMember({ name: '还款客户', phone: '13800001001' });
   localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
@@ -1169,6 +1245,10 @@ test('repayment from the consume drawer previews the remaining debt and produces
   assert.match(document.querySelector('.recharge-debt-preview').textContent, /仍欠款 ¥28.00/);
   button('确认充值').click(); await nextTick();
   assert.equal(localDb.getMemberById(member.id).balance, -2800);
+  assert.equal(broadcast.mock.callCount(), 1);
+  assert.deepEqual(broadcast.mock.calls[0].arguments.slice(0, 2), ['recharge', {
+    name: '还款客户', amount: '10.00', balance: '-28.00', gift: '0.00', totalCredit: '10.00'
+  }]);
   assert.ok(document.body.textContent.includes('本次抵扣欠款：¥10.00'));
   assert.ok(document.body.textContent.includes('当前仍欠款：¥28.00'));
 });
@@ -1218,4 +1298,145 @@ test('confirmation inquiry modal renders friendly Chinese buttons, handles cance
   await nextTick();
   assert.equal(document.querySelector('.confirm-dialog'), null);
   assert.equal(localDb.getServices().length, serviceCountBefore - 1);
+});
+
+function voiceSettingsSession(t, { role = 'owner', online = true } = {}) {
+  const user = { id: '11111111-1111-4111-8111-111111111111', storeId: '22222222-2222-4222-8222-222222222222', role, displayName: '测试店主' };
+  const state = { ...getCloudState(), deviceId: 'device-00000000001', serverUrl: 'https://member.example.com', user,
+    binding: { storeId: user.storeId }, online, syncLoginRequired: false };
+  saveCloudState(state);
+  t.mock.method(cloudClient, 'snapshot', () => state);
+  t.mock.method(cloudClient, 'subscribe', callback => { callback(state); return () => {}; });
+  t.mock.method(cloudClient, 'start', async () => () => {});
+  return { state, user };
+}
+
+const appVoiceConfig = () => ({ enabled: false, provider: 'xfyun', apiUrl: 'wss://tts-api.xfyun.cn/v2/tts', appId: 'testappid',
+  hasApiKey: true, serverXfyunConfigured: true, voiceId: 'x4_xiaoyan', volume: 0.8,
+  events: { consume: true, recharge: true }, templates: { consume: '{name}消费{amount}元', recharge: '{name}充值{amount}元' },
+  aligenie: { enabled: false, hasToken: true, actorId: '11111111-1111-4111-8111-111111111111', allowedDevices: ['speaker-1'], verificationFile: 'verify.txt', verificationContent: 'platform-verification' } });
+const flushVoiceSettings = async () => { for (let i = 0; i < 6; i++) await nextTick(); };
+
+test('App owner edits and saves voice switches, voices, volume, templates and AliGenie in server config', async t => {
+  const { user } = voiceSettingsSession(t);
+  const config = appVoiceConfig();
+  t.mock.method(cloudClient, 'getVoiceConfig', async () => config);
+  t.mock.method(cloudClient, 'getUsers', async () => [
+    { ...user, active: true }, { ...user, id: 'viewer', active: true, role: 'viewer' }, { ...user, id: 'inactive', active: false }
+  ]);
+  const save = t.mock.method(cloudClient, 'saveVoiceConfig', async payload => ({ ...payload, apiKey: '', hasApiKey: true, aligenie: { ...payload.aligenie, token: undefined, hasToken: true } }));
+  const stop = t.mock.method(appVoicePlayer, 'stop', () => {});
+  await mount(); await settings('voice'); await flushVoiceSettings();
+  assert.equal(document.querySelector('input[type="password"]').value, '');
+  assert.equal(document.querySelector('[aria-label="天猫精灵签名密钥"]').value, '');
+  assert.equal(document.querySelectorAll('[aria-label="天猫精灵记账账号"] option').length, 2);
+  document.querySelector('[aria-label="播报总开关"]').click();
+  document.querySelector('[aria-label="消费播报开关"]').click();
+  await inputValue('[aria-label="消费播报语句"]', '{name}付款{amount}元，剩余{balance}元');
+  await inputValue('[aria-label="充值播报语句"]', '{name}实付{amount}元，赠送{gift}元，入账{totalCredit}元');
+  await inputValue('[aria-label="播报音量"]', '0.45');
+  const voice = [...document.querySelectorAll('select')].find(select => select.value === 'x4_xiaoyan');
+  voice.value = 'aisjinger'; voice.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  document.querySelector('[aria-label="天猫精灵开关"]').click();
+  await inputValue('[aria-label="天猫精灵设备白名单"]', 'speaker-1\nspeaker-2');
+  await inputValue('[aria-label="天猫精灵签名密钥"]', 'new-signing-secret-' + 'x'.repeat(32));
+  const beforeStop = stop.mock.callCount();
+  button('保存播报配置').click(); button('保存播报配置').click(); await flushVoiceSettings();
+  assert.equal(save.mock.callCount(), 1);
+  const payload = save.mock.calls[0].arguments[0];
+  assert.equal(payload.enabled, true); assert.equal(payload.voiceId, 'aisjinger'); assert.equal(payload.volume, 0.45);
+  assert.deepEqual(payload.events, { consume: false, recharge: true });
+  assert.equal(payload.templates.consume, '{name}付款{amount}元，剩余{balance}元');
+  assert.ok(payload.templates.recharge.includes('{totalCredit}'));
+  assert.equal(payload.aligenie.enabled, true);
+  assert.equal(payload.aligenie.actorId, user.id);
+  assert.deepEqual(payload.aligenie.allowedDevices, ['speaker-1', 'speaker-2']);
+  assert.equal(payload.aligenie.verificationFile, 'verify.txt');
+  assert.equal(document.querySelector('[aria-label="天猫精灵签名密钥"]').value, '');
+  assert.ok(stop.mock.callCount() > beforeStop);
+  assert.ok(document.body.textContent.includes('语音播报配置已成功保存'));
+});
+
+test('App can preview an unsaved Xfyun voice without enabling automatic announcements', async t => {
+  voiceSettingsSession(t);
+  t.mock.method(cloudClient, 'getVoiceConfig', async () => appVoiceConfig());
+  t.mock.method(cloudClient, 'getUsers', async () => []);
+  const preview = t.mock.method(appVoicePreviewPlayer, 'queueSpeak', async () => {});
+  const save = t.mock.method(cloudClient, 'saveVoiceConfig', async () => {});
+  await mount(); await settings('voice'); await flushVoiceSettings();
+  await inputValue('input[placeholder="输入需要试听的测试文本..."]', '欢迎光临，语音设置测试');
+  button('试听测试').click(); await flushVoiceSettings();
+  assert.equal(preview.mock.callCount(), 1);
+  assert.equal(preview.mock.calls[0].arguments[0], '欢迎光临，语音设置测试');
+  assert.equal(preview.mock.calls[0].arguments[1].testOptions.provider, 'xfyun');
+  assert.equal(preview.mock.calls[0].arguments[1].testOptions.apiKey, '');
+  assert.equal(document.querySelector('[aria-label="播报总开关"]').getAttribute('aria-checked'), 'false');
+  assert.equal(save.mock.callCount(), 0);
+  assert.ok(document.body.textContent.includes('音频合成并播放成功'));
+});
+
+for (const role of ['clerk', 'viewer']) {
+  test(`App ${role} sees saved voice settings without permission to edit or view AliGenie credentials`, async t => {
+    voiceSettingsSession(t, { role });
+    const config = appVoiceConfig(); delete config.aligenie;
+    t.mock.method(cloudClient, 'getVoiceConfig', async () => config);
+    const users = t.mock.method(cloudClient, 'getUsers', async () => { throw new Error('must not read users'); });
+    const save = t.mock.method(cloudClient, 'saveVoiceConfig', async () => {});
+    await mount(); await settings('voice'); await flushVoiceSettings();
+    assert.equal(document.querySelector('[aria-label="播报总开关"]').disabled, true);
+    assert.equal(document.querySelector('[aria-label="消费播报开关"]').disabled, true);
+    assert.equal(document.querySelector('[aria-label="消费播报语句"]').disabled, true);
+    assert.equal(document.querySelector('[aria-label="播报音量"]').disabled, true);
+    assert.equal(document.querySelector('[aria-label="天猫精灵签名密钥"]'), null);
+    assert.equal([...document.querySelectorAll('button')].some(button => button.textContent.includes('保存播报配置')), false);
+    assert.equal(users.mock.callCount(), 0); assert.equal(save.mock.callCount(), 0);
+  });
+}
+
+test('App offline voice settings do not fetch or expose a form and offer an account route before binding', async t => {
+  voiceSettingsSession(t, { online: false });
+  const load = t.mock.method(cloudClient, 'getVoiceConfig', async () => appVoiceConfig());
+  await mount(); await settings('voice'); await flushVoiceSettings();
+  assert.ok(document.body.textContent.includes('语音设置需要联网'));
+  assert.equal(document.querySelector('[aria-label="播报总开关"]'), null);
+  assert.equal(load.mock.callCount(), 0);
+});
+
+test('App prevents saving default voice settings before loading and offers retry after a load failure', async t => {
+  voiceSettingsSession(t);
+  let rejectLoad;
+  const load = t.mock.method(cloudClient, 'getVoiceConfig', () => new Promise((_resolve, reject) => { rejectLoad = reject; }));
+  t.mock.method(cloudClient, 'getUsers', async () => []);
+  const save = t.mock.method(cloudClient, 'saveVoiceConfig', async () => {});
+  await mount(); await settings('voice'); await flushVoiceSettings();
+  assert.equal(document.querySelector('[aria-label="播报总开关"]').disabled, true);
+  assert.ok(document.body.textContent.includes('正在加载门店语音配置'));
+  assert.equal([...document.querySelectorAll('button')].some(button => button.textContent.includes('保存播报配置')), false);
+  rejectLoad(new Error('服务暂时不可用')); await flushVoiceSettings();
+  assert.ok(document.body.textContent.includes('加载语音配置失败'));
+  load.mock.mockImplementation(async () => appVoiceConfig());
+  button('重新加载语音配置').click(); await flushVoiceSettings();
+  assert.equal(document.querySelector('[aria-label="播报总开关"]').disabled, false);
+  assert.equal(save.mock.callCount(), 0);
+});
+
+test('App generates and copies a new AliGenie key and discards it when cancelling changes', async t => {
+  voiceSettingsSession(t);
+  t.mock.method(cloudClient, 'getVoiceConfig', async () => appVoiceConfig());
+  t.mock.method(cloudClient, 'getUsers', async () => []);
+  await mount(); await settings('voice'); await flushVoiceSettings();
+  t.mock.method(Capacitor, 'isNativePlatform', () => false);
+  const copies = [];
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { copies.push(text); } } });
+  t.after(() => { delete navigator.clipboard; });
+  button('生成新签名密钥').click(); await flushVoiceSettings();
+  const generated = document.querySelector('[aria-label="天猫精灵签名密钥"]').value;
+  assert.match(generated, /^[a-f0-9]{64}$/);
+  button('复制签名密钥').click(); await flushVoiceSettings();
+  assert.equal(copies[0], generated);
+  button('复制接口地址').click(); await flushVoiceSettings();
+  assert.equal(copies[1], 'https://member.example.com/api/v1/voice/aligenie');
+  button('取消修改').click(); await flushVoiceSettings();
+  assert.equal(document.querySelector('[aria-label="天猫精灵签名密钥"]').value, '');
+  assert.equal(document.body.textContent.includes(generated), false);
 });

@@ -160,13 +160,14 @@ test('unsigned and legacy integrations fail closed and bound actors lose access 
 });
 
 test('only owners can test disabled synthesis, and no role can read saved credentials', async () => {
-  await service.saveVoiceConfig(identity, { apiKey: 'new-server-only-key', enabled: false });
+  await service.saveVoiceConfig(identity, { apiKey: 'new-server-only-key', enabled: false, events: { consume: false, recharge: true } });
   const clerk = await service.createUser(identity, { username: 'clerk', password, displayName: '收银', role: 'clerk' });
   await service.createUser(identity, { username: 'viewer', password, displayName: '查看', role: 'viewer' });
   for (const username of ['owner', 'clerk', 'viewer']) {
     const session = await service.login({ username, password, deviceId: randomUUID() }, 'local');
     const user = await service.authenticate(session.accessToken), config = await service.getVoiceConfig(user);
     assert.equal(config.apiKey, ''); assert.equal(JSON.stringify(config).includes(secret), false);
+    assert.deepEqual(config.events, { consume: false, recharge: true });
     if (username !== 'owner') {
       assert.equal(config.aligenie, undefined);
       await assert.rejects(service.synthesizeVoice(user, { text: 'hello', test: true }), { status: 403 });
@@ -233,6 +234,22 @@ test('production voice transport pins verified DNS while preserving the original
   const operation = stalled('https://api.fish.audio/v1/tts', { signal: controller.signal });
   controller.abort();
   await assert.rejects(operation, { name: 'AbortError' });
+});
+
+test('voice DNS rejects the entire reserved benchmark range before opening a connection', async () => {
+  for (const address of ['198.18.0.0', '198.18.0.1', '198.19.255.255']) {
+    assert.equal(isPublicAddress(address), false, address);
+    await assert.rejects(resolveVoiceTarget(new URL('https://api.fish.audio/'), async () => [{ address, family: 4 }]), { code: 'VOICE_TARGET_FORBIDDEN' });
+  }
+  assert.equal(isPublicAddress('198.17.255.255'), true);
+  assert.equal(isPublicAddress('198.20.0.0'), true);
+  let connections = 0;
+  const fetchVoice = createVoiceFetch({
+    resolve: async () => [{ address: '8.8.8.8', family: 4 }, { address: '198.18.0.1', family: 4 }],
+    requestFn: () => { connections++; throw new Error('must not connect'); }
+  });
+  await assert.rejects(fetchVoice('https://api.fish.audio/v1/tts'), { code: 'VOICE_TARGET_FORBIDDEN' });
+  assert.equal(connections, 0);
 });
 
 test('empty upstream responses are rejected without invalid Response construction', async () => {

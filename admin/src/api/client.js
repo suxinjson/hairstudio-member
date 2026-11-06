@@ -615,15 +615,18 @@ export class AdminApiClient {
     });
   }
 
-  async synthesizeVoice(options) {
+  async synthesizeVoice(options, { signal } = {}) {
     this.restoreSession();
     const generation = this.generation;
     const previousAccess = this.accessToken.value;
     const execute = async token => {
       const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal?.addEventListener('abort', abort, { once: true });
       // Cover HeyGen synthesis (90s), audio download (30s), and proxy overhead.
       const timer = setTimeout(() => controller.abort(), 130000);
       try {
+        if (signal?.aborted) throw Object.assign(new Error('播放已停止'), { code: 'VOICE_CANCELLED' });
         const response = await this.requestFetch('/api/v1/voice/synthesize', {
           method: 'POST',
           headers: {
@@ -643,10 +646,12 @@ export class AdminApiClient {
         }
         return await response.blob();
       } catch (error) {
+        if (signal?.aborted) throw Object.assign(new Error('播放已停止'), { code: 'VOICE_CANCELLED' });
         if (controller.signal.aborted) throw new Error('语音合成等待超时，请稍后重试或检查服务器网络');
         throw error;
       } finally {
         clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
       }
     };
 
