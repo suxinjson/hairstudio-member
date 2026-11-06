@@ -1,6 +1,6 @@
 import { randomUUID, createHmac, timingSafeEqual } from 'node:crypto';
-import { readFile, stat } from 'node:fs/promises';
-import { resolve, join } from 'node:path';
+import { DEFAULT_VOICE_CONFIG } from './voice.js';
+
 import { transaction } from './database.js';
 import { integrity, digest, ApiError } from './security.js';
 import { replayOperation } from '../src/cloud-storage.js';
@@ -717,26 +717,10 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     });
 }
 
-export async function getAliGenieVerificationContent(fileName, pool, baseDir = './server/aligenie') {
+export async function getAliGenieVerificationContent(fileName, pool) {
   if (!/^[a-zA-Z0-9_-]+\.txt$/.test(fileName)) return null;
 
-  // 1. Try reading from disk: aligenie/
-  const candidates = [
-    resolve(baseDir, fileName),
-    resolve('./aligenie', fileName),
-    resolve('./server/aligenie', fileName)
-  ];
-  for (const p of candidates) {
-    try {
-      const s = await stat(p);
-      if (s.isFile()) {
-        const text = await readFile(p, 'utf8');
-        return text.trim();
-      }
-    } catch {}
-  }
-
-  // 2. Try looking up in database store_settings
+  // 1. 从数据库 store_settings 中读取天猫精灵校验内容
   if (pool) {
     try {
       const { rows } = await pool.query(
@@ -747,6 +731,11 @@ export async function getAliGenieVerificationContent(fileName, pool, baseDir = '
         return rows[0].voice_config.aligenie.verificationContent.trim();
       }
     } catch {}
+  }
+
+  // 2. 匹配预设默认校验文件名与内容（全在内存/数据库，无需任何磁盘文件）
+  if (DEFAULT_VOICE_CONFIG.aligenie?.verificationFile === fileName) {
+    return DEFAULT_VOICE_CONFIG.aligenie.verificationContent;
   }
 
   return null;

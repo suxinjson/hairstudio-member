@@ -5,6 +5,7 @@ import { resolve, join } from 'node:path';
 import { ApiError } from './security.js';
 import { DATA_LIMITS, assertJsonBudget } from '../src/data-limits.js';
 import { normalizeIP, proxyIdentity, createRequestGuard } from './request-guard.js';
+import { signAliGenieRequest } from './aligenie.js';
 
 async function body(request, maximum = 16 * 1024) {
   if (!String(request.headers['content-type'] || '').startsWith('application/json')) throw new ApiError(415, '请求必须使用 JSON');
@@ -87,8 +88,30 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       if (route === 'POST /api/v1/voice/aligenie') {
         guard.take('voice_aligenie:' + ip, 60);
         const input = await body(request, 32 * 1024);
+        let headers = request.headers;
+        if (!headers['x-aligenie-signature']) {
+          const rawToken = headers['x-aligenie-token'] || headers['x-token'] || url.searchParams.get('token');
+          if (rawToken && typeof rawToken === 'string' && /^[a-zA-Z0-9_-]{32,100}$/.test(rawToken.trim())) {
+            const token = rawToken.trim();
+            const { rows } = await pool.query(
+              "SELECT store_id, voice_config FROM store_settings WHERE voice_config->'aligenie'->>'token' = $1 LIMIT 1",
+              [token]
+            );
+            if (rows[0] && rows[0].voice_config?.aligenie?.enabled) {
+              const storeId = rows[0].store_id;
+              const secret = rows[0].voice_config.aligenie.token;
+              const timestamp = String(Date.now());
+              headers = {
+                ...request.headers,
+                'x-store-id': storeId,
+                'x-aligenie-timestamp': timestamp,
+                'x-aligenie-signature': signAliGenieRequest(secret, timestamp, storeId, input)
+              };
+            }
+          }
+        }
         const result = await service.handleAliGenieWebhook(input, {
-          headers: request.headers
+          headers
         });
         return send(200, result);
       }

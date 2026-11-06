@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
-import { writeFile, unlink, mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { migrate } from '../database.js';
 import { createService } from '../service.js';
@@ -219,9 +217,9 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
 
   // 2. Test Verification File Serving (GET /aligenie/<file>.txt)
   const testFileName = 'test_verify_hash_9876543210.txt';
-  const filePath = resolve('./server/aligenie', testFileName);
-  await mkdir(resolve('./server/aligenie'), { recursive: true });
-  await writeFile(filePath, 'test_verify_hash_9876543210', 'utf8');
+  await service.saveVoiceConfig(identity, { aligenie: { verificationFile: testFileName, verificationContent: 'test_verify_hash_9876543210' } });
+
+
 
   try {
     const verifyRes = await fetch(`${baseUrl}/aligenie/${testFileName}`);
@@ -600,7 +598,6 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.equal(forbidden.status, 401);
 
   } finally {
-    try { await unlink(filePath); } catch {}
     server.closeAllConnections();
     await new Promise(r => server.close(r));
     await db.close();

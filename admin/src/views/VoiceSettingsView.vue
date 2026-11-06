@@ -362,6 +362,14 @@
       <label class="block text-sm">允许的设备标识（每行一个）
         <textarea v-model="aliDevices" rows="3" class="block w-full border rounded-lg p-2 mt-1" />
       </label>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <label class="block text-sm">平台域名校验文件名
+          <input type="text" v-model="ali.verificationFile" maxlength="100" placeholder="例如 b3e0f13ccb082b486a3c85c834b6598a.txt" class="block w-full border rounded-lg p-2 mt-1 text-xs">
+        </label>
+        <label class="block text-sm">平台域名校验文件内容
+          <input type="text" v-model="ali.verificationContent" maxlength="200" placeholder="校验文本内容（直接保存在数据库中）" class="block w-full border rounded-lg p-2 mt-1 text-xs">
+        </label>
+      </div>
     </section>
 
     <!-- 底部保存按钮 -->
@@ -421,7 +429,7 @@ const form = reactive({
   }
 });
 
-const ali = reactive({ enabled: false, actorId: '', token: '' });
+const ali = reactive({ enabled: false, actorId: '', token: '', verificationFile: '', verificationContent: '' });
 const aliDevices = ref('');
 const aliHasToken = ref(false);
 const generatedSecret = ref('');
@@ -515,6 +523,8 @@ async function loadConfig() {
     ali.enabled = Boolean(data.aligenie?.enabled); ali.actorId = data.aligenie?.actorId || '';
     ali.token = ''; generatedSecret.value = ''; aliHasToken.value = Boolean(data.aligenie?.hasToken);
     aliDevices.value = (data.aligenie?.allowedDevices || []).join('\n');
+    ali.verificationFile = data.aligenie?.verificationFile || '';
+    ali.verificationContent = data.aligenie?.verificationContent || '';
     if (isOwner.value) voiceActors.value = (await adminApi.getUsers()).filter(user => user.active && user.role !== 'viewer');
   } catch (err) {
     showTip('加载语音配置失败: ' + err.message, 'error');
