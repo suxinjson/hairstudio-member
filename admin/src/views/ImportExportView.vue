@@ -72,6 +72,15 @@
           <span>2.</span> 智能字段映射确认 (请核对匹配)
         </h3>
 
+        <label class="block text-xs font-bold text-slate-600">表头所在行
+          <select :value="parseResult.headerIndex" @change="changeHeaderRow" aria-label="表头所在行"
+            class="block w-full mt-2 h-9 px-2 bg-white border border-slate-300 rounded-xl text-xs">
+            <option v-for="(row, index) in parseResult.rawRows.slice(0, 5)" :key="index" :value="index">
+              第 {{ index + 1 }} 行 · {{ row.map(cell => String(cell ?? '')).filter(Boolean).join(' / ').slice(0, 80) || '空行' }}
+            </option>
+          </select>
+        </label>
+
         <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <div v-for="(field, key) in fieldDefinitions" :key="key" class="p-3 bg-slate-50 rounded-2xl border border-slate-200/80">
             <div class="text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
@@ -329,6 +338,7 @@ import { ref, computed, watch, onUnmounted } from 'vue';
 import { adminApi } from '../api/client.js';
 import {
   parseUploadedFile,
+  selectImportHeader,
   validateImportBatch,
   downloadImportTemplate,
   downloadErrorReport
@@ -422,6 +432,15 @@ function resetUpload() {
   if (fileInputRef.value) fileInputRef.value.value = '';
 }
 
+function changeHeaderRow(event) {
+  if (!parseResult.value || isImporting.value) return;
+  try {
+    parseResult.value = { ...parseResult.value, ...selectImportHeader(parseResult.value.rawRows, Number(event.target.value)) };
+    customMapping.value = { ...parseResult.value.mapping };
+    validationReport.value = null; mappingConfirmed.value = false; debtImportConfirmed.value = false;
+  } catch (error) { alert(error.message); }
+}
+
 function runValidation() {
   if (!parseResult.value || !mappingConfirmed.value || isImporting.value) return;
   isValidating.value = true;
@@ -430,7 +449,8 @@ function runValidation() {
       parseResult.value.dataRows,
       customMapping.value,
       props.members,
-      { conflictStrategy: conflictStrategy.value, rechargeSettings: adminApi.accountData.value?.rechargeSettings }
+      { conflictStrategy: conflictStrategy.value, rechargeSettings: adminApi.accountData.value?.rechargeSettings,
+        rowNumbers: parseResult.value.rowNumbers }
     );
     validationReport.value = report;
     debtImportConfirmed.value = false;

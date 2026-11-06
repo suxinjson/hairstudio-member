@@ -20,7 +20,7 @@ COPY server/package.json ./server/package.json
 COPY vendor ./vendor
 RUN npm ci --workspace=server --omit=dev --ignore-scripts
 COPY server ./server
-COPY src/storage.js src/accounting.js src/money.js src/sync-protocol.js src/cloud-storage.js src/data-limits.js src/recharge-settings.js src/ledger-access.js ./src/
+COPY src/storage.js src/accounting.js src/money.js src/sync-protocol.js src/cloud-storage.js src/data-limits.js src/recharge-settings.js src/ledger-access.js src/member-tags.js ./src/
 COPY capacitor.config.json ./
 RUN mkdir -p /app/releases && chown -R node:node /app
 USER node

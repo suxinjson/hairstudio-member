@@ -31,7 +31,7 @@
         <p>{{ resolutionMessage }}</p>
         <button @click="exportPending" :disabled="state.busy" class="rounded-xl p-3 bg-white border font-bold">导出本机账本与待同步记录</button>
         <button @click="useCloud" :disabled="state.busy || !canRequest" class="rounded-xl p-3 border border-rose-300 text-rose-800 font-bold">采用云端账本，放弃本机待同步变更</button>
-        <button v-if="state.status === 'conflict' && state.conflictReason === 'recovery' && state.user.role === 'owner'" @click="uploadRecovered" :disabled="state.busy || !state.online || recoveryRequired" class="rounded-xl p-3 border border-indigo-300 text-indigo-800 font-bold">确认上传恢复后的本机账本</button>
+        <button v-if="state.status === 'conflict' && ['recovery', 'integrity'].includes(state.conflictReason) && state.user.role === 'owner'" @click="uploadRecovered" :disabled="state.busy || !state.online || recoveryRequired" class="rounded-xl p-3 border border-indigo-300 text-indigo-800 font-bold">{{ state.conflictReason === 'integrity' ? '确认上传本机完整账本' : '确认上传恢复后的本机账本' }}</button>
       </div>
       <div class="flex flex-wrap gap-2">
         <button @click="perform(() => cloudClient.sync())" :disabled="state.busy || !state.binding || state.status === 'conflict' || !canRequest" class="rounded-xl p-3 bg-emerald-700 text-white font-bold disabled:opacity-50">立即同步</button>
@@ -119,6 +119,7 @@ async function promptConfirm(options) {
 const message = ref(''), users = ref(null), audit = ref(null), update = ref(null), downloaded = ref(null), downloading = ref(false), progress = ref(0);
 const resolutionMessage = computed(() => {
   if (props.recoveryRequired) return '本机账本无法读取。可先导出原始数据与待办，联网后采用云端账本；店主也可通过备份中心恢复本机账本。';
+  if (state.value.conflictReason === 'integrity') return '云端版本回退或完整性发生变化，已暂停记账和自动同步。本机账本及待办仍保留，请先导出核对；云端回退时须由店主恢复，店主也可确认上传本机完整账本。';
   if (state.value.conflictReason === 'recovery') return '已恢复本机账本，原始数据和待办已保存。请先导出核对；联网后可采用云端账本，或由店主确认用恢复结果覆盖云端。';
   if (state.value.conflictReason === 'permissions') return '账号权限已变化，部分待办不能上传。记录仍在本机，请先导出并交由店主核对，再决定是否采用云端账本。';
   if (state.value.conflictReason === 'bootstrap') return '其他设备已初始化云端，本机初始账本和待办已保留。请先导出并核对，再决定是否采用云端账本。';
@@ -166,7 +167,7 @@ async function useCloud() {
 async function uploadRecovered() {
   const confirmed = await promptConfirm({
     title: '覆盖云端账本确认',
-    message: '确认用恢复后的本机完整账本覆盖云端？\n请先导出并核对原待办和云端流水，避免遗漏其他设备交易。原待办将归档，再上传本次完整恢复。',
+    message: '确认用本机完整账本覆盖云端？\n请先导出并核对原待办和云端流水，避免遗漏其他设备交易。原待办将归档，再上传本次完整恢复。',
     confirmText: '确认覆盖云端',
     cancelText: '取消',
     danger: true

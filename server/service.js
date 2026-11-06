@@ -6,6 +6,7 @@ import { replayOperation } from '../src/cloud-storage.js';
 import { canWrite, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
 import { DATA_LIMITS, assertAccountLimits, assertJsonBudget, boundedText } from '../src/data-limits.js';
 import { sanitizeVoiceConfig, synthesizeTTS, maskApiKey } from './voice.js';
+import { handleAliGenieWebhook, getAliGenieVerificationContent } from './aligenie.js';
 
 export function validateSnapshot(data, options) {
   assertAccountLimits(data && { ...data, ledgers: data.ledgers ?? [], services: data.services ?? DEFAULT_SERVICES, rechargePlans: data.rechargePlans ?? DEFAULT_RECHARGE_PLANS });
@@ -184,8 +185,10 @@ export function createService(pool, { fetchFn = fetch } = {}) {
         return { signature, ...(importStatus(await importReceipts(client, user, signature)) || { status: 'absent', count: 0 }) };
       });
     },
-    async sync(identity, operations, importBatch = null) {
+    async sync(identity, operations, importBatch = null, observedHead = null) {
       if (!Array.isArray(operations) || operations.length > 100 || new Set(operations.map(op => op?.id)).size !== operations.length) throw new ApiError(400, '同步批次格式无效');
+      if (observedHead !== null && (!observedHead || !Number.isSafeInteger(observedHead.revision) || observedHead.revision < 0 ||
+          typeof observedHead.integrity !== 'string' || !/^[a-f0-9]{64}$/.test(observedHead.integrity))) throw new ApiError(400, '同步账本版本格式无效');
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
         for (const operation of operations) if (!canWrite(user.role, operation?.method)) throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
@@ -197,6 +200,11 @@ export function createService(pool, { fetchFn = fetch } = {}) {
         for (const operation of operations) if (operation.actorId !== user.id || operation.deviceId !== user.device_id) throw new ApiError(403, '操作账号或设备不匹配', 'FORBIDDEN');
         const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
         if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败', 'INTEGRITY_FAILED');
+        // The account lock closes the gap between the client's head check and
+        // this upload, including batches that could advance a rolled-back head.
+        if (observedHead && (account.revision < observedHead.revision || account.revision === observedHead.revision && account.integrity !== observedHead.integrity)) {
+          throw new ApiError(409, '云端账本版本核验失败，请先导出并核对账本', 'CLOUD_INTEGRITY_CONFLICT');
+        }
         let receiptRows = [], receiptHash;
         if (importBatch !== null) {
           receiptRows = await importReceipts(client, user, importBatch.signature);
@@ -411,6 +419,12 @@ export function createService(pool, { fetchFn = fetch } = {}) {
           fetchFn
         });
       });
+    },
+    async handleAliGenieWebhook(body, { token = '', storeId = '', headers = {} } = {}) {
+      return handleAliGenieWebhook({ pool, body, query: { token, storeId }, headers });
+    },
+    async getAliGenieVerification(fileName) {
+      return getAliGenieVerificationContent(fileName, pool);
     }
   };
 }

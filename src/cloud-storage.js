@@ -38,7 +38,7 @@ export function installCloudRecording(onChange = () => {}, { allowLocal = () => 
         [CLOUD_STATE_KEY]: { ...state, status: 'conflict', conflictReason: 'recovery' }
       };
     }
-    if (state.status === 'conflict') throw new Error('账本存在同步冲突，请先在云端设置中处理');
+    if (state.status === 'conflict' || state.conflictReason === 'integrity') throw new Error('账本存在同步冲突，请先在云端设置中处理');
     const operation = {
       ...mutation, id: newId(), actorId: state.user.id, deviceId: state.deviceId,
       precondition: mutationPrecondition(current, mutation.method, mutation.args)

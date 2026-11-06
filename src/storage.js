@@ -4,6 +4,7 @@ import { normalizeRechargeSettings } from './recharge-settings.js';
 import { DATA_LIMITS, byteLength, assertJsonBudget, assertAccountLimits, validateMutationArgs, DataLimitError } from './data-limits.js';
 import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones, normalizeMemberPhone } from './accounting.js';
 import { assertLedgerAccess } from './ledger-access.js';
+import { validateMemberTags } from './member-tags.js';
 
 export const STORAGE_KEYS = {
   MEMBERS: 'hairstudio_members_v2',
@@ -693,6 +694,7 @@ const db = {
         throw new Error('备份文件包含无效或重复的会员数据');
       }
       memberIds.add(member.id);
+      validateMemberTags(member);
     }
     members = members.map(member => ({ ...member, notes: member.notes ?? '' }));
     const ledgerIds = new Set();
@@ -725,10 +727,11 @@ const db = {
     members = restoreArchivedMembers(members, ledgers);
     if (!allowPhoneConflicts) validateActiveMemberPhones(members);
     validateAccountHistory(members, ledgers);
-    if (services.some(item => !item || typeof item.id !== 'string' || typeof item.name !== 'string' ||
+    if (services.some(item => !item || typeof item.id !== 'string' || !item.id.trim() || typeof item.name !== 'string' ||
         !item.name.trim() || !Number.isFinite(item.price) || item.price < 0)) {
       throw new Error('备份文件包含无效的服务项目');
     }
+    if (new Set(services.map(item => item.id)).size !== services.length) throw new Error('服务项目单号重复');
     for (const service of services) moneyToCent(service.price, '服务项目价格');
     if (rechargePlans.some(plan => !plan || !Number.isFinite(plan.pay) || plan.pay <= 0 ||
         !Number.isFinite(plan.gift) || plan.gift < 0)) {

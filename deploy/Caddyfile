@@ -6,6 +6,9 @@
     handle /api/* {
         reverse_proxy api:48927
     }
+    handle /aligenie/* {
+        reverse_proxy api:48927
+    }
     redir /admin /admin/ 308
     handle /admin/* {
         root * /srv

@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import { moneyToCent } from '../../../src/money.js';
 import { normalizeMemberPhone } from '../../../src/accounting.js';
-import { parseImportBuffer, IMPORT_LIMITS } from './import-parser.js';
+import { parseImportBuffer, IMPORT_LIMITS, assertImportRowsBudget } from './import-parser.js';
 
 // 防 CSV / Excel 公式注入 (Formula Injection) 安全清洗
 export function sanitizeCellValue(val) {
@@ -27,17 +27,8 @@ const HEADER_ALIASES = {
 /**
  * 自动猜测列映射
  */
-export function guessColumnMapping(headers) {
-  const mapping = {
-    name: null,
-    phone: null,
-    balance: null,
-    gift: null,
-    remark: null,
-    tag: null
-  };
-
-  const candidates = new Map(Object.keys(mapping).map(field => [field, []]));
+function columnCandidates(headers) {
+  const candidates = new Map(Object.keys(HEADER_ALIASES).map(field => [field, []]));
   headers.forEach((header, index) => {
     const text = String(header || '').trim().toLowerCase();
     const scores = Object.entries(HEADER_ALIASES).map(([field, aliases]) => ({ field,
@@ -45,10 +36,29 @@ export function guessColumnMapping(headers) {
     })).sort((a, b) => b.score - a.score);
     if (scores[0].score && scores[0].score !== scores[1].score) candidates.get(scores[0].field).push(index);
   });
+  return candidates;
+}
+
+export function guessColumnMapping(headers) {
+  const mapping = Object.fromEntries(Object.keys(HEADER_ALIASES).map(field => [field, null]));
+  const candidates = columnCandidates(headers);
   // Multiple plausible columns require an explicit choice; column order never decides money ownership.
   for (const [field, indices] of candidates) if (indices.length === 1) mapping[field] = indices[0];
 
   return mapping;
+}
+
+export function selectImportHeader(rawRows, headerIndex) {
+  assertImportRowsBudget(rawRows);
+  if (!Number.isInteger(headerIndex) || headerIndex < 0 || headerIndex >= Math.min(rawRows.length, 5)) throw new Error('请选择前 5 行中的表头行');
+  const headers = rawRows[headerIndex].map(cell => sanitizeCellValue(String(cell ?? '').trim()));
+  const dataRows = [], rowNumbers = [];
+  for (let index = headerIndex + 1; index < rawRows.length; index++) {
+    if (!rawRows[index].some(cell => String(cell ?? '').trim() !== '')) continue;
+    dataRows.push(rawRows[index]); rowNumbers.push(index + 1);
+  }
+  if (dataRows.length > 10000) throw new Error('单次导入最多支持 10,000 条记录，请分批导入');
+  return { headers, dataRows, rowNumbers, mapping: guessColumnMapping(headers), totalRows: dataRows.length, headerIndex };
 }
 
 export function parseImportMoney(value, { signed = false } = {}) {
@@ -85,32 +95,18 @@ export async function parseUploadedFile(file, { signal } = {}) {
   if (buffer.byteLength > MAX_FILE_SIZE) throw new Error('导入文件过大，最大支持 10MB');
   const rawRows = await readRows(buffer, isCsv, signal);
 
-  // 寻找表头行（寻找包含“姓名”或“手机”的最早一行）
-  let headerIndex = -1;
+  // A title mentioning members is not enough: the header needs separate name
+  // and phone columns. Ambiguous columns are still left for manual mapping.
+  let headerIndex = 0;
   for (let i = 0; i < Math.min(rawRows.length, 5); i++) {
-    const rowStr = rawRows[i].map(c => String(c).trim()).join(' ');
-    if (HEADER_ALIASES.name.some(k => rowStr.includes(k)) || HEADER_ALIASES.phone.some(k => rowStr.includes(k))) {
+    const candidates = columnCandidates(rawRows[i]);
+    if (candidates.get('name').length && candidates.get('phone').length) {
       headerIndex = i;
       break;
     }
   }
 
-  if (headerIndex === -1) {
-    headerIndex = 0; // 默认第一行为表头
-  }
-
-  const headers = rawRows[headerIndex].map(c => sanitizeCellValue(String(c).trim()));
-  const dataRows = rawRows.slice(headerIndex + 1).filter(row => row.some(cell => String(cell).trim() !== ''));
-  if (dataRows.length > 10000) throw new Error('单次导入最多支持 10,000 条记录，请分批导入');
-
-  const mapping = guessColumnMapping(headers);
-
-  return {
-    headers,
-    dataRows,
-    mapping,
-    totalRows: dataRows.length
-  };
+  return { rawRows, ...selectImportHeader(rawRows, headerIndex) };
 }
 
 function readRows(buffer, isCsv, signal) {
@@ -129,7 +125,12 @@ function readRows(buffer, isCsv, signal) {
       if (error) reject(error); else resolve(rows);
     };
     const abort = () => finish(signal.reason || new DOMException('已取消文件解析', 'AbortError'));
-    worker.onmessage = ({ data }) => finish(data.error ? new Error(data.error) : null, data.rows);
+    worker.onmessage = ({ data }) => {
+      try {
+        if (!data || data.error) throw new Error(data?.error || '文件解析返回格式无效');
+        finish(null, assertImportRowsBudget(data.rows));
+      } catch (error) { finish(error); }
+    };
     worker.onerror = () => finish(new Error('文件解析失败，请检查格式后重试'));
     timer = setTimeout(() => finish(new Error('文件解析超时，请缩小文件或工作表范围后重试')), 10000);
     signal?.addEventListener('abort', abort, { once: true });
@@ -152,6 +153,8 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
   const columns = Object.values(mapping).filter(index => index != null);
   if (mapping.name == null || mapping.phone == null || columns.some(index => !Number.isInteger(index) || index < 0) ||
       new Set(columns).size !== columns.length) throw new Error('请为姓名、手机号及金额分别选择不同的列');
+  if (options.rowNumbers !== undefined && (!Array.isArray(options.rowNumbers) || options.rowNumbers.length !== dataRows.length ||
+      options.rowNumbers.some(number => !Number.isSafeInteger(number) || number < 1))) throw new Error('导入原始行号无效');
   const existingMap = new Map();
   existingMembers.forEach(m => {
     if (!m.isArchived && m.phone) {
@@ -168,7 +171,7 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
 
   for (let i = 0; i < dataRows.length; i++) {
     const row = dataRows[i];
-    const rowNum = i + 2; // 表头为第1行，数据从第2行算起
+    const rowNum = options.rowNumbers?.[i] ?? i + 2;
 
     const rawName = mapping.name !== null ? String(row[mapping.name] ?? '').trim() : '';
     const rawPhone = mapping.phone !== null ? String(row[mapping.phone] ?? '').trim() : '';

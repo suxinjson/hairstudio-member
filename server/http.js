@@ -67,6 +67,26 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
         guard.take('auth:' + ip, 30);
         return send(200, await service.refresh((await body(request)).refreshToken));
       }
+      if (request.method === 'GET' && /^\/aligenie\/[a-zA-Z0-9_-]+\.txt$/.test(path)) {
+        const fileName = path.split('/').at(-1);
+        const content = await service.getAliGenieVerification(fileName);
+        if (!content) throw new ApiError(404, '认证文件不存在');
+        response.writeHead(200, {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store'
+        });
+        return response.end(content);
+      }
+      if (route === 'POST /api/v1/voice/aligenie') {
+        guard.take('voice_aligenie:' + ip, 60);
+        const input = await body(request, 32 * 1024);
+        const result = await service.handleAliGenieWebhook(input, {
+          token: url.searchParams.get('token') || '',
+          storeId: url.searchParams.get('storeId') || '',
+          headers: request.headers
+        });
+        return send(200, result);
+      }
       const accessToken = /^Bearer ([a-zA-Z0-9_-]+)$/.exec(request.headers.authorization || '')?.[1];
       const identity = await service.authenticate(accessToken);
       guard.take('session:' + identity.sessionId, 120);
@@ -85,7 +105,7 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
         const current = await service.authorize(identity, 'write');
         const input = await body(request, current.role === 'owner' ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes);
         if (input.operations?.some?.(op => op?.method === 'importBackupData')) guard.take('restore:' + identity.id, 3);
-        return send(200, await service.sync(identity, input.operations, input.importBatch ?? null));
+        return send(200, await service.sync(identity, input.operations, input.importBatch ?? null, input.observedHead ?? null));
       }
       if (request.method === 'GET' && /^\/api\/v1\/imports\/[a-f0-9]{64}$/.test(path)) return send(200, await service.importStatus(identity, path.split('/').at(-1)));
       if (route === 'POST /api/v1/sync/resolve') {

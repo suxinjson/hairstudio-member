@@ -168,6 +168,43 @@ test('import requires separate column and debt confirmations before sending a ne
   assert.equal(submitted.items[0].data.balanceCents, -10001); assert.equal(submitted.options.allowDebt, true);
 });
 
+test('legacy string tags render all members and populate the editor without throwing', async () => {
+  data.members[0].tags = 'VIP';
+  const members = [...data.members, { ...data.members[0], id: 'member-B', name: '数组标签会员', tags: ['常客', '年卡'] }];
+  await mount(Members, { members, submitOperations: async () => {} });
+  assert.equal(document.querySelectorAll('tbody tr').length, 2);
+  assert.ok(document.querySelector('tbody').textContent.includes('VIP'));
+  assert.ok(document.querySelector('tbody').textContent.includes('常客、年卡'));
+  const edit = [...document.querySelector('tbody tr').querySelectorAll('button')].find(element => element.title === '修改资料' || element.textContent.includes('修改'));
+  assert.ok(edit, 'Missing profile edit action'); edit.click(); await nextTick();
+  assert.equal(document.querySelector('input[placeholder="如：VIP、常客、烫染年卡"]').value, 'VIP');
+});
+
+test('manual header selection resets mapping approval and precheck and reports physical file rows', async () => {
+  await mount(ImportExport, { members: data.members, ledgers: [] });
+  const csv = new TextEncoder().encode('梦飞空间会员批量导入\n会员姓名,手机号码,本金余额,赠金余额\n\n坏号码,123,10,0\n会员姓名,手机号码,本金余额,赠金余额\n新客户,13900001111,20,0');
+  const picker = document.querySelector('input[type="file"]');
+  Object.defineProperty(picker, 'files', { value: [{ name: 'title.csv', size: csv.length, arrayBuffer: async () => csv.buffer }], configurable: true });
+  picker.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await flush();
+  const selector = document.querySelector('select[aria-label="表头所在行"]');
+  assert.ok(selector); assert.equal(selector.value, '1');
+  const approve = document.querySelector('input[type="checkbox"]');
+  approve.checked = true; approve.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+  button('开始零损数据预检').click(); await nextTick();
+  assert.ok(document.querySelector('tbody').textContent.includes('4'));
+  assert.ok(document.querySelector('tbody').textContent.includes('坏号码'));
+  selector.value = '4'; selector.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+  assert.equal(document.querySelector('input[type="checkbox"]').checked, false);
+  assert.equal(button('开始零损数据预检').disabled, true);
+  assert.equal(document.querySelector('tbody'), null);
+  const freshApprove = document.querySelector('input[type="checkbox"]');
+  freshApprove.checked = true; freshApprove.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+  button('开始零损数据预检').click(); await nextTick();
+  assert.equal(document.querySelectorAll('tbody tr').length, 1);
+  assert.ok(document.querySelector('tbody').textContent.includes('6'));
+  assert.ok(document.querySelector('tbody').textContent.includes('新客户'));
+});
+
 for (const { view, prop, filter } of [
   { view: Members, prop: 'members', filter: '低余额' },
   { view: Ledgers, prop: 'ledgers', filter: '消费扣款' }

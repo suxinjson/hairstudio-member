@@ -38,6 +38,36 @@ function resetStorage() {
   localStorage.failOnce = false;
 }
 
+test('invalid service IDs reject backup preview and restore before any storage writes', () => {
+  resetStorage(); localDb.init();
+  localDb.createMember({ name: '账本保留', phone: '13800001111', initialBalance: 100 });
+  const original = localDb.readBackupState(), stored = new Map(localStorage.values);
+  for (const services of [[{ ...original.services[0], id: '' }], [{ ...original.services[0], id: '   ' }],
+    [original.services[0], { ...original.services[0], name: '重复单号' }]]) {
+    const backup = JSON.stringify({ data: { ...original, services } });
+    assert.throws(() => localDb.previewBackup(backup), /服务项目/);
+    for (const mode of ['replace', 'merge']) assert.throws(() => localDb.importBackupData(backup, { mode }), /服务项目/);
+    assert.deepEqual(localStorage.values, stored);
+  }
+});
+
+test('backup tags keep compatible representations and reject invalid or unbounded labels', () => {
+  resetStorage(); localDb.init();
+  localDb.createMember({ name: '旧会员', phone: '13800001111' });
+  const original = localDb.readBackupState();
+  for (const tags of ['VIP', ['常客', '年卡'], null, []]) {
+    const data = structuredClone(original); data.members[0].tags = tags;
+    localDb.importBackupData(JSON.stringify({ data }), { mode: 'replace' });
+    assert.deepEqual(localDb.getMembers()[0].tags, tags);
+  }
+  const stored = new Map(localStorage.values);
+  for (const tags of [{ value: 'VIP' }, 1, true, ['VIP', 1], Array(33).fill('VIP'), 'x'.repeat(129), ['x'.repeat(129)]]) {
+    const data = structuredClone(original); data.members[0].tags = tags;
+    assert.throws(() => localDb.importBackupData(JSON.stringify({ data }), { mode: 'replace' }), /标签/);
+    assert.deepEqual(localStorage.values, stored);
+  }
+});
+
 test('gift rates round to cents and reject invalid configuration', () => {
   assert.equal(rechargeGiftCent(19.99, { giftEnabled: true, giftRate: 12.5 }), 250);
   assert.equal(rechargeGiftCent(0.05, { giftEnabled: true, giftRate: 10 }), 1);

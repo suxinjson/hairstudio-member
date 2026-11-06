@@ -58,7 +58,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     const forbidden = current.outbox.some(operation => !canWrite(session.user.role, operation.method)) ||
       (current.bootstrap && session.user.role !== 'owner');
     let status = current.status, conflictReason = current.conflictReason;
-    if (forbidden) { status = 'conflict'; if (conflictReason !== 'recovery') conflictReason = 'permissions'; }
+    if (forbidden) { status = 'conflict'; if (!['recovery', 'integrity'].includes(conflictReason)) conflictReason = 'permissions'; }
     else if (status === 'login-required' || conflictReason === 'permissions') {
       if (conflictReason === 'permissions') conflictReason = null;
       status = conflictReason ? 'conflict' : current.bootstrap || current.outbox.length ? 'pending' : current.binding ? 'synced' : 'local';
@@ -94,16 +94,37 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
   }
   async function verifyAccount(account) {
     if (!account || !Number.isSafeInteger(account.revision) || account.revision < 0 ||
-      typeof account.integrity !== 'string' || await sha256(canonicalJSON(account.data)) !== account.integrity) throw new Error('收到的云端账本校验失败，本机数据未覆盖');
+      typeof account.integrity !== 'string' || await sha256(canonicalJSON(account.data)) !== account.integrity) throw integrityError('收到的云端账本校验失败，本机数据未覆盖');
     account.data = localDb.parseAndValidateBackup(JSON.stringify({ data: account.data }), { allowPhoneConflicts: true }).data;
     return account;
+  }
+  function integrityError(message = '云端账本版本核验失败，请先导出并核对账本') {
+    return Object.assign(new Error(message), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+  }
+  function assertRemoteHead(head, state = getCloudState()) {
+    if (!head || !Number.isSafeInteger(head.revision) || head.revision < 0 ||
+        !/^[a-f0-9]{64}$/.test(head.integrity || '') || head.revision < state.revision ||
+        state.binding && head.revision === state.revision && state.remoteIntegrity && head.integrity !== state.remoteIntegrity) {
+      throw integrityError();
+    }
+  }
+  function suspendIntegrity(error) {
+    if (!isIntegrityFailure(error)) return;
+    const state = getCloudState();
+    if (state.binding) {
+      setState({ ...state, status: 'conflict', conflictReason: 'integrity',
+        syncStatus: 'error', syncError: error.message, remoteConflict: null });
+    }
+  }
+  function isIntegrityFailure(error) {
+    return ['CLOUD_INTEGRITY_CONFLICT', 'INTEGRITY_FAILED'].includes(error.code);
   }
   async function accept(account, acknowledged = [], { bind = false } = {}) {
     const accessVersion = ledgerAccessVersion();
     await verifyAccount(account);
     assertLedgerAccess(accessVersion);
     const state = getCloudState();
-    if (account.revision < state.revision) throw new Error('云端版本发生回退，本机数据未覆盖');
+    assertRemoteHead(account, state);
     const ids = new Set(acknowledged);
     const pending = state.outbox.filter(operation => !ids.has(operation.id));
     let data = account.data;
@@ -120,9 +141,22 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
   }
   async function run(callback) {
     if (busy) return;
+    const accessVersion = ledgerAccessVersion();
     busy = true; lastError = ''; emit();
     try { return await callback(); }
-    catch (error) { lastError = error.message; emit(); throw error; }
+    catch (error) {
+      let currentPage = true;
+      try { assertLedgerAccess(accessVersion); } catch { currentPage = false; }
+      if (currentPage) {
+        try { suspendIntegrity(error); }
+        catch (storageError) {
+          lastError = '无法保存账本核对状态：' + storageError.message;
+          emit();
+          throw new Error(lastError, { cause: error });
+        }
+      }
+      lastError = error.message; emit(); throw error;
+    }
     finally { busy = false; emit(); }
   }
   async function flushActivity() {
@@ -232,23 +266,29 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         if (!accessToken && !refreshToken) return;
       }
       const state = getCloudState();
-      if (!state.binding || !state.user || !state.serverUrl || !isOnline() || state.status === 'conflict' || busy) return;
+      if (!state.binding || !state.user || !state.serverUrl || !isOnline() || state.status === 'conflict' || state.conflictReason === 'integrity' || busy) return;
       const syncAccessVersion = ledgerAccessVersion();
       return run(async () => {
         setState({ ...getCloudState(), syncStatus: 'checking', syncError: '' });
         try {
+          // Check before uploading: a pending write must not advance a rolled-back
+          // server to the previously observed revision and hide the rollback.
+          let checkedHead = null;
+          if (!getCloudState().bootstrap) {
+            checkedHead = await request('/account/head');
+            assertRemoteHead(checkedHead);
+          }
           if (getCloudState().bootstrap) await accept(await sendOperations('/account/bootstrap', getCloudState().bootstrap));
           for (let count = 0; count < 10; count++) {
             const operations = selectSyncBatch(getCloudState().outbox);
             if (!operations.length) break;
-            const response = await sendOperations('/sync', { operations });
+            const response = await sendOperations('/sync', { operations, ...(checkedHead ? { observedHead: checkedHead } : {}) });
             if (canonicalJSON(response.acknowledged) !== canonicalJSON(operations.map(operation => operation.id))) throw new Error('云端确认单号不匹配，待同步记录已保留');
             await accept(response, response.acknowledged);
+            checkedHead = { revision: getCloudState().revision, integrity: getCloudState().remoteIntegrity };
           }
           const head = await request('/account/head'), observed = getCloudState();
-          if (!Number.isSafeInteger(head.revision) || head.revision < observed.revision ||
-              !/^[a-f0-9]{64}$/.test(head.integrity || '') || head.revision === observed.revision &&
-              observed.remoteIntegrity && head.integrity !== observed.remoteIntegrity) throw new Error('云端账本版本核验失败，请重新确认账本');
+          assertRemoteHead(head, observed);
           if (head.revision > observed.revision || !observed.remoteIntegrity) await accept(await request('/account'));
           await flushActivity();
           const current = getCloudState();
@@ -256,7 +296,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         } catch (error) {
           // An older page may finish after another page has acquired the ledger.
           try { assertLedgerAccess(syncAccessVersion); } catch { throw error; }
-          setState({ ...getCloudState(), syncStatus: 'error', syncError: error.message });
+          if (!isIntegrityFailure(error)) setState({ ...getCloudState(), syncStatus: 'error', syncError: error.message });
           throw error;
         }
       });
@@ -267,7 +307,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         const remote = await verifyAccount(await request('/account'));
         const state = getCloudState();
         // 保留覆盖前的完整本机账本与待同步记录，便于核对；不是自动覆盖路径。
-        if (remote.revision < state.revision) throw new Error('云端版本发生回退，不能替换本机账本');
+        if (remote.revision < state.revision) throw integrityError('云端版本发生回退，不能替换本机账本；请由店主核对恢复');
         preserveLocal(state);
         localDb.applyCloudSnapshot(remote.data, CLOUD_STATE_KEY, { ...state, binding: { storeId: state.user.storeId },
           outbox: [], bootstrap: null, status: 'synced', revision: remote.revision, remoteIntegrity: remote.integrity,
@@ -279,12 +319,12 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     async uploadRecoveredLedger() {
       return run(async () => {
         const initial = getCloudState();
-        if (initial.user?.role !== 'owner' || initial.status !== 'conflict' || initial.conflictReason !== 'recovery') throw new Error('仅店主可以确认上传已恢复的本机账本；已上传的恢复操作请通过同步重试');
+        if (initial.user?.role !== 'owner' || initial.status !== 'conflict' || !['recovery', 'integrity'].includes(initial.conflictReason)) throw new Error('仅店主可以确认上传需核对的本机完整账本；已上传的恢复操作请通过同步重试');
         if (!isOnline()) throw new Error('请联网后上传恢复账本');
         const remote = await verifyAccount(await request('/account'));
         const state = getCloudState();
-        if (state.user?.role !== 'owner' || state.conflictReason !== 'recovery') throw new Error('账号权限已变化，恢复账本尚未上传');
-        if (remote.revision < state.revision) throw new Error('云端版本发生回退，不能上传恢复账本');
+        if (state.user?.role !== 'owner' || state.conflictReason !== initial.conflictReason) throw new Error('账号权限已变化，恢复账本尚未上传');
+        if (remote.revision < state.revision && state.conflictReason !== 'integrity') throw integrityError('云端版本发生回退，不能上传恢复账本');
         const data = localDb.readBackupState();
         const args = [JSON.stringify({ data }), { mode: 'replace' }];
         const operation = { id: newId(), method: 'importBackupData', args,
@@ -294,7 +334,9 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         preserveLocal(state);
         // 店主确认完整恢复后，用一个可重试的恢复操作替代已归档的原待办。
         localDb.applyCloudSnapshot(data, CLOUD_STATE_KEY, { ...state, outbox: [operation], bootstrap: null,
-          remoteConflict: null, revision: remote.revision, status: 'pending' });
+          remoteConflict: null, revision: remote.revision, remoteIntegrity: remote.integrity,
+          conflictReason: state.conflictReason === 'integrity' ? null : state.conflictReason,
+          syncStatus: 'pending', syncError: '', status: 'pending' });
         const response = await sendOperations('/sync', { operations: [operation] });
         if (canonicalJSON(response.acknowledged) !== canonicalJSON([operation.id])) throw new Error('云端确认单号不匹配，恢复操作已保留');
         await accept(response, response.acknowledged);

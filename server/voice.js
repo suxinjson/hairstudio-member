@@ -11,6 +11,13 @@ export const DEFAULT_VOICE_CONFIG = {
   templates: {
     consume: '{name} 消费 {amount} 元，卡内余额 {balance} 元',
     recharge: '{name} 充值 {amount} 元，卡内余额 {balance} 元'
+  },
+  aligenie: {
+    enabled: true,
+    token: '',
+    verificationFile: '',
+    verificationContent: '',
+    allowedDevices: []
   }
 };
 
@@ -86,6 +93,19 @@ export function sanitizeVoiceConfig(raw, previous = {}) {
       recharge: typeof raw.templates.recharge === 'string'
         ? raw.templates.recharge.trim().slice(0, 200)
         : (config.templates?.recharge || DEFAULT_VOICE_CONFIG.templates.recharge)
+    };
+  }
+
+  if (raw.aligenie && typeof raw.aligenie === 'object') {
+    const prevAli = config.aligenie || DEFAULT_VOICE_CONFIG.aligenie;
+    config.aligenie = {
+      enabled: typeof raw.aligenie.enabled === 'boolean' ? raw.aligenie.enabled : prevAli.enabled,
+      token: typeof raw.aligenie.token === 'string' ? raw.aligenie.token.trim().slice(0, 100) : prevAli.token,
+      verificationFile: typeof raw.aligenie.verificationFile === 'string' ? raw.aligenie.verificationFile.trim().slice(0, 100) : prevAli.verificationFile,
+      verificationContent: typeof raw.aligenie.verificationContent === 'string' ? raw.aligenie.verificationContent.trim().slice(0, 200) : prevAli.verificationContent,
+      allowedDevices: Array.isArray(raw.aligenie.allowedDevices)
+        ? raw.aligenie.allowedDevices.map(d => String(d).trim()).filter(Boolean).slice(0, 50)
+        : (prevAli.allowedDevices || [])
     };
   }
 

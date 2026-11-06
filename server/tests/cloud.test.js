@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { migrate } from '../database.js';
-import { createService } from '../service.js';
+import { createService, validateSnapshot } from '../service.js';
 import { createApi } from '../http.js';
 import { publishRelease } from '../publish-release.js';
 import { buildUpdateManifest } from '../../tools/update-manifest.js';
@@ -147,6 +147,168 @@ async function connectedClient({ requestFetch, online = () => true, vault, usern
   for (let count = 0; client.snapshot().busy && count < 100; count++) await new Promise(resolve => setTimeout(resolve, 5));
   return client;
 }
+
+for (const sameRevision of [false, true]) {
+  for (const alreadyQueued of [false, true]) {
+    test(`cloud ${sameRevision ? 'same-revision mutation' : 'rollback'} blocks writes and persists after login (pending=${alreadyQueued})`, async () => {
+      const account = await initialAccount();
+      let online = false, uploads = 0;
+      const client = await connectedClient({ online: () => online, requestFetch: (input, options) => {
+        if (input.endsWith('/sync')) uploads++;
+        return fetch(input, options);
+      } });
+      const second = localDb.createMember({ name: '第二会员', phone: '13900001111', initialBalance: 100 });
+      online = true; await client.sync(); online = false;
+      const baseline = await service.account(owner.identity);
+      localDb.recharge({ memberId: account.member.id, actualPay: 50 });
+      online = true; await client.sync(); online = false;
+      const latest = getCloudState().revision;
+      if (alreadyQueued) localDb.recharge({ memberId: second.id, actualPay: 10 });
+      const original = localDb.readBackupState(), pending = structuredClone(getCloudState().outbox);
+      await pool.query('UPDATE accounts SET revision=$1,data=$2,integrity=$3 WHERE store_id=$4',
+        [sameRevision ? latest : baseline.revision, baseline.data, baseline.integrity, owner.identity.store_id]);
+      uploads = 0; online = true;
+      await assert.rejects(client.sync(), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+      assert.equal(getCloudState().status, 'conflict');
+      assert.equal(getCloudState().conflictReason, 'integrity');
+      assert.throws(() => localDb.recharge({ memberId: second.id, actualPay: 10 }), /同步冲突/);
+      await client.sync();
+      assert.equal(uploads, 0);
+      assert.deepEqual(localDb.readBackupState(), original);
+      assert.deepEqual(getCloudState().outbox, pending);
+      stopClient(); stopClient = null;
+      await client.logout();
+      const restarted = await connectedClient({ online: () => online });
+      assert.equal(restarted.snapshot().status, 'conflict');
+      assert.equal(restarted.snapshot().conflictReason, 'integrity');
+      assert.throws(() => localDb.consume({ memberId: second.id, amount: 1 }), /同步冲突/);
+      await restarted.sync();
+      assert.deepEqual(localDb.readBackupState(), original);
+      assert.deepEqual(getCloudState().outbox, pending);
+      assert.equal((await service.account(owner.identity)).data.members.find(member => member.id === account.member.id).balance, 10000);
+    });
+  }
+}
+
+test('owner-confirmed integrity recovery preserves pending records and retries a lost response exactly once', async () => {
+  const baseline = await initialAccount();
+  let online = false, lose = false;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    const response = await fetch(input, options);
+    if (lose && input.endsWith('/sync')) { lose = false; await response.arrayBuffer(); throw new TypeError('lost response'); }
+    return response;
+  } });
+  localDb.recharge({ memberId: baseline.member.id, actualPay: 50 });
+  online = true; await client.sync(); online = false;
+  localDb.consume({ memberId: baseline.member.id, amount: 38 });
+  const expected = localDb.readBackupState(), pending = structuredClone(getCloudState().outbox);
+  await pool.query('UPDATE accounts SET revision=$1,data=$2,integrity=$3 WHERE store_id=$4',
+    [baseline.revision, baseline.data, baseline.integrity, owner.identity.store_id]);
+  online = true;
+  await assert.rejects(client.sync(), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+  await assert.rejects(client.useCloudLedger(), /回退/);
+  lose = true;
+  await assert.rejects(client.uploadRecoveredLedger(), { network: true });
+  const recovery = JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1'));
+  assert.deepEqual(recovery.data, expected);
+  assert.deepEqual(recovery.cloud.outbox, pending);
+  assert.equal(getCloudState().outbox[0].method, 'importBackupData');
+  await client.sync();
+  assert.deepEqual((await service.account(owner.identity)).data, expected);
+  assert.deepEqual(localDb.readBackupState(), expected);
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal(getCloudState().conflictReason, null);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='importBackupData'")).rows[0].count, 1);
+});
+
+test('a valid checksum at an unchanged sync revision cannot acknowledge newer data or clear pending records', async () => {
+  const account = await initialAccount(); let online = false;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    const response = await fetch(input, options);
+    if (input.endsWith('/sync')) {
+      const result = await response.json(); result.revision = getCloudState().revision;
+      return new Response(JSON.stringify(result));
+    }
+    return response;
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 38 });
+  const original = localDb.readBackupState(), pending = structuredClone(getCloudState().outbox);
+  online = true;
+  await assert.rejects(client.sync(), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+  assert.deepEqual(localDb.readBackupState(), original);
+  assert.deepEqual(getCloudState().outbox, pending);
+  assert.equal(getCloudState().conflictReason, 'integrity');
+});
+
+for (const sameRevision of [false, true]) {
+  test(`a ${sameRevision ? 'same-revision mutation' : 'rollback'} after the head check rejects a whole batch under the server lock`, async () => {
+    const baseline = await initialAccount(); let online = false, race = false;
+    const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+      if (race && input.endsWith('/sync')) {
+        race = false;
+        const expected = JSON.parse(options.body).observedHead;
+        assert.equal(expected.revision, getCloudState().revision);
+        await pool.query('UPDATE accounts SET revision=$1,data=$2,integrity=$3 WHERE store_id=$4',
+          [sameRevision ? expected.revision : baseline.revision, baseline.data, baseline.integrity, owner.identity.store_id]);
+      }
+      return fetch(input, options);
+    } });
+    localDb.recharge({ memberId: baseline.member.id, actualPay: 50 });
+    online = true; await client.sync(); online = false;
+    localDb.createMember({ name: '新会员一', phone: '13900001111', initialBalance: 10 });
+    localDb.createMember({ name: '新会员二', phone: '13700001111', initialBalance: 20 });
+    const expected = localDb.readBackupState(), pending = structuredClone(getCloudState().outbox);
+    const operationCount = (await pool.query('SELECT count(*)::int AS count FROM operations')).rows[0].count;
+    race = true; online = true;
+    await assert.rejects(client.sync(), { code: 'CLOUD_INTEGRITY_CONFLICT', status: 409 });
+    assert.equal(getCloudState().conflictReason, 'integrity');
+    assert.deepEqual(getCloudState().outbox, pending);
+    assert.deepEqual(localDb.readBackupState(), expected);
+    assert.deepEqual((await service.account(owner.identity)).data, baseline.data);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM operations')).rows[0].count, operationCount);
+  });
+}
+
+test('invalid client head declarations are rejected without writing the server ledger', async () => {
+  const baseline = await initialAccount();
+  const charge = operation(baseline.data, owner, 'consume', [{ memberId: baseline.member.id, amount: 10 }]).operation;
+  for (const observedHead of [{ revision: -1, integrity: baseline.integrity }, { revision: 1, integrity: 'invalid' }, 'invalid']) {
+    const response = await api('/sync', { operations: [charge], observedHead });
+    assert.equal(response.status, 400);
+    assert.deepEqual((await service.account(owner.identity)).data, baseline.data);
+  }
+});
+
+test('server integrity failures persist an accounting conflict and preserve pending operations', async () => {
+  const baseline = await initialAccount(); let online = false;
+  const client = await connectedClient({ online: () => online });
+  localDb.consume({ memberId: baseline.member.id, amount: 10 });
+  const expected = localDb.readBackupState(), pending = structuredClone(getCloudState().outbox);
+  await pool.query('UPDATE accounts SET integrity=$1 WHERE store_id=$2', ['0'.repeat(64), owner.identity.store_id]);
+  online = true;
+  await assert.rejects(client.sync(), { code: 'INTEGRITY_FAILED' });
+  assert.equal(getCloudState().conflictReason, 'integrity');
+  assert.throws(() => localDb.consume({ memberId: baseline.member.id, amount: 1 }), /同步冲突/);
+  assert.deepEqual(localDb.readBackupState(), expected);
+  assert.deepEqual(getCloudState().outbox, pending);
+});
+
+test('local and server backup validation agree on service IDs and legacy tag representations', async () => {
+  const account = await initialAccount();
+  for (const services of [[{ ...account.data.services[0], id: '' }], [{ ...account.data.services[0], id: ' ' }],
+    [account.data.services[0], { ...account.data.services[0], name: '重复单号' }]]) {
+    const data = { ...account.data, services };
+    assert.throws(() => validateSnapshot(data), /服务项目/);
+    assert.throws(() => localDb.parseAndValidateBackup(JSON.stringify({ data })), /服务项目/);
+    const response = await api('/account/bootstrap', { id: randomUUID(), data });
+    assert.equal(response.status, 400);
+    assert.deepEqual((await service.account(owner.identity)).data, account.data);
+  }
+  for (const tags of ['VIP', ['常客', '年卡'], null]) {
+    const data = structuredClone(account.data); data.members[0].tags = tags;
+    assert.deepEqual(validateSnapshot(data).members[0].tags, tags);
+  }
+});
 
 test('failed mobile head checks persist an unconfirmed state until a successful synchronization', async () => {
   let fail = false;

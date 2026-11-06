@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { sanitizeCellValue } from './importer.js';
+import { memberTagText } from '../../../src/member-tags.js';
 
 /**
  * 导出会员列表为 Excel
@@ -11,7 +12,7 @@ export function createMembersWorkbook(members) {
       '手机号码': sanitizeCellValue(m.phone),
       '卡内本金余额(元)': (m.balance || 0) / 100,
       '累计欠款(元)': Math.max(0, -(m.balance || 0)) / 100,
-      '会员标签': sanitizeCellValue(m.tags?.join('、') || m.tag || '普通会员'),
+      '会员标签': sanitizeCellValue(memberTagText(m) || '普通会员'),
       '备注信息': sanitizeCellValue(m.notes || m.remark || ''),
       '建卡时间': m.created_at ? new Date(m.created_at).toLocaleString('zh-CN') : '—',
       '状态': m.isArchived ? '已归档' : m.balance < 0 ? '欠款' : '正常'

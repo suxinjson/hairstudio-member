@@ -6,11 +6,76 @@ import {
   guessColumnMapping,
   parseImportMoney,
   parseUploadedFile,
+  selectImportHeader,
   createErrorReportWorkbook,
   validateImportBatch
 } from '../admin/src/utils/importer.js';
 import { maskPhone, formatYuan } from '../admin/src/utils/security.js';
 import { createMembersWorkbook, createLedgersWorkbook } from '../admin/src/utils/exporter.js';
+import { parseImportBuffer } from '../admin/src/utils/import-parser.js';
+
+function importFile(rows, name = 'members.xlsx') {
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), '会员');
+  const bytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx', compression: true, bookSST: true });
+  return { name, size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
+}
+
+test('shared-string references are budgeted before an expanded Worker response is returned', async () => {
+  const oversizedCell = importFile([['姓名', '手机号'], ...Array.from({ length: 40 }, () => Array(20).fill('X'.repeat(32767)))]);
+  assert.ok(oversizedCell.size < 20000);
+  const buffer = await oversizedCell.arrayBuffer();
+  assert.throws(() => parseImportBuffer(buffer, false), /单元格文本过长/);
+  const aggregate = importFile([['姓名', '手机号'], ...Array.from({ length: 100 }, () => Array(20).fill('文'.repeat(4096)))]);
+  assert.ok(aggregate.size < 40000);
+  await assert.rejects(parseUploadedFile(aggregate), /展开数据过大/);
+  const accepted = await parseUploadedFile(importFile([['姓名', '手机号', '备注'], ['客户', '13800001111', '文'.repeat(4096)]]));
+  assert.equal(accepted.dataRows[0][2].length, 4096);
+});
+
+test('invalid Worker responses reject cleanly and terminate parsing', async t => {
+  const original = globalThis.Worker, workers = [];
+  t.after(() => { globalThis.Worker = original; });
+  for (const rows of [null, {}, [null], [[{}]], [['X'.repeat(4097)]], Array.from({ length: 2000 }, () => ['X'.repeat(4096)])]) {
+    globalThis.Worker = class {
+      constructor() { workers.push(this); }
+      postMessage() { queueMicrotask(() => this.onmessage({ data: { rows } })); }
+      terminate() { this.terminated = true; }
+    };
+    await assert.rejects(parseUploadedFile(importFile([['姓名', '手机号'], ['客户', '13800001111']])));
+    assert.equal(workers.at(-1).terminated, true);
+  }
+});
+
+test('titles and blank rows retain physical source rows with automatic and manual header selection', async () => {
+  const rows = [[], ['梦飞空间会员批量导入'], ['会员姓名', '手机号码', '可用余额'], [], ['客户', '13800001111', '1.005'], [], ['新客户', '13900001111', '20']];
+  const parsed = await parseUploadedFile(importFile(rows));
+  assert.equal(parsed.headerIndex, 2);
+  assert.deepEqual(parsed.headers, ['会员姓名', '手机号码', '可用余额']);
+  assert.deepEqual(parsed.rowNumbers, [5, 7]);
+  const report = validateImportBatch(parsed.dataRows, parsed.mapping, [], { rowNumbers: parsed.rowNumbers });
+  assert.equal(report.results[0].rowNum, 5);
+  assert.equal(report.results[0].status, 'invalid');
+  assert.equal(report.results[1].rowNum, 7);
+  const corrected = selectImportHeader(parsed.rawRows, 2);
+  assert.deepEqual(corrected.dataRows, parsed.dataRows);
+  const title = selectImportHeader(parsed.rawRows, 1);
+  assert.equal(title.rowNumbers[0], 3);
+  assert.throws(() => selectImportHeader(parsed.rawRows, 5), /前 5 行/);
+  assert.throws(() => validateImportBatch(parsed.dataRows, parsed.mapping, [], { rowNumbers: [5] }), /原始行号/);
+  const csv = new TextEncoder().encode('梦飞空间会员批量导入\n会员姓名,手机号码,可用余额\n客户,13800001111,20');
+  const table = await parseUploadedFile({ name: 'title.csv', size: csv.length, arrayBuffer: async () => csv.buffer });
+  assert.equal(table.headerIndex, 1);
+  assert.deepEqual(table.rowNumbers, [3]);
+});
+
+test('legacy text and array member tags export as plain text', () => {
+  const members = [{ name: '旧会员', tags: 'VIP' }, { name: '数组会员', tags: ['常客', '年卡'] }, { name: '备注会员', tags: null, notes: '[熟客] 短发' }];
+  const book = createMembersWorkbook(members), sheet = book.Sheets[book.SheetNames[0]];
+  assert.equal(sheet.E2.v, 'VIP');
+  assert.equal(sheet.E3.v, '常客、年卡');
+  assert.equal(sheet.E4.v, '熟客');
+});
 
 test('ambiguous legacy phone identities are rejected rather than choosing a financial target', () => {
   const members = [{ id: 'a', name: 'A', phone: '13800001111', balance: 10000 }, { id: 'b', name: 'B', phone: '138 0000-1111', balance: 20000 }];

@@ -136,8 +136,8 @@
                 <span v-if="member.balance < 0" class="block text-[10px] text-rose-500 font-bold">已挂账</span>
               </td>
               <td class="py-3.5 px-4 text-xs text-slate-500">
-                <span v-if="member.tag || (member.tags && member.tags.length) || member.notes?.startsWith('[')" class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
-                  {{ member.tags ? member.tags.join('、') : (member.tag || (/^\[([^\]]+)\]/.exec(member.notes || '')?.[1] || '')) }}
+                <span v-if="memberTagText(member)" class="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-semibold">
+                  {{ memberTagText(member) }}
                 </span>
                 <span v-else class="text-slate-300">—</span>
               </td>
@@ -347,6 +347,7 @@ import { exportMembersToExcel } from '../utils/exporter.js';
 import { useOperationSubmission } from '../composables/useOperationSubmission.js';
 import { isValidMoney, moneyToCent } from '../../../src/money.js';
 import { normalizeMemberPhone } from '../../../src/accounting.js';
+import { memberTagText } from '../../../src/member-tags.js';
 import { voicePlayer } from '../utils/voice-player.js';
 
 const props = defineProps({
@@ -503,7 +504,7 @@ function openEditModal(member) {
     name: member.name || '',
     phone: member.phone || '',
     initialBalanceStr: '',
-    tag: tagMatch ? tagMatch[1] : (member.tags ? member.tags.join('、') : member.tag || ''),
+    tag: tagMatch ? tagMatch[1] : memberTagText(member),
     remark: tagMatch ? tagMatch[2] : noteStr
   };
   editError.value = '';
