@@ -17,7 +17,7 @@ import {
   formatAliGenieResponse
 } from '../aligenie.js';
 
-test('token-authenticated platform welcomes work without accounting identity, while business requests stay protected', async () => {
+test('platform Header welcomes and business validation replies use the skill protocol without weakening accounting authorization', async () => {
   const db = new PGlite();
   const query = (sql, params) => params ? db.query(sql, params) : sql.includes(';') ? db.exec(sql) : db.query(sql);
   const pool = { query, connect: async () => ({ query, release() {} }) };
@@ -72,11 +72,53 @@ test('token-authenticated platform welcomes work without accounting identity, wh
       { intentName: 'DefaultWelcomeIntent', utterance: '张三洗剪吹扣款38元' },
       { utterance: '李四充值200元' }, { utterance: '查询尾号1234余额' }
     ]) {
-      assert.equal((await post(body)).status, 400, JSON.stringify(body));
+      const res = await post(body), result = await res.json();
+      assert.equal(res.status, 200, JSON.stringify(body));
+      assert.equal(result.returnValue.executeCode, 'PARAMS_ERROR');
+      assert.match(result.returnValue.msgInfo, /VOICE_IDENTIFIERS_REQUIRED/);
+      assert.match(result.returnValue.reply, /标识/);
     }
+    // AliGenie's documented online-test request has request/session IDs and slots,
+    // but requestData and device are empty. It must explain the limitation without writing.
+    const platformBody = {
+      sessionId: 'system-session', requestId: randomUUID(), intentName: 'ConsumeIntent',
+      utterance: '张三洗剪吹扣款38元', requestData: {}, device: {},
+      skillSession: { skillSessionId: 'skill-session', newSession: false },
+      slotEntities: [
+        { intentParameterName: 'memberQuery', standardValue: '张三' },
+        { intentParameterName: 'amount', standardValue: '38元' }
+      ]
+    };
+    assert.deepEqual(parseAliGenieRequest(platformBody).slots, { member: '张三', amount: '38元' });
+    const platformRes = await post(platformBody), platformResult = await platformRes.json();
+    assert.equal(platformRes.status, 200);
+    assert.equal(platformResult.returnCode, '0');
+    assert.equal(platformResult.returnValue.executeCode, 'PARAMS_ERROR');
+    assert.match(platformResult.returnValue.reply, /在线测试.*已识别会员张三.*38元.*用户和设备标识.*已绑定.*音箱/);
+    assert.equal(platformResult.response.shouldEndSession, true);
+    assert.equal(platformResult.response.directives, undefined);
+    const detail = JSON.parse(platformResult.returnValue.msgInfo);
+    assert.equal(detail.code, 'VOICE_IDENTIFIERS_REQUIRED');
+    assert.deepEqual(detail.missingFields, ['userOpenId', 'deviceOpenId']);
+    const timestamp = String(Date.now());
+    const internalRes = await post(platformBody, {
+      'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp,
+      'x-aligenie-signature': signAliGenieRequest(secret, timestamp, identity.store_id, platformBody)
+    });
+    assert.equal(internalRes.status, 400);
     for (const intentName of ['ConsumeIntent', 'RechargeIntent', 'QueryMemberIntent']) {
-      assert.equal((await post({ requestId: randomUUID(), sessionId: 'platform-test', intentName,
+      const body = { requestId: randomUUID(), sessionId: 'platform-test', intentName,
         requestData: { deviceOpenId: 'unbound-ide-device', userOpenId: 'ide-user' }
+      };
+      const res = await post(body), result = await res.json();
+      assert.equal(res.status, 200);
+      assert.equal(result.returnValue.executeCode, 'PARAMS_ERROR');
+      assert.match(result.returnValue.reply, /设备.*未绑定/);
+      assert.equal(JSON.parse(result.returnValue.msgInfo).code, 'VOICE_DEVICE_UNBOUND');
+      const timestamp = String(Date.now());
+      assert.equal((await post(body, {
+        'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp,
+        'x-aligenie-signature': signAliGenieRequest(secret, timestamp, identity.store_id, body)
       })).status, 401);
     }
     assert.deepEqual(await service.account(identity), before);

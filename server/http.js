@@ -5,7 +5,7 @@ import { resolve, join } from 'node:path';
 import { ApiError } from './security.js';
 import { DATA_LIMITS, assertJsonBudget } from '../src/data-limits.js';
 import { normalizeIP, proxyIdentity, createRequestGuard } from './request-guard.js';
-import { signAliGenieRequest } from './aligenie.js';
+import { signAliGenieRequest, formatAliGeniePlatformError } from './aligenie.js';
 
 async function body(request, maximum = 16 * 1024) {
   if (!String(request.headers['content-type'] || '').startsWith('application/json')) throw new ApiError(415, '请求必须使用 JSON');
@@ -89,6 +89,7 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
         guard.take('voice_aligenie:' + ip, 60);
         const input = await body(request, 32 * 1024);
         let headers = request.headers;
+        let platformTokenAuthenticated = false;
         if (!headers['x-aligenie-signature']) {
           const rawToken = headers['x-aligenie-token'] || headers['x-token'] || url.searchParams.get('token');
           if (rawToken && typeof rawToken === 'string' && /^[a-zA-Z0-9_-]{32,100}$/.test(rawToken.trim())) {
@@ -107,13 +108,18 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
                 'x-aligenie-timestamp': timestamp,
                 'x-aligenie-signature': signAliGenieRequest(secret, timestamp, storeId, input)
               };
+              platformTokenAuthenticated = true;
             }
           }
         }
-        const result = await service.handleAliGenieWebhook(input, {
-          headers
-        });
-        return send(200, result);
+        try {
+          const result = await service.handleAliGenieWebhook(input, { headers });
+          return send(200, result);
+        } catch (error) {
+          const reply = platformTokenAuthenticated && formatAliGeniePlatformError(error, input);
+          if (reply) return send(200, reply);
+          throw error;
+        }
       }
       const accessToken = /^Bearer ([a-zA-Z0-9_-]+)$/.exec(request.headers.authorization || '')?.[1];
       const identity = await service.authenticate(accessToken);

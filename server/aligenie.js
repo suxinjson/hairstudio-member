@@ -288,7 +288,9 @@ export function formatAliGenieResponse({
   text,
   shouldEndSession = true,
   expectSpeech = false,
-  directive = null
+  directive = null,
+  executeCode = 'SUCCESS',
+  msgInfo = ''
 }) {
   const cleanText = String(text || '').trim();
   const resultType = shouldEndSession ? 'RESULT' : 'ASK_INF';
@@ -302,14 +304,14 @@ export function formatAliGenieResponse({
     returnResult: {
       reply: cleanText,
       resultType,
-      executeCode: 'SUCCESS',
-      msgInfo: ''
+      executeCode,
+      msgInfo
     },
     returnValue: {
       reply: cleanText,
       resultType,
-      executeCode: 'SUCCESS',
-      msgInfo: ''
+      executeCode,
+      msgInfo
     },
     // Protocol 2.0 Response (supports both outputSpeech object and outputSpeechs array)
     version: '2.0',
@@ -338,6 +340,28 @@ export function formatAliGenieResponse({
     res.response.directives = [directive];
   }
   return res;
+}
+
+// Only the authenticated platform Header adapter should convert these rejections
+// to spoken skill replies. Internal signed API calls retain their HTTP errors.
+export function formatAliGeniePlatformError(error, body) {
+  if (!['VOICE_IDENTIFIERS_REQUIRED', 'VOICE_DEVICE_UNBOUND'].includes(error.code)) return null;
+  const req = parseAliGenieRequest(body), detail = { code: error.code };
+  let text;
+  if (error.code === 'VOICE_DEVICE_UNBOUND') {
+    text = '当前天猫精灵设备未绑定此门店，请在后台语音设置中绑定设备后重试。';
+    detail.deviceOpenId = req.deviceOpenId;
+  } else {
+    detail.missingFields = error.missingFields || [];
+    if (detail.missingFields.length === 2 && detail.missingFields.includes('userOpenId') && detail.missingFields.includes('deviceOpenId')) {
+      const recognized = [req.slots.member && `会员${req.slots.member.slice(0, 80)}`,
+        req.slots.amount && `金额${req.slots.amount.slice(0, 40)}`].filter(Boolean).join('、');
+      text = `平台在线测试${recognized ? `已识别${recognized}。` : '已收到您的指令。'}网页在线测试不提供用户和设备标识，不能执行真实记账。请使用已绑定门店的天猫精灵音箱进行真机测试。`;
+    } else {
+      text = '本次请求缺少或包含无效的记账标识，请检查后端接入配置后重试。';
+    }
+  }
+  return formatAliGenieResponse({ text, executeCode: 'PARAMS_ERROR', msgInfo: JSON.stringify(detail) });
 }
 
 export function makeConfirmDirective() {
@@ -402,18 +426,24 @@ export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
   try { assertJsonBudget(body, 32 * 1024); } catch (error) { throw new ApiError(error.status || 400, error.message); }
   const req = parseAliGenieRequest(body);
   // Parser UUID defaults are for display helpers, not durable business deduplication.
-  const hasAccountingIdentity = Boolean(
-    (body.request?.requestId || body.requestId || body.header?.messageId || body.payload?.requestId) &&
-    (body.session?.sessionId || body.skillSession?.skillSessionId || body.skillSession?.sessionId || body.sessionId || body.payload?.sessionId) &&
-    [req.requestId, req.sessionId, req.deviceOpenId, req.userOpenId, req.confirmationRequestId].every(v => v.length <= 128) &&
-    req.deviceOpenId && req.userOpenId);
+  const identityFields = {
+    requestId: (body.request?.requestId || body.requestId || body.header?.messageId || body.payload?.requestId) && req.requestId.length <= 128,
+    sessionId: (body.session?.sessionId || body.skillSession?.skillSessionId || body.skillSession?.sessionId || body.sessionId || body.payload?.sessionId) && req.sessionId.length <= 128,
+    userOpenId: req.userOpenId && req.userOpenId.length <= 128,
+    deviceOpenId: req.deviceOpenId && req.deviceOpenId.length <= 128,
+    confirmationRequestId: req.confirmationRequestId.length <= 128
+  };
+  const missingFields = Object.keys(identityFields).filter(key => !identityFields[key]);
+  const hasAccountingIdentity = missingFields.length === 0;
   const { rows: [candidate] } = await pool.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [storeId]);
   const configured = candidate?.voice_config?.aligenie;
   function authenticate(config, requireBoundDevice = true) {
     if (config?.enabled !== true || config.authVersion !== 2 || !/^[a-zA-Z0-9_-]{32,100}$/.test(config.token || '') ||
-        !timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(signAliGenieRequest(config.token, timestamp, storeId, body), 'hex')) ||
-        (requireBoundDevice && (!Array.isArray(config.allowedDevices) || !config.allowedDevices.includes(req.deviceOpenId)))) {
+        !timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(signAliGenieRequest(config.token, timestamp, storeId, body), 'hex'))) {
       throw new ApiError(401, '语音签名无效、设备未绑定或功能未启用', 'VOICE_AUTH_REQUIRED');
+    }
+    if (requireBoundDevice && (!Array.isArray(config.allowedDevices) || !config.allowedDevices.includes(req.deviceOpenId))) {
+      throw new ApiError(401, '当前天猫精灵设备未绑定此门店', 'VOICE_DEVICE_UNBOUND');
     }
   }
   // Platform launch tests may lack stable IDs or use an unbound virtual device.
@@ -425,7 +455,9 @@ export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
     }
   }
   if (!hasAccountingIdentity) {
-    throw new ApiError(400, '语音请求须提供稳定请求、会话、用户及设备标识');
+    const error = new ApiError(400, '语音请求须提供稳定请求、会话、用户及设备标识', 'VOICE_IDENTIFIERS_REQUIRED');
+    error.missingFields = missingFields;
+    throw error;
   }
   authenticate(configured);
   return transaction(pool, async client => {
