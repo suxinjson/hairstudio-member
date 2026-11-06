@@ -104,6 +104,21 @@ test('cancellation fences late confirmations even when the session has a new pen
   assert.equal(await balance(), 32000);
 });
 
+test('bound welcomes reset new sessions and default-intent replies still cancel and confirm', async () => {
+  const old = request('张三扣款38元'); await send(old);
+  await send(request('梦飞管家', { intentName: 'DefaultWelcomeIntent', skillSession: { newSession: true } }));
+  await send(request('确认', { intentName: 'DefaultWelcomeIntent', confirmationRequestId: old.requestId }));
+  assert.equal(await balance(), 10000);
+  const cancelled = request('张三扣款38元'); await send(cancelled);
+  const reply = await send(request('取消', { intentName: 'DefaultWelcomeIntent' }));
+  assert.match(reply.returnValue.reply, /已为您取消/);
+  await send(request('确认', { confirmationRequestId: cancelled.requestId }));
+  assert.equal(await balance(), 10000);
+  const current = request('张三扣款38元'); await send(current);
+  await send(request('确认', { intentName: 'DefaultWelcomeIntent', confirmationRequestId: current.requestId }));
+  assert.equal(await balance(), 6200);
+});
+
 for (const changed of ['balance', 'archive', 'rechargeSettings', 'services']) {
   test(`confirmation rejects changes to preview ${changed}`, async () => {
     const preview = request(changed === 'rechargeSettings' ? '张三充值200元' : '张三扣款38元'); await send(preview);

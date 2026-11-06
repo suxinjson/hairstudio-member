@@ -12,6 +12,32 @@ import { rechargeGiftCent } from '../src/recharge-settings.js';
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
 
+function isWelcomeRequest(req) {
+  const intent = req.intentName.toLowerCase(), utterance = req.utterance || '';
+  const dialogReply = getDialogReply(utterance);
+  if (req.confirmationRequestId || req.confirmationStatus !== 'NONE' ||
+      dialogReply ||
+      /(consume|recharge|query|balance|confirm|deny|cancel)/.test(intent) ||
+      /(消费|扣款|扣除|结账|买单|充值|充|存|查一下|查询|查|看看|看|余额|流水)/.test(utterance)) return false;
+  return (!req.intentName && !utterance) || intent.includes('welcome') || intent.includes('default') ||
+    utterance === '梦飞管家' || utterance === '打开梦飞管家';
+}
+
+function getDialogReply(utterance) {
+  const clean = (utterance || '').replace(/^(天猫精灵|梦飞管家|打开梦飞管家|请|帮我)/g, '').trim();
+  if (/^(取消|不要|算了|不对|别记|别扣|不充|否认|不用|不用了|不要了|按错了)$/.test(clean)) return 'deny';
+  if (/^(确认|确定|是的|好的|对的|没错|没问题|要的|同意|成|确认扣款|确认充值|可以|行)$/.test(clean)) return 'confirm';
+  return '';
+}
+
+function welcomeResponse() {
+  return formatAliGenieResponse({
+    text: '梦飞管家为您服务，您可以对我说：张三洗剪吹扣款38元、李四充值200元、或查询尾号1234余额。',
+    shouldEndSession: false,
+    expectSpeech: true
+  });
+}
+
 export function parseAliGenieRequest(body) {
   if (!body || typeof body !== 'object') {
     throw new ApiError(400, '无效的天猫精灵请求体');
@@ -375,20 +401,31 @@ export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
   }
   try { assertJsonBudget(body, 32 * 1024); } catch (error) { throw new ApiError(error.status || 400, error.message); }
   const req = parseAliGenieRequest(body);
-  // Stable IDs are required for durable deduplication; parser UUID defaults are for display helpers only.
-  if (!(body.request?.requestId || body.requestId || body.header?.messageId || body.payload?.requestId) ||
-      !(body.session?.sessionId || body.skillSession?.skillSessionId || body.skillSession?.sessionId || body.sessionId || body.payload?.sessionId) ||
-      [req.requestId, req.sessionId, req.deviceOpenId, req.userOpenId, req.confirmationRequestId].some(v => v.length > 128) || !req.deviceOpenId || !req.userOpenId) {
-    throw new ApiError(400, '语音请求须提供稳定请求、会话、用户及设备标识');
-  }
+  // Parser UUID defaults are for display helpers, not durable business deduplication.
+  const hasAccountingIdentity = Boolean(
+    (body.request?.requestId || body.requestId || body.header?.messageId || body.payload?.requestId) &&
+    (body.session?.sessionId || body.skillSession?.skillSessionId || body.skillSession?.sessionId || body.sessionId || body.payload?.sessionId) &&
+    [req.requestId, req.sessionId, req.deviceOpenId, req.userOpenId, req.confirmationRequestId].every(v => v.length <= 128) &&
+    req.deviceOpenId && req.userOpenId);
   const { rows: [candidate] } = await pool.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [storeId]);
   const configured = candidate?.voice_config?.aligenie;
-  function authenticate(config) {
+  function authenticate(config, requireBoundDevice = true) {
     if (config?.enabled !== true || config.authVersion !== 2 || !/^[a-zA-Z0-9_-]{32,100}$/.test(config.token || '') ||
         !timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(signAliGenieRequest(config.token, timestamp, storeId, body), 'hex')) ||
-        !Array.isArray(config.allowedDevices) || !config.allowedDevices.includes(req.deviceOpenId)) {
+        (requireBoundDevice && (!Array.isArray(config.allowedDevices) || !config.allowedDevices.includes(req.deviceOpenId)))) {
       throw new ApiError(401, '语音签名无效、设备未绑定或功能未启用', 'VOICE_AUTH_REQUIRED');
     }
+  }
+  // Platform launch tests may lack stable IDs or use an unbound virtual device.
+  // In that case, return only a greeting; bound sessions keep their existing reset/receipt flow.
+  if (isWelcomeRequest(req)) {
+    authenticate(configured, false);
+    if (!hasAccountingIdentity || !Array.isArray(configured.allowedDevices) || !configured.allowedDevices.includes(req.deviceOpenId)) {
+      return welcomeResponse();
+    }
+  }
+  if (!hasAccountingIdentity) {
+    throw new ApiError(400, '语音请求须提供稳定请求、会话、用户及设备标识');
   }
   authenticate(configured);
   return transaction(pool, async client => {
@@ -433,11 +470,9 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     const rechargeSettings = accountData.rechargeSettings;
     // 3. Multi-turn Session Check (Pending Confirmation)
     const pending = sessionStore.get(req.sessionId);
-    const cleanUtterance = (req.utterance || '').replace(/^(天猫精灵|梦飞管家|打开梦飞管家|请|帮我)/g, '').trim();
-    const isDenyUtterance = /^(取消|不要|算了|不对|别记|别扣|不充|否认|不用|不用了|不要了|按错了)$/.test(cleanUtterance);
-    const isConfirmUtterance = /^(确认|确定|是的|好的|对的|没错|没问题|要的|同意|成|确认扣款|确认充值|可以|行)$/.test(cleanUtterance);
+    const dialogReply = getDialogReply(req.utterance);
 
-    if (pending && (req.confirmationStatus === 'DENIED' || isDenyUtterance)) {
+    if (pending && (req.confirmationStatus === 'DENIED' || dialogReply === 'deny')) {
       sessionStore.delete(req.sessionId);
       return formatAliGenieResponse({
         text: '已为您取消本次操作。',
@@ -445,7 +480,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
       });
     }
 
-    if (pending && (req.confirmationStatus === 'CONFIRMED' || isConfirmUtterance || req.intentName === 'ConfirmIntent')) {
+    if (pending && (req.confirmationStatus === 'CONFIRMED' || dialogReply === 'confirm' || req.intentName === 'ConfirmIntent')) {
       if (req.confirmationRequestId !== pending.previewRequestId) return formatAliGenieResponse({ text: '确认请求与本次预览不匹配，请重新核对并确认。', shouldEndSession: false, expectSpeech: true });
       if (pending.servicesIntegrity !== integrity(account.data.services || [])) {
         sessionStore.delete(req.sessionId);
@@ -494,16 +529,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     // 4. Intent Dispatch
     const normalizedIntent = req.intentName.toLowerCase();
     const utterance = req.utterance || '';
-    const hasAction = /(消费|扣款|扣除|结账|买单|充值|充|存|查一下|查询|查|看看|看|余额)/.test(utterance);
-
-    // A. Welcome / Default Intent (Only if no specific action was requested)
-    if (!hasAction && (!req.intentName || normalizedIntent.includes('welcome') || normalizedIntent.includes('default') || utterance === '梦飞管家' || utterance === '打开梦飞管家')) {
-      return formatAliGenieResponse({
-        text: '梦飞管家为您服务，您可以对我说：张三洗剪吹扣款38元、李四充值200元、或查询尾号1234余额。',
-        shouldEndSession: false,
-        expectSpeech: true
-      });
-    }
+    if (isWelcomeRequest(req)) return welcomeResponse();
 
     // B. Query Member / Balance Intent
     if (normalizedIntent.includes('query') || normalizedIntent.includes('balance') || /(查一下|查询|查|看看|看|余额|流水)/.test(utterance)) {

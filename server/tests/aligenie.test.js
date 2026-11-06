@@ -17,6 +17,83 @@ import {
   formatAliGenieResponse
 } from '../aligenie.js';
 
+test('token-authenticated platform welcomes work without accounting identity, while business requests stay protected', async () => {
+  const db = new PGlite();
+  const query = (sql, params) => params ? db.query(sql, params) : sql.includes(';') ? db.exec(sql) : db.query(sql);
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+  let server;
+  try {
+    await migrate(pool);
+    const service = createService(pool);
+    const password = 'Platform-Welcome-Regression-2026!';
+    await service.createOwner({ username: 'welcome-owner', password });
+    const login = await service.login({ username: 'welcome-owner', password, deviceId: randomUUID() });
+    const identity = await service.authenticate(login.accessToken);
+    const secret = 'platform-token-' + randomUUID();
+    await service.saveVoiceConfig(identity, { aligenie: {
+      enabled: true, actorId: identity.id, token: secret, allowedDevices: ['bound-device']
+    } });
+    const before = await service.account(identity);
+    server = createApi({ service, pool, production: false });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${server.address().port}/api/v1/voice/aligenie`;
+    // Send the configured platform Header directly; do not inject signatures or IDs.
+    const post = (body, headers = { 'x-aligenie-token': secret }) => globalThis.fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body)
+    });
+    for (const body of [
+      { intentName: 'DefaultWelcomeIntent', utterance: '梦飞管家' },
+      { utterance: '打开梦飞管家' },
+      { version: '2.0', request: { type: 'LaunchRequest' } },
+      { requestId: randomUUID(), sessionId: 'platform-test', intentName: 'DefaultWelcomeIntent',
+        requestData: { deviceOpenId: 'unbound-ide-device', userOpenId: 'ide-user' } }
+    ]) {
+      const res = await post(body);
+      const result = await res.json();
+      assert.equal(res.status, 200, JSON.stringify(result));
+      assert.match(result.returnValue.reply, /梦飞管家为您服务/);
+      assert.equal(result.resultType, 'ASK_INF');
+      assert.equal(result.response.shouldEndSession, false);
+      assert.equal(result.response.expectSpeech, true);
+    }
+    const welcome = { intentName: 'DefaultWelcomeIntent' };
+    for (const headers of [{}, { 'x-aligenie-token': 'invalid-platform-token-' + randomUUID() }]) {
+      assert.equal((await post(welcome, headers)).status, 401);
+    }
+    const expired = String(Date.now() - 600000);
+    assert.equal((await post(welcome, {
+      'x-aligenie-token': secret, 'x-store-id': identity.store_id, 'x-aligenie-timestamp': expired,
+      'x-aligenie-signature': signAliGenieRequest(secret, expired, identity.store_id, welcome)
+    })).status, 401);
+    for (const body of [
+      { intentName: 'ConsumeIntent' }, { intentName: 'RechargeIntent' }, { intentName: 'QueryMemberIntent' },
+      { utterance: '确认' }, { utterance: '取消' }, { intentName: 'ConfirmIntent' },
+      { intentName: 'DefaultWelcomeIntent', confirmationRequestId: 'preview-request' },
+      { intentName: 'DefaultWelcomeIntent', utterance: '张三洗剪吹扣款38元' },
+      { utterance: '李四充值200元' }, { utterance: '查询尾号1234余额' }
+    ]) {
+      assert.equal((await post(body)).status, 400, JSON.stringify(body));
+    }
+    for (const intentName of ['ConsumeIntent', 'RechargeIntent', 'QueryMemberIntent']) {
+      assert.equal((await post({ requestId: randomUUID(), sessionId: 'platform-test', intentName,
+        requestData: { deviceOpenId: 'unbound-ide-device', userOpenId: 'ide-user' }
+      })).status, 401);
+    }
+    assert.deepEqual(await service.account(identity), before);
+    for (const table of ['voice_dialogs', 'voice_requests']) {
+      assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count, 0);
+    }
+    await service.saveVoiceConfig(identity, { aligenie: { enabled: false } });
+    assert.equal((await post(welcome)).status, 401);
+  } finally {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+    await db.close();
+  }
+});
+
 test('AliGenie parser and utility functions', () => {
   // 1. Amount parsing (Arabic + Chinese numerals)
   assert.equal(parseAmount('38元'), 38);
