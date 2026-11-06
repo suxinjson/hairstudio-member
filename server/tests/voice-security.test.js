@@ -225,6 +225,9 @@ test('production voice transport pins verified DNS while preserving the original
   });
   assert.equal((await readVoiceBody(await transport('https://api.fish.audio/v1/tts'), 20)).toString(), 'audio');
   assert.equal(address, '8.8.8.8'); assert.equal(resolutions, 1);
+  const target = new URL('https://api.heygen.com/');
+  assert.deepEqual(await resolveVoiceTarget(target, async () => [{ address: '2606:4700::1111', family: 6 }, { address: '8.8.8.8', family: 4 }]), { address: '8.8.8.8', family: 4 });
+  assert.equal((await resolveVoiceTarget(target, async () => [{ address: '2606:4700::1111', family: 6 }])).family, 6);
   const controller = new AbortController();
   const stalled = createVoiceFetch({ resolve: () => new Promise(() => {}), requestFn: () => { throw new Error('must not connect'); } });
   const operation = stalled('https://api.fish.audio/v1/tts', { signal: controller.signal });
@@ -248,4 +251,24 @@ test('expired voice previews cannot execute and must be issued again', async () 
   await pool.query("UPDATE voice_dialogs SET expires_at=now()-interval '1 second'");
   await send(request('确认', { confirmationRequestId: preview.requestId }));
   assert.equal(await balance(), 10000);
+});
+
+test('Xfyun service synthesis respects draft authorization and releases SQL connections before opening WebSocket', async () => {
+  await service.saveVoiceConfig(identity, { provider: 'xfyun', appId: 'testappid', apiKey: 'ak-server-password', enabled: false });
+  let sent;
+  const instance = createService(pool, { socketFn: async (_url, options) => {
+    assert.equal(leases, 0); assert.equal(options.headers['x-api-key'], 'ak-server-password');
+    const socket = new EventEmitter(); socket.readyState = 1; socket.terminate = () => {};
+    socket.send = (body, callback) => {
+      sent = JSON.parse(body); callback?.();
+      socket.emit('message', Buffer.from(JSON.stringify({ code: 0, data: { status: 2, audio: 'YXVkaW8=' } })), false);
+    };
+    return socket;
+  } });
+  const config = await instance.getVoiceConfig(identity);
+  assert.equal(config.hasApiKey, true); assert.equal(config.apiKey, ''); assert.equal(config.appId, 'testappid');
+  await assert.rejects(instance.synthesizeVoice(identity, { text: '测试' }), { status: 400 });
+  const result = await instance.synthesizeVoice(identity, { text: '试听', test: true });
+  assert.equal(result.contentType, 'audio/mpeg'); assert.equal(result.buffer.toString(), 'audio');
+  assert.equal(sent.common.app_id, 'testappid'); assert.equal(sent.business.vcn, 'x4_xiaoyan');
 });

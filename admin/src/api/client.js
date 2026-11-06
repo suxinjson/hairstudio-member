@@ -621,7 +621,8 @@ export class AdminApiClient {
     const previousAccess = this.accessToken.value;
     const execute = async token => {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30000);
+      // Cover HeyGen synthesis (90s), audio download (30s), and proxy overhead.
+      const timer = setTimeout(() => controller.abort(), 130000);
       try {
         const response = await this.requestFetch('/api/v1/voice/synthesize', {
           method: 'POST',
@@ -641,6 +642,9 @@ export class AdminApiClient {
           throw Object.assign(new Error(errMessage), { status: response.status });
         }
         return await response.blob();
+      } catch (error) {
+        if (controller.signal.aborted) throw new Error('语音合成等待超时，请稍后重试或检查服务器网络');
+        throw error;
       } finally {
         clearTimeout(timer);
       }

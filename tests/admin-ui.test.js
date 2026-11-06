@@ -291,3 +291,54 @@ test('owner voice settings use blank secret inputs and clear newly submitted cre
   assert.deepEqual(save.mock.calls[0].arguments[0].aligenie.allowedDevices, ['test-device']);
   assert.equal(secrets[0].value, ''); assert.equal(secrets[1].value, '');
 });
+
+test('switching providers resets API parameters and requires the matching provider key before preview', async t => {
+  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', hasApiKey: true,
+    apiUrl: 'https://api.fish.audio/v1/tts', model: 'fish-custom-model', voiceId: 'fish-custom-voice' }));
+  t.mock.method(adminApi, 'getUsers', async () => []);
+  const { voicePlayer } = await import('../admin/src/utils/voice-player.js');
+  const preview = t.mock.method(voicePlayer, 'queueSpeak', async () => {});
+  await mount(VoiceSettings);
+  const chooseProvider = name => [...document.querySelectorAll('div')].find(element => element.textContent.trim() === name).click();
+  await input('input[type="password"]', 'fish-draft-secret');
+  chooseProvider('HeyGen'); await flush();
+  const key = document.querySelector('input[type="password"]');
+  assert.equal(key.value, ''); assert.match(key.placeholder, /当前服务商/);
+  const values = [...document.querySelectorAll('input')].map(element => element.value);
+  assert.ok(values.includes('https://api.heygen.com/v3/models/audio/tts'));
+  assert.ok(values.includes('heygen-voice-1-turbo-free'));
+  assert.ok(values.includes('83548de556df48ba8c09c42a57c51d85'));
+  button('试听测试').click(); await flush();
+  assert.equal(preview.mock.callCount(), 0);
+  assert.match(document.body.textContent, /当前服务商的 API Key/);
+  await input('input[type="password"]', 'heygen-draft-secret');
+  button('试听测试').click(); await flush();
+  assert.equal(preview.mock.callCount(), 1);
+  assert.equal(preview.mock.calls[0].arguments[1].testOptions.apiKey, 'heygen-draft-secret');
+  assert.equal(preview.mock.calls[0].arguments[1].testOptions.apiUrl, 'https://api.heygen.com/v3/models/audio/tts');
+  chooseProvider('Fish Audio'); await flush();
+  assert.match(key.placeholder, /云端已配置/);
+});
+
+test('Xfyun settings preview uses the server password without exposing it to the browser and allows voice selection', async t => {
+  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', hasApiKey: false,
+    serverXfyunConfigured: true, appId: 'serverappid' }));
+  t.mock.method(adminApi, 'getUsers', async () => []);
+  const { voicePlayer } = await import('../admin/src/utils/voice-player.js');
+  const preview = t.mock.method(voicePlayer, 'queueSpeak', async () => {});
+  const save = t.mock.method(adminApi, 'saveVoiceConfig', async config => ({ ...config, hasApiKey: true, serverXfyunConfigured: true }));
+  await mount(VoiceSettings); button('讯飞在线语音').click(); await flush();
+  assert.equal(document.querySelector('input[type="password"]').value, '');
+  assert.equal(document.querySelector('input[placeholder="控制台的 APPID"]').value, 'serverappid');
+  assert.equal(document.body.textContent.includes('模型标识'), false);
+  const select = [...document.querySelectorAll('select')].find(element => element.value === 'x4_xiaoyan');
+  assert.ok(select); select.value = 'aisjinger'; select.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+  button('试听测试').click(); await flush();
+  const testOptions = preview.mock.calls[0].arguments[1].testOptions;
+  assert.equal(testOptions.provider, 'xfyun'); assert.equal(testOptions.appId, 'serverappid');
+  assert.equal(testOptions.apiKey, ''); assert.equal(testOptions.voiceId, 'aisjinger');
+  assert.equal(testOptions.apiUrl, 'wss://tts-api.xfyun.cn/v2/tts');
+  button('保存播报配置').click(); await flush();
+  assert.equal(save.mock.calls[0].arguments[0].appId, 'serverappid');
+  assert.equal(save.mock.calls[0].arguments[0].apiKey, '');
+});

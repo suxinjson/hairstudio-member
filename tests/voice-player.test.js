@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { voicePlayer } from '../admin/src/utils/voice-player.js';
 import { AdminApiClient } from '../admin/src/api/client.js';
 
+const memoryStorage = () => {
+  const data = new Map();
+  return { getItem: key => data.get(key) ?? null, setItem: (key, value) => data.set(key, String(value)), removeItem: key => data.delete(key) };
+};
+
 test('voicePlayer template variable replacement', () => {
   const tpl = '{name} 消费 {amount} 元，卡内余额 {balance} 元（{store}）';
   const result = voicePlayer.formatTemplate(tpl, {
@@ -99,4 +104,31 @@ test('AdminApiClient voice configuration and synthesis methods', async () => {
   assert.ok(blob);
   const text = await blob.text();
   assert.equal(text, 'AUDIO:测试播报文本');
+});
+
+test('admin voice preview can wait for both HeyGen phases before timing out', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let signal, finish;
+  const client = new AdminApiClient({ storage: memoryStorage(), eventTarget: null, fetch: async (_path, options) => {
+    signal = options.signal;
+    return new Promise(resolve => { finish = resolve; });
+  } });
+  t.after(() => client.dispose());
+  const operation = client.synthesizeVoice({ provider: 'heygen', text: '测试' });
+  t.mock.timers.tick(120000); assert.equal(signal.aborted, false);
+  finish(new Response('audio', { headers: { 'content-type': 'audio/wav' } }));
+  assert.equal(await (await operation).text(), 'audio');
+  t.mock.timers.tick(20000); assert.equal(signal.aborted, false);
+});
+
+test('admin voice preview gives a readable timeout error and does not refresh login on timeout', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const client = new AdminApiClient({ storage: memoryStorage(), eventTarget: null, fetch: async (_path, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+  }) });
+  t.after(() => client.dispose());
+  const refresh = t.mock.method(client, 'refresh', async () => { throw new Error('unexpected refresh'); });
+  const rejected = assert.rejects(client.synthesizeVoice({ text: '测试' }), /语音合成等待超时/);
+  t.mock.timers.tick(130000); await rejected;
+  assert.equal(refresh.mock.callCount(), 0);
 });

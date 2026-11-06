@@ -4,7 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { migrate } from '../database.js';
 import { createService } from '../service.js';
 import { createApi } from '../http.js';
-import { sanitizeVoiceConfig, maskApiKey, synthesizeTTS } from '../voice.js';
+import { sanitizeVoiceConfig, maskApiKey, synthesizeTTS, readVoiceConfig, PROVIDER_DEFAULTS, VOICE_SYNTHESIS_TIMEOUT_MS, VOICE_DOWNLOAD_TIMEOUT_MS } from '../voice.js';
 import { randomUUID } from 'node:crypto';
 
 test('voice configuration sanitization and key masking', () => {
@@ -124,6 +124,92 @@ test('HeyGen TTS synthesis requests audio URL and downloads audio stream', async
   assert.equal(downloadReq.url, 'https://resource2.heygen.ai/audio/sample.wav');
   assert.equal(result.contentType, 'audio/wav');
   assert.equal(result.buffer.toString(), 'FAKE-WAV-AUDIO-DATA');
+});
+
+test('switching voice providers resets old endpoints, voices, models, and credentials', async () => {
+  const previous = sanitizeVoiceConfig({ enabled: true, apiUrl: PROVIDER_DEFAULTS.fish_audio.apiUrl, apiKey: 'fish-only-secret' });
+  const next = sanitizeVoiceConfig({ provider: 'heygen', apiKey: '****' }, previous);
+  assert.equal(next.apiKey, '');
+  for (const key of ['apiUrl', 'model', 'voiceId']) assert.equal(next[key], PROVIDER_DEFAULTS.heygen[key]);
+  await assert.rejects(synthesizeTTS({ ...next, text: '测试' }), /未配置/);
+  const draft = sanitizeVoiceConfig({ provider: 'heygen', apiKey: 'heygen-only-secret', voiceId: 'custom-voice' }, previous);
+  assert.equal(draft.apiKey, 'heygen-only-secret'); assert.equal(draft.voiceId, 'custom-voice');
+  assert.equal(previous.apiKey, 'fish-only-secret');
+  assert.equal(readVoiceConfig({ provider: 'heygen' }).model, PROVIDER_DEFAULTS.heygen.model);
+});
+
+const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+function pendingFetch(signal) {
+  return new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
+}
+
+test('slow HeyGen synthesis and its audio download have independent deadlines', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let finishSynthesis, finishDownload, synthesisSignal, downloadSignal;
+  const operation = synthesizeTTS({ provider: 'heygen', apiKey: 'fresh-key', text: '测试', fetchFn: async (url, options) => {
+    if (url.includes('api.heygen.com')) {
+      synthesisSignal = options.signal;
+      return new Promise(resolve => { finishSynthesis = resolve; });
+    }
+    assert.equal(url, 'https://files.heygen.ai/generated/speech.wav');
+    assert.equal(options.headers, undefined);
+    downloadSignal = options.signal;
+    return new Promise(resolve => { finishDownload = resolve; });
+  } });
+  await settle(); t.mock.timers.tick(80000);
+  assert.equal(synthesisSignal.aborted, false);
+  finishSynthesis(Response.json({ data: { audio_url: 'https://files.heygen.ai/generated/speech.wav' } }));
+  await settle(); assert.ok(finishDownload);
+  t.mock.timers.tick(25000);
+  assert.equal(synthesisSignal.aborted, false); assert.equal(downloadSignal.aborted, false);
+  assert.notEqual(downloadSignal, synthesisSignal);
+  finishDownload(new Response('audio', { headers: { 'content-type': 'audio/wav' } }));
+  assert.equal((await operation).buffer.toString(), 'audio');
+  t.mock.timers.tick(130000); assert.equal(downloadSignal.aborted, false);
+});
+
+for (const provider of ['fish_audio', 'heygen']) {
+  test(`${provider} reports a synthesis timeout at its deadline`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let signal;
+    const operation = synthesizeTTS({ provider, apiKey: 'fresh-key', text: '测试', fetchFn: async (_url, options) => {
+      signal = options.signal; return pendingFetch(signal);
+    } });
+    const rejected = assert.rejects(operation, err => err.status === 504 && err.code === 'VOICE_UPSTREAM_TIMEOUT' && /语音合成超时/.test(err.message));
+    await settle(); t.mock.timers.tick(VOICE_SYNTHESIS_TIMEOUT_MS[provider] - 1);
+    assert.equal(signal.aborted, false); t.mock.timers.tick(1); await rejected;
+  });
+}
+
+test('HeyGen download timeout remains active until the entire body is read', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let signal;
+  const operation = synthesizeTTS({ provider: 'heygen', apiKey: 'fresh-key', text: '测试', fetchFn: async (url, options) => {
+    if (url.includes('api.heygen.com')) return Response.json({ data: { audio_url: 'https://files.heygen.ai/generated/speech.wav' } });
+    signal = options.signal;
+    return new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new Uint8Array([1]));
+      signal.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+    } }), { headers: { 'content-type': 'audio/wav' } });
+  } });
+  const rejected = assert.rejects(operation, err => err.status === 504 && /音频下载超时/.test(err.message));
+  await settle(); assert.ok(signal);
+  t.mock.timers.tick(VOICE_DOWNLOAD_TIMEOUT_MS); await rejected;
+});
+
+test('both voice APIs explain credential, balance, rate limit, and network failures without echoing upstream secrets', async () => {
+  for (const provider of ['fish_audio', 'heygen']) {
+    for (const [status, hint] of [[401, /API Key/], [402, /额度/], [429, /繁忙/]]) {
+      await assert.rejects(synthesizeTTS({ provider, apiKey: 'fresh-key', text: '测试', fetchFn: async () => new Response('upstream-secret', { status }) }), err => {
+        assert.equal(err.status, 502); assert.match(err.message, hint); assert.equal(err.message.includes('upstream-secret'), false); return true;
+      });
+    }
+    await assert.rejects(synthesizeTTS({ provider, apiKey: 'fresh-key', text: '测试', fetchFn: async () => {
+      throw Object.assign(new Error('upstream-secret'), { code: 'ECONNRESET' });
+    } }), err => err.code === 'VOICE_UPSTREAM_FAILED' && /ECONNRESET/.test(err.message) && !err.message.includes('upstream-secret'));
+  }
 });
 
 test('Voice configuration endpoints and synthesis API security and flow', async () => {

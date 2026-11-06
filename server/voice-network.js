@@ -2,9 +2,10 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
+import WebSocket from 'ws';
 import { ApiError } from './security.js';
 
-const DEFAULT_ORIGINS = ['https://api.fish.audio', 'https://api.heygen.com', 'https://resource2.heygen.ai'];
+const DEFAULT_ORIGINS = ['https://api.fish.audio', 'https://api.heygen.com', 'https://resource2.heygen.ai', 'https://files.heygen.ai', 'https://tts-api.xfyun.cn'];
 export function voiceAllowedOrigins(extra = process.env.VOICE_ALLOWED_ORIGINS || '') {
   return new Set([...DEFAULT_ORIGINS, ...String(extra).split(',').map(value => value.trim()).filter(Boolean)].map(value => {
     const url = new URL(value);
@@ -16,6 +17,15 @@ export function assertVoiceUrl(value, allowed = voiceAllowedOrigins()) {
   let url;
   try { url = new URL(value); } catch { throw new ApiError(400, '语音 API 地址无效', 'VOICE_TARGET_FORBIDDEN'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.hash || !allowed.has(url.origin)) throw new ApiError(400, '语音目标必须为部署管理员允许的 HTTPS 来源', 'VOICE_TARGET_FORBIDDEN');
+  return url;
+}
+
+export function assertVoiceWebSocketUrl(value, allowed = voiceAllowedOrigins()) {
+  let url;
+  try { url = new URL(value); } catch { throw new ApiError(400, '语音 WebSocket 地址无效', 'VOICE_TARGET_FORBIDDEN'); }
+  if (url.protocol !== 'wss:') throw new ApiError(400, '语音 WebSocket 必须使用 WSS', 'VOICE_TARGET_FORBIDDEN');
+  const httpsUrl = new URL(url.href); httpsUrl.protocol = 'https:';
+  assertVoiceUrl(httpsUrl.href, allowed);
   return url;
 }
 export function isPublicAddress(address) {
@@ -34,7 +44,8 @@ export function isPublicAddress(address) {
 export async function resolveVoiceTarget(url, resolve = lookup) {
   const addresses = await resolve(url.hostname, { all: true, verbatim: true });
   if (!addresses.length || addresses.some(row => !isPublicAddress(row.address))) throw new ApiError(400, '语音目标不能解析到内网或保留地址', 'VOICE_TARGET_FORBIDDEN');
-  return addresses[0];
+  // Many deployments have IPv6 DNS records but only IPv4 outbound routing.
+  return addresses.find(row => row.family === 4) || addresses[0];
 }
 
 async function abortableLookup(url, resolve, signal) {
@@ -50,6 +61,22 @@ async function abortableLookup(url, resolve, signal) {
       })
     ]);
   } finally { signal.removeEventListener('abort', abort); }
+}
+
+export function createVoiceWebSocket({ socketFn, allowed = voiceAllowedOrigins(), resolve = lookup, WebSocketClass = WebSocket } = {}) {
+  return async (value, options = {}) => {
+    const url = assertVoiceWebSocketUrl(value, allowed);
+    options.signal?.throwIfAborted();
+    if (socketFn) return socketFn(url.href, options);
+    const address = await abortableLookup(url, resolve, options.signal);
+    options.signal?.throwIfAborted();
+    return new WebSocketClass(url, {
+      headers: options.headers, signal: options.signal, agent: false,
+      followRedirects: false, perMessageDeflate: false, maxPayload: 1024 * 1024,
+      lookup: (_hostname, lookupOptions, callback) => callback(null,
+        lookupOptions.all ? [address] : address.address, address.family)
+    });
+  };
 }
 
 export function createVoiceFetch({ fetchFn, allowed = voiceAllowedOrigins(), resolve = lookup, requestFn = httpsRequest } = {}) {

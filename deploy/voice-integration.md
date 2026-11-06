@@ -4,11 +4,31 @@
 
 ## 合成服务
 
+### 讯飞在线语音合成
+
+管理网页新增“讯飞在线语音”，默认使用普通话“小燕” `x4_xiaoyan`。可选择小露 `x4_yezi`、许久 `aisjiuxu`、小婧 `aisjinger`、许小宝 `aisbabyxu`；具体发音人需要在所用应用的讯飞控制台开通。
+
+按照[讯飞官方在线语音合成文档](https://www.xfyun.cn/doc/tts/online_tts/API.html)，接入采用 `wss://tts-api.xfyun.cn/v2/tts` 和鉴权方式一：将控制台“鉴权信息”中的 APIPassword（`ak-…`）放入 WebSocket 握手 `x-api-key` 请求头。APPID 放在请求的 `common.app_id`。另一组 APPID/APIKey/APISecret 用于鉴权方式二的 HMAC 签名，本接入使用 APIPassword。
+
+更新代码后，在服务器 `.env` 配置 `XFYUN_APP_ID` 和 `XFYUN_API_PASSWORD`，重建 API 与 Web 容器。也可由店主在管理网页填写 APPID 和 APIPassword 并保存到门店配置。网页只返回密钥是否存在，不返回密码。填写的门店密钥优先于服务器环境密钥；清空门店密钥不会删除服务器环境密钥，停用服务器默认密钥需要修改 `.env` 并重新创建 API 容器。
+
+店主选择“讯飞在线语音”后可以先试听，成功后启用播报并保存。合成使用 UTF-8 文本、`aue: lame`、`sfl: 1`，将分段 base64 MP3 拼接后返回给网页播放。合成期限为 60 秒，音频上限为 8 MiB；连接仅允许已批准的 WSS 来源，DNS 固定到验证通过的公网地址，保持证书校验并拒绝重定向。超时、上游异常或提前关闭都会终止连接。此次接入不需要新增数据库迁移。
+
+新依赖 `ws` 位于服务器工作区的生产依赖中，部署时需要同步更新 `server/package.json` 和根目录 `package-lock.json`。不要将真实凭据或本地私密 `.env.*` 文件打包进源码更新包。
+
+### Fish Audio 与 HeyGen
+
 前端不再提供内置 API Key，任何角色的配置响应都不返回密钥。历史公开的两枚密钥已由服务器按 SHA-256 指纹拒绝使用；部署负责人仍须到对应供应商后台撤销旧密钥、检查用量并生成新密钥，再由店主在语音设置页保存。删除源代码不能撤销供应商的凭据，旧 Git 历史或缓存中的凭据应视为已泄漏。
 
-默认允许 `https://api.fish.audio`、`https://api.heygen.com`、`https://resource2.heygen.ai`。自定义接口或供应商新增音频域名必须由部署管理员设置 `VOICE_ALLOWED_ORIGINS`，填写逗号分隔的完整 HTTPS 来源，例如 `https://voice.example.com`。不填写路径、查询参数、IP 地址或通配符。API 和 HeyGen 音频下载共用此规则，解析到内网/保留地址、混合内外网 DNS 或重定向均被拒绝，实际连接固定到已验证地址并继续验证原域名证书。
+默认允许 `https://api.fish.audio`、`https://api.heygen.com`、`https://resource2.heygen.ai`、`https://files.heygen.ai`（HeyGen 官方 TTS 文档使用的音频来源）。自定义接口或供应商新增音频域名必须由部署管理员设置 `VOICE_ALLOWED_ORIGINS`，填写逗号分隔的完整 HTTPS 来源，例如 `https://voice.example.com`。不填写路径、查询参数、IP 地址或通配符。API 和 HeyGen 音频下载共用此规则，解析到内网/保留地址、混合内外网 DNS 或重定向均被拒绝，实际连接优先选择已验证的 IPv4 地址（只有 IPv6 时使用 IPv6），并继续验证原域名证书。
 
-合成不持有数据库事务；每个 API 进程最多 4 个并行请求，满载返回 429。音频上限 8 MiB，HeyGen JSON 上限 64 KiB，上游错误正文上限 8 KiB。Fish Audio 超时 20 秒，HeyGen 合成及下载共用 25 秒期限。只有店主的 `test: true` 可以试听未启用的草稿配置。
+合成不持有数据库事务；每个 API 进程最多 4 个并行请求，满载返回 429。音频上限 8 MiB，HeyGen JSON 上限 64 KiB，上游错误正文上限 8 KiB。Fish Audio 合成期限为 60 秒；HeyGen 合成期限为 90 秒，返回地址后的音频下载使用独立的 30 秒期限；管理网页等待期限为 130 秒，覆盖两个阶段和代理开销。超时提示区分合成和下载；401/403 提示密钥问题、402 提示额度、429 提示限流或免费模型繁忙。只有店主的 `test: true` 可以试听未启用的草稿配置。
+
+切换服务商时重置接口、模型、音色和输入中的密钥。服务端也不会将已保存的另一家密钥沿用到新服务商；首次切换需要输入当前服务商的 API Key。此次试听修复需同时更新 API 与 PC 管理网页，无额外数据库迁移。
+
+HeyGen [官方 TTS 文档](https://developers.heygen.com/docs/voices/heygen-voice-speech)说明 Turbo Free 的响应时间和服务可用性不保证。调整期限仍无法解决服务器无法访问外网的问题；若继续超时，在 API 容器内分别检查两个 API 来源和 HeyGen 音频来源的 DNS、HTTPS 连通性，并确认容器已接入 `voice_egress` 网络。不要通过关闭证书校验处理连接问题。
+
+可运行 `docker compose exec -T api node server/check-voice-network.js` 检查生产容器出站；IP HTTPS 部署需加 `-f compose.yaml -f deploy/compose.ip.yaml`。本机运行 `npm run server:check-voice`。检查不携带密钥或播报文本，API 返回 401 是未登录的预期结果，只证明 DNS/TLS/HTTP 可达，不能证明密钥有效或合成成功。
 
 ## 天猫精灵签名网关
 
@@ -16,7 +36,7 @@
 
 平台测试未提供业务标识或使用未绑定虚拟设备时，欢迎请求在验证凭据及门店已启用后仅返回固定引导语，不读取账本、不保存待办或回执。完整且已绑定的欢迎请求沿用原有会话重置与回执流程。确认、取消不会被当成欢迎请求；查询、充值、扣款仍须提供下述稳定标识并通过真实设备白名单。`*` 是普通字符串，当前不表示通配设备。
 
-平台[官方请求协议](https://www.aligenie.com/doc/20255408/mxi8t9)明确说明，网页在线测试的 `requestData` 和 `device` 不携带用户、设备标识；创建意图、开启权限或填写 `*` 不会补齐这些字段。网页测试可验证欢迎语和意图/参数识别，真实账本操作须使用已绑定音箱真机测试。经 `x-aligenie-token` 验证的请求缺少业务标识或设备未绑定时，接口返回 HTTP 200 的技能响应，`returnCode: "0"`、`executeCode: "PARAMS_ERROR"`，播报具体原因；`msgInfo` 携带错误码及缺少的字段或待绑定设备标识。不读取或修改账本。无效凭据以及内部签名 API 的 HTTP 400/401 行为仍保留。
+平台[官方请求协议](https://www.aligenie.com/doc/20255408/mxi8t9)明确说明，网页在线测试的 `requestData` 和 `device` 不携带用户、设备标识；创建意图、开启权限或填写 `*` 不会补齐这些字段。网页测试可验证欢迎语和意图/参数识别，真实账本操作须使用已绑定音箱真机测试。经 `x-aligenie-token` 验证的请求缺少业务标识或设备未绑定时，接口返回 HTTP 200 的技能响应，`returnCode: "0"`、`executeCode: "SUCCESS"`，正常播报具体原因；`msgInfo` 携带业务拒绝码及缺少的字段或待绑定设备标识。这里的 SUCCESS 表示解释性对话响应成功，不代表查询或记账成功，不读取或修改账本。按[官方响应协议](https://www.aligenie.com/doc/20255408/ehac4c)，此类限制应通过正常回复解释；使用 PARAMS_ERROR 等错误执行码会使平台显示“服务开小差”等兜底回复并掩盖原提示。无效凭据以及内部签名 API 的 HTTP 400/401 行为仍保留。
 
 旧的缺省门店选择及无凭据请求已停用，历史配置默认关闭。店主在 PC 的语音设置页选择在用店主/收银员作为记账账号，填写设备白名单，生成并保存新的随机签名密钥。不要复用历史 webhook token。签名密钥只存放于 API、平台服务配置和受控网关；不得嵌入网页或设备端，也不得部署无鉴权的公网转签名代理。
 

@@ -355,13 +355,16 @@ export function formatAliGeniePlatformError(error, body) {
     detail.missingFields = error.missingFields || [];
     if (detail.missingFields.length === 2 && detail.missingFields.includes('userOpenId') && detail.missingFields.includes('deviceOpenId')) {
       const recognized = [req.slots.member && `会员${req.slots.member.slice(0, 80)}`,
+        req.slots.service && `服务${req.slots.service.slice(0, 80)}`,
         req.slots.amount && `金额${req.slots.amount.slice(0, 40)}`].filter(Boolean).join('、');
       text = `平台在线测试${recognized ? `已识别${recognized}。` : '已收到您的指令。'}网页在线测试不提供用户和设备标识，不能执行真实记账。请使用已绑定门店的天猫精灵音箱进行真机测试。`;
     } else {
       text = '本次请求缺少或包含无效的记账标识，请检查后端接入配置后重试。';
     }
   }
-  return formatAliGenieResponse({ text, executeCode: 'PARAMS_ERROR', msgInfo: JSON.stringify(detail) });
+  // AliGenie replaces error executeCodes with its generic service-error reply.
+  // Deliver this explanation as a normal dialog response; accounting stays rejected.
+  return formatAliGenieResponse({ text, msgInfo: JSON.stringify(detail) });
 }
 
 export function makeConfirmDirective() {

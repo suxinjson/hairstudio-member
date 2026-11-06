@@ -55,6 +55,8 @@ services:
       TRUSTED_PROXY_IPS: ${MEMBER_PROXY_IP:-172.30.184.10}
       ALLOWED_ORIGINS: https://localhost,https://${PUBLIC_DOMAIN:?请设置公网域名}
       VOICE_ALLOWED_ORIGINS: ${VOICE_ALLOWED_ORIGINS:-}
+      XFYUN_APP_ID: ${XFYUN_APP_ID:-}
+      XFYUN_API_PASSWORD: ${XFYUN_API_PASSWORD:-}
       RELEASE_DIRECTORY: /app/releases
       RELEASE_CERT_SHA256: ${RELEASE_CERT_SHA256:-}
     depends_on:

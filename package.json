@@ -17,6 +17,7 @@
     "admin:dev": "npm --workspace=admin run dev",
     "admin:build": "npm --workspace=admin run build",
     "server": "node server/main.js",
+    "server:check-voice": "node server/check-voice-network.js",
     "server:migrate": "node server/migrate.js",
     "server:create-owner": "node server/create-owner.js",
     "server:publish": "node server/publish-release.js"

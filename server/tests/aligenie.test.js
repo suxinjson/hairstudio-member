@@ -74,7 +74,8 @@ test('platform Header welcomes and business validation replies use the skill pro
     ]) {
       const res = await post(body), result = await res.json();
       assert.equal(res.status, 200, JSON.stringify(body));
-      assert.equal(result.returnValue.executeCode, 'PARAMS_ERROR');
+      assert.equal(result.returnValue.executeCode, 'SUCCESS');
+      assert.equal(result.returnResult.executeCode, 'SUCCESS');
       assert.match(result.returnValue.msgInfo, /VOICE_IDENTIFIERS_REQUIRED/);
       assert.match(result.returnValue.reply, /标识/);
     }
@@ -86,15 +87,17 @@ test('platform Header welcomes and business validation replies use the skill pro
       skillSession: { skillSessionId: 'skill-session', newSession: false },
       slotEntities: [
         { intentParameterName: 'memberQuery', standardValue: '张三' },
+        { intentParameterName: 'service', standardValue: '洗剪吹' },
         { intentParameterName: 'amount', standardValue: '38元' }
       ]
     };
-    assert.deepEqual(parseAliGenieRequest(platformBody).slots, { member: '张三', amount: '38元' });
+    assert.deepEqual(parseAliGenieRequest(platformBody).slots, { member: '张三', service: '洗剪吹', amount: '38元' });
     const platformRes = await post(platformBody), platformResult = await platformRes.json();
     assert.equal(platformRes.status, 200);
     assert.equal(platformResult.returnCode, '0');
-    assert.equal(platformResult.returnValue.executeCode, 'PARAMS_ERROR');
-    assert.match(platformResult.returnValue.reply, /在线测试.*已识别会员张三.*38元.*用户和设备标识.*已绑定.*音箱/);
+    assert.equal(platformResult.returnValue.executeCode, 'SUCCESS');
+    assert.equal(platformResult.returnResult.executeCode, 'SUCCESS');
+    assert.match(platformResult.returnValue.reply, /在线测试.*已识别会员张三.*服务洗剪吹.*38元.*用户和设备标识.*已绑定.*音箱/);
     assert.equal(platformResult.response.shouldEndSession, true);
     assert.equal(platformResult.response.directives, undefined);
     const detail = JSON.parse(platformResult.returnValue.msgInfo);
@@ -112,7 +115,8 @@ test('platform Header welcomes and business validation replies use the skill pro
       };
       const res = await post(body), result = await res.json();
       assert.equal(res.status, 200);
-      assert.equal(result.returnValue.executeCode, 'PARAMS_ERROR');
+      assert.equal(result.returnValue.executeCode, 'SUCCESS');
+      assert.equal(result.returnResult.executeCode, 'SUCCESS');
       assert.match(result.returnValue.reply, /设备.*未绑定/);
       assert.equal(JSON.parse(result.returnValue.msgInfo).code, 'VOICE_DEVICE_UNBOUND');
       const timestamp = String(Date.now());

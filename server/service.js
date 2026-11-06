@@ -35,7 +35,7 @@ function validateImportReceipt(value, operations) {
 let activeSynthesis = 0;
 const MAX_SYNTHESIS = 4;
 
-export function createService(pool, { fetchFn } = {}) {
+export function createService(pool, { fetchFn, socketFn } = {}) {
   async function importReceipts(client, user, signature) {
     return (await client.query("SELECT request_hash,result FROM operations WHERE store_id=$1 AND method='admin_import_batch' AND id LIKE $2 ORDER BY (result->>'batchIndex')::int", [user.store_id, 'IMPORT-' + signature + '-%'])).rows;
   }
@@ -407,7 +407,7 @@ export function createService(pool, { fetchFn } = {}) {
           return ownerTest ? sanitizeVoiceConfig(options, saved) : saved;
         });
         // No database connection or account/session lock is held during network IO.
-        return await synthesizeTTS({ ...config, text: options.text, fetchFn });
+        return await synthesizeTTS({ ...config, text: options.text, fetchFn, socketFn });
       } finally { activeSynthesis--; }
     },
     async handleAliGenieWebhook(body, { headers = {} } = {}) {

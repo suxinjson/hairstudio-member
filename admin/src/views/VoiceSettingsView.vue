@@ -8,7 +8,7 @@
         </div>
         <div>
           <h2 class="text-lg font-black text-slate-900">语音播报服务配置</h2>
-          <p class="text-xs text-slate-400 mt-0.5">支持 Fish Audio 与 HeyGen 双引擎，收银结算与会员充值自动语音到账提示</p>
+          <p class="text-xs text-slate-400 mt-0.5">支持讯飞、Fish Audio 与 HeyGen，收银结算与会员充值自动语音到账提示</p>
         </div>
       </div>
 
@@ -54,10 +54,19 @@
         <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
           <span>1. 选择 TTS 语音合成服务引擎</span>
         </h3>
-        <span class="text-[11px] text-slate-400 font-medium">支持两套完全不同的 API 规范与返回流</span>
+        <span class="text-[11px] text-slate-400 font-medium">国内服务器推荐选择讯飞</span>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <button type="button" @click="selectProvider('xfyun')" :disabled="!isOwner"
+          class="p-4 rounded-xl border-2 transition text-left disabled:opacity-60"
+          :class="form.provider === 'xfyun' ? 'border-emerald-600 bg-emerald-50/40 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-black text-slate-900">讯飞在线语音</span>
+            <span v-if="form.provider === 'xfyun'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前生效</span>
+          </div>
+          <p class="text-xs text-slate-500 leading-relaxed">中文收银播报，支持小燕等基础发音人；免费服务量以讯飞控制台为准。</p>
+        </button>
         <!-- Fish Audio 卡片 -->
         <div
           @click="selectProvider('fish_audio')"
@@ -106,7 +115,7 @@
     <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
       <div class="flex items-center justify-between">
         <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
-          <span>2. {{ form.provider === 'fish_audio' ? 'Fish Audio' : 'HeyGen' }} 接口参数设置</span>
+          <span>2. {{ providerName }} 接口参数设置</span>
         </h3>
 
       </div>
@@ -138,8 +147,8 @@
         <div class="space-y-1.5">
           <div class="flex items-center justify-between">
             <label class="text-xs font-bold text-slate-700">
-              API Key 凭据
-              <span v-if="hasSavedKey" class="ml-1 text-[10px] text-emerald-700 font-bold bg-emerald-100 px-1.5 py-0.5 rounded">云端已配置</span>
+              {{ form.provider === 'xfyun' ? 'APIPassword（鉴权信息）' : 'API Key 凭据' }}
+              <span v-if="hasCurrentProviderKey" class="ml-1 text-[10px] text-emerald-700 font-bold bg-emerald-100 px-1.5 py-0.5 rounded">云端已配置</span>
             </label>
             <button
               type="button"
@@ -154,17 +163,17 @@
               v-model="form.apiKey"
               :disabled="!isOwner"
               :type="showKey ? 'text' : 'password'"
-              :placeholder="hasSavedKey ? '云端已配置 (留空表示不修改)' : (form.provider === 'fish_audio' ? 'sk-fish-...' : 'sk_V2_...')"
+              :placeholder="hasCurrentProviderKey ? '云端已配置 (留空表示不修改)' : (form.provider === 'xfyun' ? '填写鉴权信息中的 ak-… 密钥' : '请输入当前服务商的 API Key')"
               class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
             />
           </div>
           <p class="text-[10px] text-slate-400">
-            {{ form.provider === 'fish_audio' ? '通过 Authorization: Bearer 鉴权' : '通过 X-Api-Key 请求头鉴权' }}
+            {{ form.provider === 'xfyun' ? '使用控制台“鉴权信息”中的 APIPassword；留空可使用服务器配置。' : (form.provider === 'fish_audio' ? '通过 Authorization: Bearer 鉴权' : '通过 X-Api-Key 请求头鉴权') }}
           </p>
         </div>
 
         <!-- Model 模型名称 -->
-        <div class="space-y-1.5">
+        <div v-if="form.provider !== 'xfyun'" class="space-y-1.5">
           <div class="flex items-center justify-between">
             <label class="text-xs font-bold text-slate-700">模型标识 (Model)</label>
             <button
@@ -187,12 +196,18 @@
             {{ form.provider === 'fish_audio' ? '在 HTTP 请求头 model 中传递' : '在 JSON 请求体 model 中传递' }}
           </p>
         </div>
+        <div v-else class="space-y-1.5">
+          <label class="text-xs font-bold text-slate-700">讯飞 APPID</label>
+          <input v-model="form.appId" :disabled="!isOwner" type="text" placeholder="控制台的 APPID"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60" />
+          <p class="text-[10px] text-slate-400">使用已开通在线语音合成的应用。</p>
+        </div>
 
         <!-- Voice ID / Reference ID -->
         <div class="md:col-span-2 space-y-1.5">
           <div class="flex items-center justify-between">
             <label class="text-xs font-bold text-slate-700">
-              {{ form.provider === 'fish_audio' ? '参考音色 ID (reference_id)' : '音色 ID (voice_id)' }}
+              {{ form.provider === 'xfyun' ? '讯飞发音人 (vcn)' : (form.provider === 'fish_audio' ? '参考音色 ID (reference_id)' : '音色 ID (voice_id)') }}
             </label>
             <button
               v-if="isOwner"
@@ -203,7 +218,15 @@
               恢复默认
             </button>
           </div>
-          <input
+          <select v-if="form.provider === 'xfyun'" v-model="form.voiceId" :disabled="!isOwner"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-emerald-600 disabled:opacity-60">
+            <option value="x4_xiaoyan">讯飞小燕 · 普通话</option>
+            <option value="x4_yezi">讯飞小露 · 普通话</option>
+            <option value="aisjiuxu">讯飞许久 · 普通话</option>
+            <option value="aisjinger">讯飞小婧 · 普通话</option>
+            <option value="aisbabyxu">讯飞许小宝 · 普通话</option>
+          </select>
+          <input v-else
             v-model="form.voiceId"
             :disabled="!isOwner"
             type="text"
@@ -401,6 +424,7 @@ import { adminApi } from '../api/client.js';
 import { voicePlayer } from '../utils/voice-player.js';
 
 const DEFAULTS = {
+  xfyun: { apiUrl: 'wss://tts-api.xfyun.cn/v2/tts', model: '', voiceId: 'x4_xiaoyan', appId: '' },
   fish_audio: {
     apiUrl: 'https://api.fish.audio/v1/tts',
     model: 's2.1-pro-free',
@@ -420,6 +444,7 @@ const form = reactive({
   provider: 'fish_audio',
   apiUrl: '',
   apiKey: '',
+  appId: '',
   model: '',
   voiceId: '',
   volume: 1.0,
@@ -441,6 +466,11 @@ function generateSigningSecret() {
 }
 
 const hasSavedKey = ref(false);
+const savedKeyProvider = ref('');
+const serverXfyunConfigured = ref(false);
+const serverXfyunAppId = ref('');
+const hasCurrentProviderKey = computed(() => (hasSavedKey.value && savedKeyProvider.value === form.provider) || (form.provider === 'xfyun' && serverXfyunConfigured.value));
+const providerName = computed(() => ({ fish_audio: 'Fish Audio', heygen: 'HeyGen', xfyun: '讯飞' }[form.provider]));
 const showKey = ref(false);
 const testText = ref('欢迎光临梦飞空间，张三消费 50 元，卡内余额 200 元');
 const testStatus = ref('idle');
@@ -471,14 +501,9 @@ function showTip(text, type = 'success') {
 }
 
 function selectProvider(provider) {
-  if (!isOwner.value) return;
+  if (!isOwner.value || provider === form.provider) return;
   form.provider = provider;
-  if (!form.model || form.model === DEFAULTS[provider === 'fish_audio' ? 'heygen' : 'fish_audio'].model) {
-    form.model = DEFAULTS[provider].model;
-  }
-  if (!form.voiceId || form.voiceId === DEFAULTS[provider === 'fish_audio' ? 'heygen' : 'fish_audio'].voiceId) {
-    form.voiceId = DEFAULTS[provider].voiceId;
-  }
+  Object.assign(form, DEFAULTS[provider], { apiKey: '', appId: provider === 'xfyun' ? serverXfyunAppId.value : '' });
 }
 
 function toggleEnabled() {
@@ -512,6 +537,9 @@ async function loadConfig() {
     form.provider = data.provider || 'fish_audio';
     form.apiUrl = data.apiUrl || '';
     form.apiKey = '';
+    form.appId = data.appId || '';
+    serverXfyunAppId.value = data.appId || '';
+    serverXfyunConfigured.value = Boolean(data.serverXfyunConfigured);
     form.model = data.model || DEFAULTS[form.provider].model;
     form.voiceId = data.voiceId || DEFAULTS[form.provider].voiceId;
     form.volume = typeof data.volume === 'number' ? data.volume : 1.0;
@@ -520,6 +548,7 @@ async function loadConfig() {
       form.templates.recharge = data.templates.recharge || '{name} 充值 {amount} 元，卡内余额 {balance} 元';
     }
     hasSavedKey.value = Boolean(data.hasApiKey);
+    savedKeyProvider.value = form.provider;
     ali.enabled = Boolean(data.aligenie?.enabled); ali.actorId = data.aligenie?.actorId || '';
     ali.token = ''; generatedSecret.value = ''; aliHasToken.value = Boolean(data.aligenie?.hasToken);
     aliDevices.value = (data.aligenie?.allowedDevices || []).join('\n');
@@ -537,9 +566,13 @@ async function handleTestPlay() {
     return;
   }
 
-  if (isOwner.value && !form.apiKey.trim() && !hasSavedKey.value) {
-    showTestTip('未检测到 API Key，请先在上方输入 API Key 后再试听', 'error');
+  if (isOwner.value && !form.apiKey.trim() && !hasCurrentProviderKey.value) {
+    showTestTip(form.provider === 'xfyun' ? '请先配置讯飞 APIPassword 后再试听' : '请先输入当前服务商的 API Key 后再试听', 'error');
     return;
+  }
+
+  if (isOwner.value && form.provider === 'xfyun' && !form.appId.trim()) {
+    showTestTip('请先填写讯飞 APPID 后再试听', 'error'); return;
   }
 
   if (!isOwner.value && !form.enabled) {
@@ -563,6 +596,7 @@ async function handleTestPlay() {
         provider: form.provider,
         apiUrl: form.apiUrl || defaultUrl.value,
         apiKey: form.apiKey,
+        appId: form.appId,
         model: form.model || defaultModel.value,
         voiceId: form.voiceId || defaultVoiceId.value
       } : null,
@@ -595,6 +629,7 @@ async function handleSave() {
       provider: form.provider,
       apiUrl: form.apiUrl.trim(),
       apiKey: form.apiKey.trim(),
+      appId: form.appId.trim(),
       model: form.model.trim(),
       voiceId: form.voiceId.trim(),
       volume: form.volume,
@@ -607,6 +642,9 @@ async function handleSave() {
 
     const result = await adminApi.saveVoiceConfig(payload);
     hasSavedKey.value = Boolean(result.hasApiKey);
+    serverXfyunConfigured.value = Boolean(result.serverXfyunConfigured);
+    serverXfyunAppId.value = result.appId || form.appId;
+    savedKeyProvider.value = result.provider || form.provider;
     form.apiKey = ''; ali.token = ''; generatedSecret.value = ''; aliHasToken.value = Boolean(result.aligenie?.hasToken);
     voicePlayer.invalidateConfig();
     showTip('语音播报配置已成功保存！', 'success');
