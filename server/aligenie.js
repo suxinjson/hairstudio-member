@@ -272,6 +272,13 @@ export function formatAliGenieResponse({
     returnCode: '0',
     returnErrorSolution: '',
     returnMessage: '',
+    resultType,
+    returnResult: {
+      reply: cleanText,
+      resultType,
+      executeCode: 'SUCCESS',
+      msgInfo: ''
+    },
     returnValue: {
       reply: cleanText,
       resultType,
