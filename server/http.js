@@ -144,7 +144,8 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       }
       if (request.method === 'GET' && /^\/api\/v1\/imports\/[a-f0-9]{64}$/.test(path)) return send(200, await service.importStatus(identity, path.split('/').at(-1)));
       if (route === 'POST /api/v1/sync/resolve') {
-        return send(200, await service.resolveOperations(identity, (await body(request, DATA_LIMITS.syncBytes)).operations));
+        const input = await body(request, DATA_LIMITS.restoreBytes);
+        return send(200, await service.resolveOperations(identity, input.operations, input.bootstrap ?? null));
       }
       if (route === 'GET /api/v1/users') return send(200, await service.users(identity));
       if (route === 'POST /api/v1/users') {

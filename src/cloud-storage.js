@@ -9,7 +9,11 @@ export function getCloudState(storage = globalThis.localStorage) {
   const state = JSON.parse(raw);
   if (!state || !Array.isArray(state.outbox) || !Array.isArray(state.activity) ||
       (state.binding && (typeof state.binding.storeId !== 'string' || !state.serverUrl || typeof state.deviceId !== 'string')) ||
-      (state.user && !['owner', 'clerk', 'viewer'].includes(state.user.role))) throw new Error('云端同步记录损坏，请保留本地账本并联系支持');
+      (state.user && !['owner', 'clerk', 'viewer'].includes(state.user.role)) ||
+      (state.cloudAdoption && (!Number.isSafeInteger(state.cloudAdoption.cursor) || state.cloudAdoption.cursor < 0 ||
+        state.cloudAdoption.cursor > state.outbox.length || typeof state.cloudAdoption.bootstrapResolved !== 'boolean' ||
+        typeof state.cloudAdoption.actorId !== 'string' || !Number.isSafeInteger(state.cloudAdoption.revision) ||
+        state.cloudAdoption.revision < 0 || !/^[a-f0-9]{64}$/.test(state.cloudAdoption.integrity || '')))) throw new Error('云端同步记录损坏，请保留本地账本并联系支持');
   return state;
 }
 
@@ -21,6 +25,7 @@ export function saveCloudState(state, storage = globalThis.localStorage) {
 export function installCloudRecording(onChange = () => {}, { allowLocal = () => true } = {}) {
   const stopRecording = configureCloudWrites((entries, mutation) => {
     const state = getCloudState();
+    if (state.cloudAdoption) throw new Error('正在核对并采用云端账本，请先在云端设置中完成核对');
     if (!state.binding) {
       if (state.user && !canWrite(state.user.role, mutation.method)) throw new Error('当前账号没有此操作权限');
       if (!allowLocal()) throw new Error('请先登录并完成云端账本加载与绑定，再进行记账');

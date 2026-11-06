@@ -360,6 +360,51 @@ test('consumption broadcasts only after confirmation and keeps its receipt when 
 });
 
 for (const type of ['consume', 'recharge']) {
+  for (const field of ['name', 'phone']) {
+    test(`${type} requires a new identity confirmation after the member ${field} changes`, async t => {
+      const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => true);
+      const member = localDb.createMember({ name: '张三', phone: '13800006003', initialBalance: 100 });
+      await mount();
+      if (type === 'consume') {
+        button('扣款').click(); await nextTick(); button('确认扣除').click(); await nextTick();
+      } else {
+        await openRecharge(); await inputValue('#recharge-pay', '10');
+        button('核对充值信息').click(); await nextTick();
+      }
+      const changed = { name: '李四', phone: '13900006003' };
+      localDb.updateMember(member.id, { [field]: changed[field] });
+      const before = localDb.getLedgers().length;
+      button(type === 'consume' ? '确认扣款' : '确认充值').click(); await nextTick();
+      assert.equal(localDb.getLedgers().length, before);
+      assert.equal(broadcast.mock.callCount(), 0);
+      assert.match(document.body.textContent, /会员资料已变化/);
+      const dialog = document.querySelector(type === 'consume' ? '.consume-confirm-dialog' : '.recharge-confirm-dialog');
+      assert.ok(dialog.textContent.replace(/\s/g, '').includes(changed[field]));
+      button(type === 'consume' ? '确认扣款' : '确认充值').click(); await nextTick();
+      assert.equal(localDb.getLedgers().length, before + 1);
+      const finalMember = localDb.getMemberById(member.id);
+      assert.equal(broadcast.mock.calls[0].arguments[1].name, finalMember.name);
+      if (type === 'recharge') assert.ok(document.body.textContent.includes(finalMember.name));
+    });
+  }
+  test(`${type} clears confirmation when the member is archived`, async t => {
+    const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => true);
+    const member = localDb.createMember({ name: '注销客户', phone: '13800006004', initialBalance: 100 });
+    await mount();
+    if (type === 'consume') {
+      button('扣款').click(); await nextTick(); button('确认扣除').click(); await nextTick();
+    } else {
+      await openRecharge(); await inputValue('#recharge-pay', '10');
+      button('核对充值信息').click(); await nextTick();
+    }
+    localDb.consume({ memberId: member.id, amount: 100 }); localDb.deleteMember(member.id);
+    const before = localDb.getLedgers().length;
+    button(type === 'consume' ? '确认扣款' : '确认充值').click(); await nextTick();
+    assert.equal(localDb.getLedgers().length, before);
+    assert.equal(broadcast.mock.callCount(), 0);
+    assert.equal(document.querySelector(type === 'consume' ? '.consume-confirm-dialog' : '.recharge-confirm-dialog'), null);
+    assert.match(document.body.textContent, /会员不存在或已注销/);
+  });
   test(`failed ${type} bookkeeping never broadcasts`, async t => {
     const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => true);
     const member = localDb.createMember({ name: '写入失败客户', phone: '13800006002', initialBalance: 100 });
@@ -378,6 +423,37 @@ for (const type of ['consume', 'recharge']) {
     assert.ok(document.body.textContent.includes('本机存储写入失败'));
   });
 }
+
+test('a member identity change resets debt approval before consumption can proceed', async t => {
+  t.mock.method(appVoicePlayer, 'broadcast', async () => true);
+  const member = localDb.createMember({ name: '旧欠款客户', phone: '13800006005', initialBalance: 20 });
+  await mount(); button('扣款').click(); await nextTick(); button('核对欠款').click(); await nextTick();
+  const checkbox = document.querySelector('.consume-confirm-dialog input[type="checkbox"]');
+  checkbox.checked = true; checkbox.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+  localDb.updateMember(member.id, { name: '新欠款客户' });
+  button('确认并记欠款').click(); await nextTick();
+  assert.equal(localDb.getMemberById(member.id).balance, 2000);
+  assert.equal(document.querySelector('.consume-confirm-dialog input[type="checkbox"]').checked, false);
+  assert.equal(button('确认并记欠款').disabled, true);
+  assert.match(document.querySelector('.consume-confirm-dialog').textContent, /新欠款客户/);
+});
+
+test('pending cloud adoption disables accounting controls and exposes a continuation action', async t => {
+  localDb.createMember({ name: '核对客户', phone: '13800006006', initialBalance: 100 });
+  const state = { ...getCloudState(), serverUrl: 'https://localhost', binding: { storeId: 'store-A' },
+    deviceId: 'device-test-123456', user: { id: 'owner-A', storeId: 'store-A', role: 'owner', displayName: '店主' },
+    status: 'conflict', online: true, cloudAdoption: { cursor: 0, bootstrapResolved: true,
+      actorId: 'owner-A', revision: 1, integrity: 'a'.repeat(64) } };
+  t.mock.method(cloudClient, 'start', async () => () => {});
+  t.mock.method(cloudClient, 'sync', async () => {});
+  t.mock.method(cloudClient, 'snapshot', () => state);
+  t.mock.method(cloudClient, 'subscribe', listener => { listener(state); return () => {}; });
+  await mount(); assert.equal(button('扣款').disabled, true);
+  await settings('account');
+  assert.equal(button('继续核对并采用云端账本').disabled, false);
+  assert.equal(button('立即同步').disabled, true);
+  assert.equal(button('解除云端绑定').disabled, true);
+});
 
 test('App cancels speech on account changes and unmount while routine sync updates keep playing', async t => {
   const state = { ...getCloudState(), serverUrl: 'https://member.example.com', deviceId: 'device-00000000001',

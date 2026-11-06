@@ -180,7 +180,8 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
         const hash = integrity({ method: 'bootstrap', data });
         const { rows: [existing] } = await client.query('SELECT * FROM operations WHERE store_id=$1 AND id=$2', [user.store_id, request.id]);
-        if (existing && existing.request_hash !== hash) throw new ApiError(409, '同一同步单号对应不同数据', 'SYNC_CONFLICT');
+        if (existing && (existing.request_hash !== hash || existing.user_id !== user.id || existing.device_id !== user.device_id)) throw new ApiError(409, '同一同步单号对应不同数据或设备', 'SYNC_CONFLICT');
+        if (existing?.result?.cancelled === true) throw new ApiError(409, '此初始迁移已取消，请重新核对账本', 'OPERATION_CANCELLED');
         if (!existing) {
           if (account.revision !== 0 || account.data.members.length || account.data.ledgers.length) throw new ApiError(409, '云端已有账本，不能再次初始化', 'SYNC_CONFLICT');
           await client.query('UPDATE accounts SET data=$1,revision=1,integrity=$2 WHERE store_id=$3', [data, integrity(data), user.store_id]);
@@ -269,12 +270,20 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         return { data, revision, integrity: checksum, acknowledged: operations.map(op => op.id), ...(receipt ? { importReceipt: receipt } : {}) };
       });
     },
-    async resolveOperations(identity, operations) {
-      if (!Array.isArray(operations) || !operations.length || operations.length > 100 ||
+    async resolveOperations(identity, operations, bootstrap = null) {
+      if (!Array.isArray(operations) || (!operations.length && !bootstrap) || operations.length > 100 ||
+          (bootstrap && operations.length) ||
+          (operations.some(op => op?.method === 'importBackupData') && operations.length !== 1) ||
           new Set(operations.map(op => op?.id)).size !== operations.length) throw new ApiError(400, '待确认操作格式无效');
+      let bootstrapData;
       try {
-        assertJsonBudget(operations, DATA_LIMITS.syncBytes);
+        assertJsonBudget(operations, operations.some(op => op?.method === 'importBackupData') ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes, DATA_LIMITS.backupBytes);
         operations.forEach(validateOperation);
+        if (bootstrap) {
+          assertJsonBudget(bootstrap, DATA_LIMITS.restoreBytes);
+          if (typeof bootstrap.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(bootstrap.id)) throw new Error('同步单号无效');
+          bootstrapData = validateSnapshot(bootstrap.data);
+        }
       } catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
@@ -282,11 +291,12 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
         if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败', 'INTEGRITY_FAILED');
         const resolved = [];
-        for (const operation of operations) {
+        const requests = bootstrap ? [{ id: bootstrap.id, method: 'bootstrap', actorId: user.id, deviceId: user.device_id }] : operations;
+        for (const operation of requests) {
           if (operation.actorId !== user.id || operation.deviceId !== user.device_id) throw new ApiError(403, '操作账号或设备不匹配', 'FORBIDDEN');
-          const hash = integrity(operation);
+          const hash = bootstrap ? integrity({ method: 'bootstrap', data: bootstrapData }) : integrity(operation);
           const { rows: [existing] } = await client.query('SELECT * FROM operations WHERE store_id=$1 AND id=$2', [user.store_id, operation.id]);
-          if (existing && (existing.request_hash !== hash || existing.user_id !== user.id)) throw new ApiError(409, '同一同步单号对应不同操作', 'SYNC_CONFLICT');
+          if (existing && (existing.request_hash !== hash || existing.user_id !== user.id || existing.device_id !== user.device_id)) throw new ApiError(409, '同一同步单号对应不同操作或设备', 'SYNC_CONFLICT');
           if (!existing) {
             await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
               [user.store_id, operation.id, user.id, user.device_id, operation.method, hash, { cancelled: true }, account.revision]);

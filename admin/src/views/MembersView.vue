@@ -444,6 +444,12 @@ const rechargeGiftStr = ref('');
 const rechargeRemark = ref('');
 const isSubmitting = ref(false);
 
+watch(() => props.members, members => {
+  if (rechargingMember.value) {
+    rechargingMember.value = members.find(member => member.id === rechargingMember.value.id && !member.isArchived) || null;
+  }
+});
+
 function openRechargeModal(member) {
   rechargingMember.value = member;
   rechargeAmountStr.value = '';
@@ -459,12 +465,7 @@ async function submitRecharge() {
 
   isSubmitting.value = true;
   try {
-    const memberName = rechargingMember.value.name;
-    const balanceBefore = Number(rechargingMember.value.balance || 0);
-    const addedCents = moneyToCent(amt) + moneyToCent(giftAmt);
-    const balanceAfter = formatYuan(balanceBefore + addedCents);
-
-    await submitOperation('recharge', [{
+    const response = await submitOperation('recharge', [{
       memberId: rechargingMember.value.id,
       actualPay: amt,
       giftAmount: giftAmt,
@@ -472,12 +473,19 @@ async function submitRecharge() {
       remark: rechargeRemark.value.trim() || '后台管理充值'
     }]);
     rechargingMember.value = null;
-
-    voicePlayer.broadcast('recharge', {
-      name: memberName,
-      amount: amt,
-      balance: balanceAfter
-    });
+    const submitted = response.operation;
+    const ledger = response.data?.ledgers?.find(record => record.id === submitted.generated.ids[0] &&
+      record.memberId === submitted.args[0].memberId && record.type === 'RECHARGE');
+    if (ledger) {
+      // Announce the confirmed transaction, even if another device has since changed the member.
+      Promise.resolve().then(() => voicePlayer.broadcast('recharge', {
+        name: ledger.memberName,
+        amount: formatYuan(moneyToCent(submitted.args[0].actualPay)),
+        gift: formatYuan(moneyToCent(submitted.args[0].giftAmount || 0)),
+        totalCredit: formatYuan(ledger.changeAmount),
+        balance: formatYuan(ledger.balanceAfter)
+      })).catch(() => {});
+    }
   } catch (error) {
     alert('充值提交失败：' + error.message);
   } finally {

@@ -7,6 +7,7 @@ import { replayOperation } from '../src/cloud-storage.js';
 import { mutationPrecondition, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
 import { validateSnapshot } from './service.js';
 import { moneyToCent } from '../src/money.js';
+import { normalizeVoiceText } from '../src/voice-text.js';
 import { assertJsonBudget } from '../src/data-limits.js';
 import { rechargeGiftCent } from '../src/recharge-settings.js';
 
@@ -292,7 +293,7 @@ export function formatAliGenieResponse({
   executeCode = 'SUCCESS',
   msgInfo = ''
 }) {
-  const cleanText = String(text || '').trim();
+  const cleanText = normalizeVoiceText(String(text || '').trim());
   const resultType = shouldEndSession ? 'RESULT' : 'ASK_INF';
 
   const res = {
@@ -602,7 +603,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
       }
 
       const lastConsume = (accountData.ledgers || [])
-        .filter(l => l.memberId === m.id && l.type === 'CONSUME')
+        .filter(l => l.memberId === m.id && l.type === 'CONSUME' && !l.isRefunded)
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
       if (lastConsume) {
         const visitDate = formatDate(lastConsume.created_at);

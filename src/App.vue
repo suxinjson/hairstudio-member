@@ -654,6 +654,7 @@ const stopCloudSubscription = cloudClient.subscribe((state) => {
 });
 function canCloudWrite(method) {
   const state = cloudState.value;
+  if (state.cloudAdoption) return false;
   if (!state.binding) return isNativeApp && (!state.user || canWrite(state.user.role, method));
   return canWrite(state.user?.role, method);
 }

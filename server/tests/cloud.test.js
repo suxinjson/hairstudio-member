@@ -1009,6 +1009,236 @@ test('a sync conflict preserves the local balance and queued records until expli
   assert.equal(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).cloud.outbox.length, 1);
 });
 
+test('adopting the cloud ledger cancels an abandoned charge before a late original request can commit', async () => {
+  const account = await initialAccount(); let online = false, held;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (input.endsWith('/sync')) { held = { input, options: { ...options, signal: undefined } }; throw new TypeError('lost request outcome'); }
+    return fetch(input, options);
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 10 }); online = true;
+  await assert.rejects(client.sync(), { network: true });
+  const original = getCloudState().outbox;
+  await client.useCloudLedger();
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  const late = await fetch(held.input, held.options);
+  assert.equal(late.status, 409);
+  assert.equal((await late.json()).code, 'OPERATION_CANCELLED');
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, 10000);
+  assert.deepEqual(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).cloud.outbox, original);
+});
+
+test('cloud adoption preserves already committed charges whose acknowledgment was lost', async () => {
+  const account = await initialAccount(); let online = false;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    const response = await fetch(input, options);
+    if (input.endsWith('/sync')) { await response.arrayBuffer(); throw new TypeError('lost acknowledgment'); }
+    return response;
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 10 }); online = true;
+  await assert.rejects(client.sync(), { network: true });
+  await client.useCloudLedger();
+  assert.equal(localDb.getMemberById(account.member.id).balance, 9000);
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal((await service.account(owner.identity)).data.ledgers.filter(l => l.type === 'CONSUME').length, 1);
+});
+
+test('lost cancellation acknowledgment keeps adoption durable across login and blocks automatic uploads', async () => {
+  const account = await initialAccount(); let online = false, lose = true, uploads = 0, resolutions = 0;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (input.endsWith('/sync')) uploads++;
+    const response = await fetch(input, options);
+    if (input.endsWith('/sync/resolve')) {
+      resolutions++;
+      if (lose) { lose = false; await response.arrayBuffer(); throw new TypeError('lost cancellation acknowledgment'); }
+    }
+    return response;
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 10 });
+  const pending = getCloudState().outbox;
+  await assert.rejects(client.useCloudLedger(), { network: true });
+  assert.ok(getCloudState().cloudAdoption);
+  assert.deepEqual(getCloudState().outbox, pending);
+  assert.equal(localDb.getMemberById(account.member.id).balance, 9000);
+  assert.throws(() => localDb.consume({ memberId: account.member.id, amount: 1 }), /核对|同步冲突/);
+  assert.throws(() => localDb.importBackupData(JSON.stringify({ data: account.data })), /核对|同步冲突/);
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{damaged');
+  assert.throws(() => localDb.importBackupData(JSON.stringify({ data: account.data })), /核对|同步冲突/);
+  assert.equal(localStorage.getItem(STORAGE_KEYS.MEMBERS), '{damaged');
+  await client.logout(); await client.login(url, 'owner', password);
+  online = true; await client.sync();
+  assert.equal(uploads, 0);
+  await client.useCloudLedger();
+  assert.equal(resolutions, 2);
+  assert.equal(getCloudState().cloudAdoption, null);
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE result->>'cancelled'='true'")).rows[0].count, 1);
+});
+
+test('adoption resumes from confirmed batch progress without discarding unresolved operation IDs', async () => {
+  const account = await initialAccount(); const sizes = []; let fail = true;
+  const client = await connectedClient({ online: () => false, requestFetch: async (input, options) => {
+    if (input.endsWith('/sync/resolve')) {
+      const batch = JSON.parse(options.body).operations; sizes.push(batch.length);
+      if (batch.length === 1 && fail) { fail = false; throw new TypeError('second batch unavailable'); }
+    }
+    return fetch(input, options);
+  } });
+  for (let i = 0; i < 101; i++) localDb.consume({ memberId: account.member.id, amount: '0.01' });
+  const pending = getCloudState().outbox;
+  await assert.rejects(client.useCloudLedger(), { network: true });
+  assert.equal(getCloudState().cloudAdoption.cursor, 100);
+  assert.deepEqual(getCloudState().outbox, pending);
+  await client.useCloudLedger();
+  assert.deepEqual(sizes, [100, 1, 1]);
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE result->>'cancelled'='true'")).rows[0].count, 101);
+});
+
+test('adoption rejects malformed resolution receipts without clearing or replaying the original pending charge', async () => {
+  const account = await initialAccount(); let invalid = true;
+  const client = await connectedClient({ online: () => false, requestFetch: async (input, options) => {
+    const response = await fetch(input, options);
+    if (invalid && input.endsWith('/sync/resolve')) {
+      const result = await response.json(); result.resolved = [];
+      return new Response(JSON.stringify(result), { status: 200 });
+    }
+    return response;
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 10 });
+  await assert.rejects(client.useCloudLedger(), /确认结果|核对结果/);
+  assert.equal(getCloudState().outbox.length, 1);
+  assert.equal(getCloudState().cloudAdoption.cursor, 0);
+  invalid = false; await client.useCloudLedger();
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+});
+
+test('cloud adoption cancels restores larger than the ordinary sync limit and fences a late restore', async () => {
+  const account = await initialAccount();
+  const client = await connectedClient({ online: () => false });
+  const data = { ...account.data, ledgers: [], members: Array.from({ length: 1200 }, (_, i) => ({ ...account.data.members[0],
+    id: 'restore-member-' + i, phone: String(13900000000 + i), notes: 'x'.repeat(2000) })) };
+  localDb.importBackupData(JSON.stringify({ data }));
+  const pending = getCloudState().outbox;
+  assert.ok(Buffer.byteLength(JSON.stringify({ operations: pending })) > DATA_LIMITS.syncBytes);
+  await client.useCloudLedger();
+  assert.equal(localDb.getMembers().length, 1);
+  await assert.rejects(client.request('/sync', { operations: pending }), { status: 409, code: 'OPERATION_CANCELLED' });
+});
+
+for (const committed of [false, true]) {
+  test(`cloud adoption resolves an uncertain bootstrap and fences a late retry (committed=${committed})`, async () => {
+    const member = localDb.createMember({ name: '迁移客户', phone: '13900000123', initialBalance: 88 });
+    let pending;
+    const client = await connectedClient({ online: () => false, requestFetch: async (input, options) => {
+      if (input.endsWith('/account/bootstrap')) {
+        pending = JSON.parse(options.body);
+        if (committed) { const response = await fetch(input, options); await response.arrayBuffer(); }
+        throw new TypeError('lost bootstrap outcome');
+      }
+      return fetch(input, options);
+    } });
+    await assert.rejects(client.bootstrap(), { network: true });
+    await client.useCloudLedger();
+    assert.equal(getCloudState().bootstrap, null);
+    assert.equal(localDb.getMembers().length, committed ? 1 : 0);
+    const identity = (await login('owner', getCloudState().deviceId)).identity;
+    if (committed) {
+      await service.bootstrap(identity, pending);
+      assert.equal(localDb.getMemberById(member.id).balance, 8800);
+    } else {
+      await assert.rejects(service.bootstrap(identity, pending), { status: 409, code: 'OPERATION_CANCELLED' });
+      assert.equal((await service.account(owner.identity)).revision, 0);
+    }
+  });
+}
+
+for (const stage of ['initial-progress', 'receipt-progress', 'snapshot']) {
+  test(`cloud adoption survives local storage failure at ${stage} without dropping the original pending operation`, async t => {
+    t.mock.method(console, 'error', () => {});
+    const account = await initialAccount(); let fail = true;
+    const client = await connectedClient({ online: () => false, requestFetch: async (input, options) => {
+      const response = await fetch(input, options);
+      if (fail && ((stage === 'receipt-progress' && input.endsWith('/sync/resolve')) ||
+          (stage === 'snapshot' && input.endsWith('/account') && getCloudState().cloudAdoption?.cursor === 1))) {
+        fail = false; localStorage.failKey = CLOUD_STATE_KEY; localStorage.failOnce = true;
+      }
+      return response;
+    } });
+    localDb.consume({ memberId: account.member.id, amount: 10 });
+    const pending = getCloudState().outbox;
+    if (stage === 'initial-progress') { localStorage.failKey = CLOUD_STATE_KEY; localStorage.failOnce = true; }
+    await assert.rejects(client.useCloudLedger());
+    assert.deepEqual(getCloudState().outbox, pending);
+    assert.equal(localDb.getMemberById(account.member.id).balance, 9000);
+    if (stage !== 'initial-progress') assert.throws(() => localDb.consume({ memberId: account.member.id, amount: 1 }), /核对/);
+    else assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE result->>'cancelled'='true'")).rows[0].count, 0);
+    await client.useCloudLedger();
+    assert.equal(getCloudState().cloudAdoption, null);
+    assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+    assert.deepEqual(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).cloud.outbox, pending);
+  });
+}
+
+test('a fresh client resumes adoption after restart without uploading its cancelled original operation', async () => {
+  const account = await initialAccount(); let uploads = 0;
+  const client = await connectedClient({ online: () => false, requestFetch: async (input, options) => {
+    const response = await fetch(input, options);
+    if (input.endsWith('/sync/resolve')) { await response.arrayBuffer(); throw new TypeError('lost cancel receipt'); }
+    return response;
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 10 });
+  await assert.rejects(client.useCloudLedger());
+  stopClient();
+  const restarted = createCloudClient({ isOnline: () => true, fetch: async (input, options) => {
+    if (input.endsWith('/sync')) uploads++;
+    return fetch(input, options);
+  } });
+  await restarted.login(url, 'owner', password); stopClient = await restarted.start();
+  await restarted.sync(); assert.equal(uploads, 0);
+  await restarted.useCloudLedger();
+  assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+});
+
+test('resolution rejects foreign actors, devices, payload substitutions and foreign bootstrap IDs atomically', async () => {
+  const account = await initialAccount();
+  const op = operation(account.data, owner, 'consume', [{ memberId: account.member.id, amount: 10 }]).operation;
+  const otherDevice = await login('owner');
+  await assert.rejects(service.resolveOperations(otherDevice.identity, [op]), { status: 403 });
+  await service.createUser(owner.identity, { username: 'other-owner', password, role: 'owner', displayName: '另一店主' });
+  const otherActor = await login('other-owner', owner.deviceId);
+  await assert.rejects(service.resolveOperations(otherActor.identity, [op]), { status: 403 });
+  await service.resolveOperations(owner.identity, [op]);
+  await assert.rejects(service.resolveOperations(owner.identity, [{ ...op, args: [{ memberId: account.member.id, amount: 11 }] }]), { status: 409 });
+  const bootstrapId = (await pool.query("SELECT id FROM operations WHERE method='bootstrap'")).rows[0].id;
+  await assert.rejects(service.resolveOperations(otherDevice.identity, [], { id: bootstrapId, data: account.data }), { status: 409 });
+  await assert.rejects(service.resolveOperations(otherActor.identity, [], { id: bootstrapId, data: account.data }), { status: 409 });
+  assert.equal((await service.account(owner.identity)).revision, account.revision);
+});
+
+for (const stage of ['receipt', 'final-snapshot']) {
+  test(`adoption keeps pending IDs and its write fence when the ${stage} rolls back`, async () => {
+    const account = await initialAccount(); let rollback = true;
+    const client = await connectedClient({ online: () => false, requestFetch: async (input, options) => {
+      const response = await fetch(input, options);
+      if (rollback && ((stage === 'receipt' && input.endsWith('/sync/resolve')) ||
+          (stage === 'final-snapshot' && input.endsWith('/account') && getCloudState().cloudAdoption?.cursor === 1))) {
+        const result = await response.json(); result.revision = 0;
+        return new Response(JSON.stringify(result), { status: 200 });
+      }
+      return response;
+    } });
+    localDb.consume({ memberId: account.member.id, amount: 10 });
+    await assert.rejects(client.useCloudLedger(), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+    assert.equal(getCloudState().outbox.length, 1);
+    assert.equal(getCloudState().cloudAdoption.cursor, stage === 'receipt' ? 0 : 1);
+    assert.throws(() => localDb.consume({ memberId: account.member.id, amount: 1 }), /核对/);
+    rollback = false; await client.useCloudLedger();
+    assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+  });
+}
+
 test('operations entered while a response is in flight are replayed and synchronized without loss', async () => {
   const account = await initialAccount(); let online = false, release, seen;
   const inFlight = new Promise(resolve => { seen = resolve; });

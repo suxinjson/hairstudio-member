@@ -84,7 +84,8 @@ export function useRecharge({
     }
 
     const current = localDb.getMemberById(rechargingMember.value.id);
-    if (!current) {
+    if (!current || current.isArchived) {
+      rechargeConfirmation.value = null;
       showFeedback('会员不存在或已注销。');
       return;
     }
@@ -98,6 +99,7 @@ export function useRecharge({
     rechargeConfirmation.value = {
       memberId: rechargingMember.value.id,
       memberName: rechargingMember.value.name,
+      memberPhone: rechargingMember.value.phone,
       actualPay: Number(rechargeForm.value.actualPay),
       giftAmount: Number(rechargeForm.value.giftAmount),
       rechargeSettings: policy,
@@ -113,6 +115,11 @@ export function useRecharge({
     const confirmation = rechargeConfirmation.value;
     if (!confirmation || isSubmittingRecharge.value) return;
     const current = localDb.getMemberById(confirmation.memberId);
+    if (!current || current.isArchived) {
+      rechargeConfirmation.value = null;
+      showFeedback('会员不存在或已注销。', 'error');
+      return;
+    }
     const currentPolicy = localDb.getRechargeSettings();
     if (JSON.stringify(currentPolicy) !== JSON.stringify(confirmation.rechargeSettings)) {
       rechargeSettings.value = currentPolicy;
@@ -121,9 +128,14 @@ export function useRecharge({
       showToast('赠送规则已变化，请重新核对充值结果。');
       return;
     }
-    if (!current || current.balance !== confirmation.currentBalance) {
+    if (current.balance !== confirmation.currentBalance) {
       requestRechargeConfirmation();
       showToast('会员余额已变化，请重新核对充值结果。');
+      return;
+    }
+    if (current.name !== confirmation.memberName || current.phone !== confirmation.memberPhone) {
+      requestRechargeConfirmation();
+      showToast('会员资料已变化，请重新核对姓名和手机号。');
       return;
     }
     isSubmittingRecharge.value = true;

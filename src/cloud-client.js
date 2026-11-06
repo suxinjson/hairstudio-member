@@ -69,7 +69,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     if (forbidden) { status = 'conflict'; if (!['recovery', 'integrity'].includes(conflictReason)) conflictReason = 'permissions'; }
     else if (status === 'login-required' || conflictReason === 'permissions') {
       if (conflictReason === 'permissions') conflictReason = null;
-      status = conflictReason ? 'conflict' : current.bootstrap || current.outbox.length ? 'pending' : current.binding ? 'synced' : 'local';
+      status = current.cloudAdoption || conflictReason ? 'conflict' : current.bootstrap || current.outbox.length ? 'pending' : current.binding ? 'synced' : 'local';
     }
     setState({ ...current, user: session.user, syncLoginRequired: false, status, conflictReason });
   }
@@ -209,12 +209,14 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         setState({ ...old, serverUrl, deviceId: old.deviceId || newId() });
         const session = await raw('/auth/login', { username, password, deviceId: getCloudState().deviceId }, '');
         const current = getCloudState();
-        if ((current.binding && current.binding.storeId !== session.user.storeId) || current.outbox.some(op => op.actorId !== session.user.id)) {
+        if ((current.binding && current.binding.storeId !== session.user.storeId) || current.outbox.some(op => op.actorId !== session.user.id) ||
+            current.cloudAdoption && current.cloudAdoption.actorId !== session.user.id) {
           await raw('/auth/logout', {}, session.accessToken);
           throw new Error('本机绑定的门店或未同步记录所属账号不同，请使用原账号登录');
         }
         await keepSession(session);
         const remote = await verifyAccount(await request('/account'));
+        if (getCloudState().cloudAdoption) return;
         if (old.binding) return;
         const local = localDb.readRecoveryState().data;
         if (!local) { setState({ ...getCloudState(), status: 'needs-choice' }); return; }
@@ -262,6 +264,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     async bootstrap() {
       return run(async () => {
         const state = getCloudState();
+        if (state.cloudAdoption) throw new Error('请先完成采用云端账本的核对');
         if (state.user?.role !== 'owner') throw new Error('仅店主可以迁移初始账本');
         const bootstrap = state.bootstrap || { id: newId(), data: localDb.readBackupState() };
         setState({ ...state, binding: { storeId: state.user.storeId }, bootstrap, status: 'pending' });
@@ -274,7 +277,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
         if (!accessToken && !refreshToken) return;
       }
       const state = getCloudState();
-      if (!state.binding || !state.user || !state.serverUrl || !isOnline() || state.status === 'conflict' || state.conflictReason === 'integrity' || busy) return;
+      if (!state.binding || !state.user || !state.serverUrl || !isOnline() || state.cloudAdoption || state.status === 'conflict' || state.conflictReason === 'integrity' || busy) return;
       const syncAccessVersion = ledgerAccessVersion();
       return run(async () => {
         setState({ ...getCloudState(), syncStatus: 'checking', syncError: '' });
@@ -312,13 +315,41 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     async useCloudLedger() {
       return run(async () => {
         if (!getCloudState().user) throw new Error('请先登录');
+        let state = getCloudState();
+        if (!state.cloudAdoption) {
+          const head = await verifyAccount(await request('/account'));
+          state = getCloudState();
+          if (head.revision < state.revision) throw integrityError('云端版本发生回退，不能替换本机账本；请由店主核对恢复');
+          // Persist the original ledger and the write fence before cancelling anything remotely.
+          preserveLocal(state);
+          setState({ ...state, status: 'conflict', conflictReason: state.conflictReason || 'adoption',
+            cloudAdoption: { cursor: 0, bootstrapResolved: !state.bootstrap, actorId: state.user.id,
+              revision: head.revision, integrity: head.integrity } });
+        }
+        async function resolve(body, ids, progress) {
+          const receipt = await verifyAccount(await request('/sync/resolve', body));
+          if (!Array.isArray(receipt.resolved) || receipt.resolved.length !== ids.length ||
+              receipt.resolved.some((item, i) => item?.id !== ids[i] || !['committed', 'cancelled'].includes(item?.status))) {
+            throw new Error('云端核对结果不匹配，本机账本与待同步记录已保留');
+          }
+          const current = getCloudState(), adoption = current.cloudAdoption;
+          assertRemoteHead(receipt, { binding: true, revision: adoption.revision, remoteIntegrity: adoption.integrity });
+          setState({ ...current, cloudAdoption: { ...adoption, ...progress, revision: receipt.revision, integrity: receipt.integrity } });
+        }
+        state = getCloudState();
+        if (!state.cloudAdoption.bootstrapResolved) {
+          await resolve({ operations: [], bootstrap: state.bootstrap }, [state.bootstrap.id], { bootstrapResolved: true });
+        }
+        while (getCloudState().cloudAdoption.cursor < getCloudState().outbox.length) {
+          state = getCloudState();
+          const operations = selectSyncBatch(state.outbox.slice(state.cloudAdoption.cursor));
+          await resolve({ operations }, operations.map(op => op.id), { cursor: state.cloudAdoption.cursor + operations.length });
+        }
         const remote = await verifyAccount(await request('/account'));
-        const state = getCloudState();
-        // 保留覆盖前的完整本机账本与待同步记录，便于核对；不是自动覆盖路径。
-        if (remote.revision < state.revision) throw integrityError('云端版本发生回退，不能替换本机账本；请由店主核对恢复');
-        preserveLocal(state);
+        state = getCloudState();
+        assertRemoteHead(remote, { binding: true, revision: state.cloudAdoption.revision, remoteIntegrity: state.cloudAdoption.integrity });
         localDb.applyCloudSnapshot(remote.data, CLOUD_STATE_KEY, { ...state, binding: { storeId: state.user.storeId },
-          outbox: [], bootstrap: null, status: 'synced', revision: remote.revision, remoteIntegrity: remote.integrity,
+          outbox: [], bootstrap: null, cloudAdoption: null, status: 'synced', revision: remote.revision, remoteIntegrity: remote.integrity,
           syncStatus: 'confirmed', syncError: '', lastSync: clock(), remoteConflict: null, conflictReason: null }, { allowRecovery: true, allowPhoneConflicts: true });
         onData(); emit();
         this.recordConnection('sync_conflict_resolved');
@@ -327,6 +358,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     async uploadRecoveredLedger() {
       return run(async () => {
         const initial = getCloudState();
+        if (initial.cloudAdoption) throw new Error('请先完成采用云端账本的核对');
         if (initial.user?.role !== 'owner' || initial.status !== 'conflict' || !['recovery', 'integrity'].includes(initial.conflictReason)) throw new Error('仅店主可以确认上传需核对的本机完整账本；已上传的恢复操作请通过同步重试');
         if (!isOnline()) throw new Error('请联网后上传恢复账本');
         const remote = await verifyAccount(await request('/account'));
@@ -373,7 +405,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       });
     },
     async unlink() {
-      if (busy || getCloudState().outbox.length || getCloudState().bootstrap) throw new Error('请先同步待办记录，才能解除绑定');
+      if (busy || getCloudState().cloudAdoption || getCloudState().outbox.length || getCloudState().bootstrap) throw new Error('请先同步待办记录，才能解除绑定');
       await this.logout();
       setState({ ...getCloudState(), binding: null, serverUrl: '', user: null, revision: 0, status: 'local', conflictReason: null, remoteConflict: null });
     },

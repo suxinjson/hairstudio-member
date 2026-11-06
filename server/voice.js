@@ -2,6 +2,7 @@ import { ApiError } from './security.js';
 import { assertUnexposedCredential } from './exposed-credentials.js';
 import { assertVoiceUrl, assertVoiceWebSocketUrl, createVoiceFetch, readVoiceBody } from './voice-network.js';
 import { synthesizeXfyun } from './xfyun-voice.js';
+import { normalizeVoiceText } from '../src/voice-text.js';
 
 export const DEFAULT_VOICE_CONFIG = {
   enabled: false,
@@ -218,10 +219,11 @@ export async function synthesizeTTS({
   socketFn
 }) {
   if (!text || typeof text !== 'string') throw new ApiError(400, '播报文本不能为空');
-  const trimmedText = text.trim();
+  let trimmedText = text.trim();
   if (trimmedText.length === 0 || trimmedText.length > 300) {
     throw new ApiError(400, '播报文本长度必须在 1 至 300 字之间');
   }
+  trimmedText = normalizeVoiceText(trimmedText);
   if (provider === 'xfyun') {
     apiKey = apiKey || process.env.XFYUN_API_PASSWORD || '';
     appId = appId || process.env.XFYUN_APP_ID || '';

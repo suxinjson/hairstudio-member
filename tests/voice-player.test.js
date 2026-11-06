@@ -17,7 +17,7 @@ test('voicePlayer template variable replacement', () => {
     balance: '200.00',
     store: '梦飞空间'
   });
-  assert.equal(result, '张三 消费 88.00 元，卡内余额 200.00 元（梦飞空间）');
+  assert.equal(result, '张三 消费 88 元，卡内余额 200 元（梦飞空间）');
 
   // Missing variable remains untouched or handles safely
   const partial = voicePlayer.formatTemplate('{name} 充值 {amount} 元', { name: '李四' });
@@ -176,7 +176,7 @@ test('shared announcements use saved templates and volume and cache config by lo
     assert.equal(await operation, true);
   }
   assert.equal(getVoiceConfig.mock.callCount(), 2);
-  assert.deepEqual(calls, Array(3).fill({ text: '张姐消费38.00元，余额62.00元' }));
+  assert.deepEqual(calls, Array(3).fill({ text: '张姐消费38元，余额62元' }));
   assert.equal(audio.revoked.length, 3);
   assert.ok(audio.instances.every(instance => instance.paused && instance.released && !instance.src));
 });

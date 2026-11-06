@@ -73,7 +73,7 @@ test('Fish Audio TTS synthesis sends correct format and headers', async () => {
     apiKey: 'sk-fish-mytestkey',
     model: 's2.1-pro-free',
     voiceId: 'ref-123',
-    text: '张三消费50元',
+    text: '张三消费50.00元，余额25.50元',
     fetchFn: mockFetch
   });
 
@@ -81,7 +81,7 @@ test('Fish Audio TTS synthesis sends correct format and headers', async () => {
   assert.equal(capturedHeaders['Authorization'], 'Bearer sk-fish-mytestkey');
   assert.equal(capturedHeaders['Content-Type'], 'application/json');
   assert.equal(capturedHeaders['model'], 's2.1-pro-free');
-  assert.equal(capturedBody.text, '张三消费50元');
+  assert.equal(capturedBody.text, '张三消费50元，余额25.5元');
   assert.equal(capturedBody.reference_id, 'ref-123');
   assert.equal(capturedBody.format, 'mp3');
   assert.equal(result.contentType, 'audio/mpeg');
@@ -124,14 +124,14 @@ test('HeyGen TTS synthesis requests audio URL and downloads audio stream', async
     apiKey: 'sk_heygen_key',
     model: 'heygen-voice-1-turbo-free',
     voiceId: 'voice-456',
-    text: '李四充值100元',
+    text: '李四充值100.00元，赠送0.05元',
     fetchFn: mockFetch
   });
 
   assert.equal(heygenReq.headers['X-Api-Key'], 'sk_heygen_key');
   assert.equal(heygenReq.body.model, 'heygen-voice-1-turbo-free');
   assert.equal(heygenReq.body.voice_id, 'voice-456');
-  assert.equal(heygenReq.body.text, '李四充值100元');
+  assert.equal(heygenReq.body.text, '李四充值100元，赠送0.05元');
   assert.equal(heygenReq.body.language, 'zh');
   assert.equal(downloadReq.url, 'https://resource2.heygen.ai/audio/sample.wav');
   assert.equal(result.contentType, 'audio/wav');

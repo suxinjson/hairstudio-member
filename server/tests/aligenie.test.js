@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { migrate } from '../database.js';
 import { createService } from '../service.js';
 import { createApi } from '../http.js';
-import { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from '../../src/storage.js';
+import { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS, createLocalDb } from '../../src/storage.js';
+import { integrity } from '../security.js';
 import {
   signAliGenieRequest,
   parseAliGenieRequest,
@@ -16,6 +17,44 @@ import {
   lookupServicePrice,
   formatAliGenieResponse
 } from '../aligenie.js';
+
+test('signed member queries report only non-refunded visits and omit the visit date when all consumption is reversed', async () => {
+  const db = new PGlite();
+  const query = (sql, params) => params ? db.query(sql, params) : sql.includes(';') ? db.exec(sql) : db.query(sql);
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+  try {
+    await migrate(pool);
+    const service = createService(pool), password = 'Visit-History-Regression-2026!';
+    await service.createOwner({ username: 'visit-owner', password });
+    const session = await service.login({ username: 'visit-owner', password, deviceId: randomUUID() });
+    const identity = await service.authenticate(session.accessToken), secret = 'visit-secret-' + randomUUID();
+    await service.saveVoiceConfig(identity, { aligenie: {
+      enabled: true, actorId: identity.id, token: secret, allowedDevices: ['visit-device']
+    } });
+    const values = new Map(); let date = '2026-01-02T12:00:00.000Z';
+    const ledger = createLocalDb({ getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) }, { now: () => date });
+    ledger.init(); const member = ledger.createMember({ name: '到店客户', phone: '13900008888', initialBalance: 100 });
+    const older = ledger.consume({ memberId: member.id, amount: 10 });
+    date = '2026-02-03T12:00:00.000Z';
+    const latest = ledger.consume({ memberId: member.id, amount: 20 }); ledger.refundLedger(latest.ledgerId);
+    async function ask() {
+      const data = ledger.readBackupState();
+      await pool.query('UPDATE accounts SET data=$1,integrity=$2,revision=revision+1 WHERE store_id=$3', [data, integrity(data), identity.store_id]);
+      const body = { requestId: randomUUID(), sessionId: randomUUID(), intentName: 'QueryMemberIntent', utterance: '查询到店客户余额',
+        slots: {}, context: { System: { device: { deviceOpenId: 'visit-device' }, user: { userOpenId: 'visit-user' } } } };
+      const timestamp = String(Date.now());
+      const response = await service.handleAliGenieWebhook(body, { headers: {
+        'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp,
+        'x-aligenie-signature': signAliGenieRequest(secret, timestamp, identity.store_id, body)
+      } });
+      return response.response.outputSpeechs[0].text;
+    }
+    assert.match(await ask(), /上次到店是 1月2日/);
+    ledger.refundLedger(older.ledgerId);
+    assert.doesNotMatch(await ask(), /上次到店/);
+  } finally { await db.close(); }
+});
 
 test('platform Header welcomes and business validation replies use the skill protocol without weakening accounting authorization', async () => {
   const db = new PGlite();
@@ -395,7 +434,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
       })
     });
     const queryData1 = await queryRes1.json();
-    assert.match(queryData1.response.outputSpeechs[0].text, /卡内余额 100.00 元/);
+    assert.match(queryData1.response.outputSpeechs[0].text, /卡内余额 100 元/);
     assert.match(queryData1.response.outputSpeechs[0].text, /短发寸头/);
     assert.equal(queryData1.response.shouldEndSession, true);
 
@@ -418,7 +457,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     });
     const queryData2 = await queryRes2.json();
     assert.match(queryData2.response.outputSpeechs[0].text, /会员李四/);
-    assert.match(queryData2.response.outputSpeechs[0].text, /20.00 元/);
+    assert.match(queryData2.response.outputSpeechs[0].text, /20 元/);
 
     // 4.3 Query Wang Wu (debt customer)
     const queryRes3 = await fetch(`${baseUrl}/api/v1/voice/aligenie`, {
@@ -438,7 +477,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
       })
     });
     const queryData3 = await queryRes3.json();
-    assert.match(queryData3.response.outputSpeechs[0].text, /当前卡内欠款 15.00 元/);
+    assert.match(queryData3.response.outputSpeechs[0].text, /当前卡内欠款 15 元/);
 
     // 4.4 Ambiguous query: "尾号1234" matches both 张三 and 张三丰
     const queryAmbRes = await fetch(`${baseUrl}/api/v1/voice/aligenie`, {
@@ -489,8 +528,8 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
       })
     });
     const consumeData1 = await consumeRes1.json();
-    assert.match(consumeData1.response.outputSpeechs[0].text, /本次洗剪吹理发消费 38.00 元/);
-    assert.match(consumeData1.response.outputSpeechs[0].text, /扣款后卡内剩余 62.00 元/);
+    assert.match(consumeData1.response.outputSpeechs[0].text, /本次洗剪吹理发消费 38 元/);
+    assert.match(consumeData1.response.outputSpeechs[0].text, /扣款后卡内剩余 62 元/);
     assert.match(consumeData1.response.outputSpeechs[0].text, /请问确认扣款吗/);
     assert.equal(consumeData1.returnCode, '0');
     assert.equal(consumeData1.returnValue.resultType, 'ASK_INF');
@@ -507,8 +546,8 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     });
     const pureData = await pureRes.json();
     assert.equal(pureData.returnCode, '0');
-    assert.match(pureData.returnValue.reply, /会员张三本次洗剪吹理发消费 100.00 元/);
-    assert.match(pureData.returnValue.reply, /扣款后卡内剩余 0.00 元/);
+    assert.match(pureData.returnValue.reply, /会员张三本次洗剪吹理发消费 100 元/);
+    assert.match(pureData.returnValue.reply, /扣款后卡内剩余 0 元/);
     assert.match(pureData.returnValue.reply, /请问确认扣款吗/);
 
     // Verify Zhang San balance has NOT changed yet in DB
@@ -535,8 +574,8 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     });
     const consumeData2 = await consumeRes2.json();
     assert.match(consumeData2.response.outputSpeechs[0].text, /扣款成功/);
-    assert.match(consumeData2.response.outputSpeechs[0].text, /扣除 38.00 元/);
-    assert.match(consumeData2.response.outputSpeechs[0].text, /卡内当前剩余 62.00 元/);
+    assert.match(consumeData2.response.outputSpeechs[0].text, /扣除 38 元/);
+    assert.match(consumeData2.response.outputSpeechs[0].text, /卡内当前剩余 62 元/);
     assert.equal(consumeData2.response.shouldEndSession, true);
 
     // Verify Zhang San balance IS updated to 6200 in DB
@@ -592,8 +631,8 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
       })
     });
     const debtData1 = await debtRes1.json();
-    assert.match(debtData1.response.outputSpeechs[0].text, /余额仅为 20.00 元/);
-    assert.match(debtData1.response.outputSpeechs[0].text, /产生欠款 18.00 元/);
+    assert.match(debtData1.response.outputSpeechs[0].text, /余额仅为 20 元/);
+    assert.match(debtData1.response.outputSpeechs[0].text, /产生欠款 18 元/);
     assert.match(debtData1.response.outputSpeechs[0].text, /确认扣款并记入欠款吗/);
 
     // Confirm debt deduction
@@ -613,7 +652,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     });
     const debtData2 = await debtRes2.json();
     assert.match(debtData2.response.outputSpeechs[0].text, /扣款成功/);
-    assert.match(debtData2.response.outputSpeechs[0].text, /当前已欠款 18.00 元/);
+    assert.match(debtData2.response.outputSpeechs[0].text, /当前已欠款 18 元/);
 
     const headDebt = await service.account(identity);
     const liSi = headDebt.data.members.find(m => m.id === 'M-2');
@@ -676,9 +715,9 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
       })
     });
     const rechargeData1 = await rechargeRes1.json();
-    assert.match(rechargeData1.response.outputSpeechs[0].text, /实充 200.00 元/);
-    assert.match(rechargeData1.response.outputSpeechs[0].text, /赠送 20.00 元/);
-    assert.match(rechargeData1.response.outputSpeechs[0].text, /合计到账 220.00 元/);
+    assert.match(rechargeData1.response.outputSpeechs[0].text, /实充 200 元/);
+    assert.match(rechargeData1.response.outputSpeechs[0].text, /赠送 20 元/);
+    assert.match(rechargeData1.response.outputSpeechs[0].text, /合计到账 220 元/);
     assert.match(rechargeData1.response.outputSpeechs[0].text, /请问确认充值吗/);
 
     // Confirm recharge
@@ -698,7 +737,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     });
     const rechargeData2 = await rechargeRes2.json();
     assert.match(rechargeData2.response.outputSpeechs[0].text, /充值成功/);
-    assert.match(rechargeData2.response.outputSpeechs[0].text, /到账 220.00 元/);
+    assert.match(rechargeData2.response.outputSpeechs[0].text, /到账 220 元/);
 
     // Check DB: Zhang San balance was 6200, + 22000 = 28200 (¥282.00)
     const headRecharge = await service.account(identity);

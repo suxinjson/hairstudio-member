@@ -1,4 +1,7 @@
+import { formatSpokenAmount } from './voice-text.js';
+
 const cancelled = () => Object.assign(new Error('播放已停止'), { code: 'VOICE_CANCELLED' });
+const amountVariables = new Set(['amount', 'balance', 'gift', 'totalCredit']);
 
 export class VoicePlayer {
   constructor({ api, context = () => '', canBroadcast = () => true } = {}) {
@@ -40,7 +43,7 @@ export class VoicePlayer {
     if (!template) return '';
     return template.replace(/\{(\w+)\}/g, (match, key) => {
       if (vars[key] !== undefined && vars[key] !== null) {
-        return String(vars[key]);
+        return amountVariables.has(key) ? formatSpokenAmount(vars[key]) : String(vars[key]);
       }
       return match;
     });

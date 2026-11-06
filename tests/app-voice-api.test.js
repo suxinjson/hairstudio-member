@@ -143,6 +143,6 @@ test('App automatic announcements require an online bound login and use the same
   current = state;
   assert.equal(await appVoicePlayer.broadcast('consume', { name: '张姐', amount: '38.00' }), true);
   assert.equal(synthesis.mock.callCount(), 1);
-  assert.deepEqual(synthesis.mock.calls[0].arguments[0], { text: '张姐消费38.00元' });
+  assert.deepEqual(synthesis.mock.calls[0].arguments[0], { text: '张姐消费38元' });
   assert.equal(playback.mock.callCount(), 1);
 });

@@ -105,6 +105,38 @@ test('recharge keeps its form and prevents a second submission until the server 
   assert.equal(button('确认充值').disabled, false);
 });
 
+test('PC recharge announces its confirmed ledger after a refresh and fills gift and totalCredit variables', async t => {
+  const { voicePlayer } = await import('../admin/src/utils/voice-player.js');
+  const broadcast = t.mock.method(voicePlayer, 'broadcast', async () => true);
+  const pending = deferred(); let submitted;
+  const members = ref(data.members);
+  await mount({ setup: () => () => h(Members, { members: members.value,
+    submitOperations: async operations => { submitted = operations[0]; return pending.promise; } }) });
+  button('充值').click(); await nextTick();
+  await input('input[placeholder="请输入充值金额"]', '10');
+  await input('input[placeholder="0.00"]', '1');
+  const current = { ...data.members[0], name: '最新姓名', balance: 15000 };
+  adminApi.accountData.value = { ...data, members: [current] };
+  members.value = [current]; await nextTick();
+  assert.match(document.body.textContent, /为 最新姓名 充值/);
+  assert.match(document.body.textContent, /当前可用余额：¥150.00/);
+  button('确认充值').click(); await flush();
+  assert.equal(submitted.precondition.member.balance, 15000);
+  assert.equal(broadcast.mock.callCount(), 0);
+  // A later transaction in the returned snapshot must not replace this receipt's balance.
+  pending.resolve({ data: { ...data, members: [{ ...current, balance: 17100 }], ledgers: [{
+    id: submitted.generated.ids[0], memberId: current.id, memberName: current.name, type: 'RECHARGE',
+    changeAmount: 1100, balanceBefore: 15000, balanceAfter: 16100
+  }] } });
+  await flush();
+  assert.deepEqual(broadcast.mock.calls[0].arguments, ['recharge', {
+    name: '最新姓名', amount: '10.00', gift: '1.00', totalCredit: '11.00', balance: '161.00'
+  }]);
+  assert.equal(voicePlayer.formatTemplate('{name}实充{amount}元，赠送{gift}元，到账{totalCredit}元，余额{balance}元',
+    broadcast.mock.calls[0].arguments[1]), '最新姓名实充10元，赠送1元，到账11元，余额161元');
+  assert.equal(document.querySelector('input[placeholder="请输入充值金额"]'), null);
+});
+
 test('service save waits for confirmation and keeps the editor open while saving', async () => {
   const pending = deferred(); let calls = 0;
   await mount(Services, { services: data.services, rechargePlans: data.rechargePlans, submitOperations: async () => { calls++; return pending.promise; } });

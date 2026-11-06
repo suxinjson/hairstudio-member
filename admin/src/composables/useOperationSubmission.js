@@ -9,10 +9,11 @@ export function useOperationSubmission(submitOperations) {
     if (!retained || canonicalJSON([retained.method, retained.args]) !== canonicalJSON([method, args])) {
       retained = buildAdminOperation(method, args, data);
     }
+    const submittedOperation = retained;
     try {
-      const result = await submitOperations([retained]);
+      const result = await submitOperations([submittedOperation]);
       retained = null;
-      return result;
+      return { ...result, operation: submittedOperation };
     } catch (error) {
       // Network uncertainty keeps the original operation even if the account is manually refreshed.
       if (!adminApi.hasPending.value) retained = null;

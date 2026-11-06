@@ -72,6 +72,7 @@
         <div class="feedback-icon feedback-icon-success mx-auto">¥</div>
         <h2 id="recharge-confirm-title" class="mt-4 text-2xl font-black text-slate-900">请再核对一次</h2>
         <p class="mt-2 text-base text-slate-700">确认后将立即为 {{ confirmation.memberName }} 充值入账。</p>
+        <p class="mt-1 text-sm text-slate-600">手机号：{{ confirmation.memberPhone }}</p>
         <div class="feedback-amount mt-5 rounded-xl px-4 py-4 text-left">
           <div class="flex justify-between gap-3 text-base"><span>实收金额</span><strong>¥{{ confirmation.actualPay.toFixed(2) }}</strong></div>
           <div v-if="confirmation.rechargeSettings.giftEnabled" class="mt-2 flex justify-between gap-3 text-base"><span>赠送额度</span><strong>¥{{ confirmation.giftAmount.toFixed(2) }}</strong></div>

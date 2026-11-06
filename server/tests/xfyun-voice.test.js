@@ -15,6 +15,12 @@ class VoiceSocket extends EventEmitter {
 const options = { provider: 'xfyun', appId: 'testappid', apiKey: 'ak-test-only-password', text: '张三消费50元，余额100元' };
 const tick = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
 
+test('Xfyun receives normalized money from installed App requests before UTF-8 encoding', async () => {
+  const socket = new VoiceSocket(socket => socket.frame({ code: 0, data: { status: 2, audio: 'YXVkaW8=' } }));
+  await synthesizeTTS({ ...options, text: '张三消费38.00元，赠送0.50元，余额-0.05元', socketFn: async () => socket });
+  assert.equal(Buffer.from(socket.request.data.text, 'base64').toString('utf8'), '张三消费38元，赠送0.5元，余额-0.05元');
+});
+
 test('Xfyun password authentication sends UTF-8 text, app ID and voice, and joins MP3 chunks', async () => {
   const socket = new VoiceSocket(socket => {
     socket.frame({ code: 0, data: null });
