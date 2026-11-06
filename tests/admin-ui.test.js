@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import { JSDOM } from 'jsdom';
 
 const dom = new JSDOM('<div id="app"></div>', { url: 'https://localhost' });
-for (const key of ['window', 'document', 'Element', 'HTMLElement', 'SVGElement', 'Node', 'location']) globalThis[key] = dom.window[key];
+for (const key of ['window', 'document', 'Document', 'Element', 'HTMLElement', 'SVGElement', 'Node', 'location']) globalThis[key] = dom.window[key];
 globalThis.localStorage = dom.window.localStorage;
 globalThis.alert = () => {}; globalThis.confirm = () => true;
 const require = createRequire(import.meta.url), directory = await mkdtemp(join(tmpdir(), 'member-admin-ui-test-'));
@@ -27,6 +27,7 @@ async function compile(sourceUrl) {
   await writeFile(new URL(output), script); return output;
 }
 const { default: App } = await import(await compile(new URL('../admin/src/App.vue', import.meta.url)));
+const { default: VoiceSettings } = await import(await compile(new URL('../admin/src/views/VoiceSettingsView.vue', import.meta.url)));
 const { default: Members } = await import(await compile(new URL('../admin/src/views/MembersView.vue', import.meta.url)));
 const { default: Ledgers } = await import(await compile(new URL('../admin/src/views/LedgersView.vue', import.meta.url)));
 const { default: Services } = await import(await compile(new URL('../admin/src/views/ServicesView.vue', import.meta.url)));
@@ -274,3 +275,19 @@ for (const event of ['focus', 'visibilitychange']) {
     assert.equal(adminApi.idleExpiresAt.value, deadline);
   });
 }
+
+test('owner voice settings use blank secret inputs and clear newly submitted credentials after saving', async t => {
+  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', apiKey: '', hasApiKey: true,
+    aligenie: { enabled: true, actorId: owner.id, allowedDevices: ['test-device'], hasToken: true } }));
+  t.mock.method(adminApi, 'getUsers', async () => [{ ...owner, active: true }]);
+  const save = t.mock.method(adminApi, 'saveVoiceConfig', async () => ({ hasApiKey: true, aligenie: { hasToken: true } }));
+  await mount(VoiceSettings);
+  const secrets = document.querySelectorAll('input[type="password"]');
+  assert.equal(secrets.length, 2); assert.equal(secrets[0].value, ''); assert.equal(secrets[1].value, '');
+  secrets[0].value = 'new-provider-key'; secrets[0].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  secrets[1].value = 'new-signing-secret-' + 'x'.repeat(32); secrets[1].dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  button('保存播报配置').click(); await flush();
+  assert.equal(save.mock.calls[0].arguments[0].apiKey, 'new-provider-key');
+  assert.deepEqual(save.mock.calls[0].arguments[0].aligenie.allowedDevices, ['test-device']);
+  assert.equal(secrets[0].value, ''); assert.equal(secrets[1].value, '');
+});

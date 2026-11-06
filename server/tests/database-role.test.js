@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
 import { migrate, configureRuntimeRole, assertRuntimeRole } from '../database.js';
+import { signAliGenieRequest } from '../aligenie.js';
 import { createService } from '../service.js';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
@@ -51,9 +52,17 @@ test('migration preserves existing accounts and runtime grants support business 
     assert.equal((await service.importStatus(identity, signature)).status, 'complete');
     const next = await service.createUser(identity, { username: 'clerk', password, displayName: '店员', role: 'clerk' });
     await service.updateUser(identity, next.id, { active: false, role: 'viewer' });
+    const secret = 'runtime-signing-secret-' + randomUUID();
+    await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: secret, allowedDevices: ['runtime-device'] } });
+    const preview = { requestId: randomUUID(), sessionId: 'runtime-session', utterance: '导入客户充值20元', context: { System: { device: { deviceOpenId: 'runtime-device' }, user: { userOpenId: 'runtime-user' } } } };
+    const voice = body => { const timestamp = String(Date.now()); return service.handleAliGenieWebhook(body, { headers: { 'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp, 'x-aligenie-signature': signAliGenieRequest(secret, timestamp, identity.store_id, body) } }); };
+    await voice(preview);
+    const confirmation = { ...preview, requestId: randomUUID(), utterance: '确认', confirmationRequestId: preview.requestId };
+    assert.match((await voice(confirmation)).returnValue.reply, /充值成功/);
+    assert.match((await voice(confirmation)).returnValue.reply, /充值成功/);
     await service.refresh(session.refreshToken);
     await service.auditLog(identity); await query('SELECT * FROM releases');
-    for (const sql of ['CREATE TABLE forbidden(id int)', 'CREATE ROLE forbidden_role', 'CREATE DATABASE forbidden_db', 'DROP TABLE accounts', 'TRUNCATE accounts', 'DELETE FROM accounts', "UPDATE releases SET notes='forged'", 'GRANT "' + administrator.replaceAll('"', '""') + '" TO member_app', "COPY stores TO PROGRAM 'echo forbidden'"]) {
+    for (const sql of ['CREATE TABLE forbidden(id int)', 'CREATE ROLE forbidden_role', 'CREATE DATABASE forbidden_db', 'DROP TABLE accounts', 'TRUNCATE accounts', 'DELETE FROM accounts', "UPDATE voice_requests SET response='{}'", 'TRUNCATE voice_dialogs', "UPDATE releases SET notes='forged'", 'GRANT "' + administrator.replaceAll('"', '""') + '" TO member_app', "COPY stores TO PROGRAM 'echo forbidden'"]) {
       await assert.rejects(query(sql), { code: '42501' });
     }
     await query('RESET ROLE');

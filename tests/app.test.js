@@ -120,8 +120,18 @@ async function selectBackup(content) {
   const input = document.querySelector('input[type="file"]');
   assert.ok(input);
   Object.defineProperty(input, 'files', { value: [new dom.window.File([content], 'backup.json', { type: 'application/json' })] });
-  input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-  await new Promise(resolve => setTimeout(resolve, 30));
+  // Wait for the actual FileReader event instead of a fixed delay under full-suite load.
+  const NativeReader = globalThis.FileReader;
+  let loaded;
+  const completed = new Promise(resolve => { loaded = resolve; });
+  globalThis.FileReader = class extends NativeReader {
+    constructor() { super(); this.addEventListener('loadend', loaded, { once: true }); }
+  };
+  try { input.dispatchEvent(new dom.window.Event('change', { bubbles: true })); }
+  finally { globalThis.FileReader = NativeReader; }
+  let timer;
+  try { await Promise.race([completed, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('backup read did not complete')), 3000); })]); }
+  finally { clearTimeout(timer); }
   await nextTick();
 }
 

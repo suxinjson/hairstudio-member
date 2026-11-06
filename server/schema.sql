@@ -45,3 +45,16 @@ CREATE TABLE IF NOT EXISTS store_settings (
   voice_config jsonb NOT NULL DEFAULT '{}',
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Pending preview and response are committed atomically with voice financial writes.
+CREATE TABLE IF NOT EXISTS voice_dialogs (
+  store_id uuid NOT NULL REFERENCES stores(id), scope text NOT NULL,
+  pending jsonb NOT NULL, expires_at timestamptz NOT NULL,
+  PRIMARY KEY(store_id,scope)
+);
+CREATE TABLE IF NOT EXISTS voice_requests (
+  store_id uuid NOT NULL REFERENCES stores(id), id text NOT NULL,
+  request_hash text NOT NULL, response jsonb NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(store_id,id)
+);
+CREATE INDEX IF NOT EXISTS voice_request_expiry ON voice_requests(store_id,received_at);

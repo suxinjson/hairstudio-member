@@ -9,6 +9,7 @@ import { createService } from '../service.js';
 import { createApi } from '../http.js';
 import { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from '../../src/storage.js';
 import {
+  signAliGenieRequest,
   parseAliGenieRequest,
   parseAmount,
   cleanMemberQuery,
@@ -173,6 +174,27 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
   });
   const ownerLogin = await service.login({ username: 'boss', password: 'Password123!', deviceId: randomUUID() });
   const identity = await service.authenticate(ownerLogin.accessToken);
+
+  const signingSecret = 'test-signing-secret-' + randomUUID();
+  await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: signingSecret, allowedDevices: ['allowed-device-888'] } });
+  const previewRequests = new Map();
+  const fetch = async (url, options = {}) => {
+    if (options.method !== 'POST' || !url.includes('/api/v1/voice/aligenie')) return globalThis.fetch(url, options);
+    const body = JSON.parse(options.body);
+    body.requestId ||= body.request?.requestId || randomUUID();
+    body.sessionId ||= body.session?.sessionId || randomUUID();
+    body.context ||= { System: {} }; body.context.System ||= {};
+    body.context.System.device ||= { deviceOpenId: 'allowed-device-888' };
+    body.context.System.user ||= { userOpenId: 'signed-user' };
+    body.confirmationRequestId ||= previewRequests.get(body.sessionId) || '';
+    const timestamp = String(Date.now());
+    const result = await globalThis.fetch(url, { ...options, body: JSON.stringify(body), headers: { ...options.headers,
+      'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp,
+      'x-aligenie-signature': signAliGenieRequest(signingSecret, timestamp, identity.store_id, body) } });
+    const response = await result.clone().json();
+    if (response.confirmationRequestId) previewRequests.set(body.sessionId, response.confirmationRequestId);
+    return result;
+  };
 
   // Bootstrap initial ledger data
   const initialData = {
@@ -564,56 +586,23 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.equal(headRecharge.data.ledgers[0].type, 'RECHARGE');
     assert.equal(headRecharge.data.ledgers[0].changeAmount, 22000);
 
-    // 9. Test Security: Device Whitelist & Token
-    // Configure store with allowedDevices and token
-    await service.saveVoiceConfig(identity, {
-      aligenie: {
-        enabled: true,
-        token: 'secret-token-xyz',
-        allowedDevices: ['allowed-device-888']
-      }
-    });
-
-    // 9.1 Invalid token rejected
-    const badTokenRes = await fetch(`${baseUrl}/api/v1/voice/aligenie?token=wrong-token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: '2.0',
-        request: { intent: { name: 'DefaultWelcomeIntent' } }
-      })
-    });
-    const badTokenData = await badTokenRes.json();
-    assert.match(badTokenData.response.outputSpeechs[0].text, /语音认证口令错误/);
-
-    // 9.2 Unauthorized device rejected
-    const badDevRes = await fetch(`${baseUrl}/api/v1/voice/aligenie?token=secret-token-xyz`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: '2.0',
-        context: { System: { device: { deviceOpenId: 'unauthorized-dev' } } },
-        request: { intent: { name: 'DefaultWelcomeIntent' } }
-      })
-    });
-    const badDevData = await badDevRes.json();
-    assert.match(badDevData.response.outputSpeechs[0].text, /尚未绑定本店/);
-
-    // 9.3 Authorized device and valid token accepted
-    const goodRes = await fetch(`${baseUrl}/api/v1/voice/aligenie?token=secret-token-xyz`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        version: '2.0',
-        context: { System: { device: { deviceOpenId: 'allowed-device-888' } } },
-        request: { intent: { name: 'DefaultWelcomeIntent' } }
-      })
-    });
-    const goodData = await goodRes.json();
-    assert.match(goodData.response.outputSpeechs[0].text, /梦飞管家为您服务/);
+    // Unsigned, expired, invalid signature, and unbound devices are rejected by HTTP.
+    const signedBody = { requestId: randomUUID(), sessionId: randomUUID(), utterance: '查询张三余额', context: { System: { device: { deviceOpenId: 'allowed-device-888' }, user: { userOpenId: 'signed-user' } } } };
+    for (const mode of ['missing', 'invalid', 'expired']) {
+      const timestamp = String(mode === 'expired' ? Date.now() - 600000 : Date.now());
+      const headers = { 'Content-Type': 'application/json', 'x-store-id': identity.store_id,
+        'x-aligenie-timestamp': timestamp, 'x-aligenie-signature': mode === 'invalid' ? '0'.repeat(64) : signAliGenieRequest(signingSecret, timestamp, identity.store_id, signedBody) };
+      if (mode === 'missing') delete headers['x-aligenie-signature'];
+      const res = await globalThis.fetch(`${baseUrl}/api/v1/voice/aligenie`, { method: 'POST', headers, body: JSON.stringify(signedBody) });
+      assert.equal(res.status, 401, mode);
+    }
+    const forbidden = await fetch(`${baseUrl}/api/v1/voice/aligenie`, { method: 'POST', body: JSON.stringify({ ...signedBody, context: { System: { device: { deviceOpenId: 'unbound' } } } }), headers: { 'Content-Type': 'application/json' } });
+    assert.equal(forbidden.status, 401);
 
   } finally {
     try { await unlink(filePath); } catch {}
+    server.closeAllConnections();
     await new Promise(r => server.close(r));
+    await db.close();
   }
 });

@@ -19,7 +19,8 @@ const memoryStorage = () => {
 
 export class AdminApiClient {
   constructor({ storage = globalThis.localStorage || memoryStorage(), fetch: requestFetch = (...args) => fetch(...args),
-    locks, indexedDB, eventTarget = globalThis.window } = {}) {
+    locks, indexedDB, serverOrigin = globalThis.location?.origin || 'same-origin', eventTarget = globalThis.window } = {}) {
+    this.serverOrigin = serverOrigin; this.headConflict = ref(false);
     this.storage = storage; this.requestFetch = requestFetch; this.lockOptions = { locks, indexedDB };
     this.accessToken = ref(''); this.refreshToken = ref(''); this.user = ref(null);
     this.idleExpiresAt = ref(null);
@@ -31,7 +32,7 @@ export class AdminApiClient {
     this.deviceId = this.getOrCreateDeviceId(); this.isLocked = this.createLockedRef(); this.restoreSession();
     const storageChanged = event => {
       if (event.key === STORAGE_KEY || event.key === null) this.restoreSession();
-      this.readPending();
+      this.readPending(); this.headConflict.value = Boolean(this.user.value && this.storage.getItem(this.headKey() + ":conflict"));
     };
     const offline = () => { this.accountStatus.value = 'error'; this.accountError.value = '当前离线，请联网后重新确认账本'; };
     eventTarget?.addEventListener('storage', storageChanged); eventTarget?.addEventListener('offline', offline);
@@ -84,6 +85,7 @@ export class AdminApiClient {
     this.applyingSession = true;
     try { this.isLocked.value = Boolean(data?.isLocked); } finally { this.applyingSession = false; }
     this.readPending();
+    this.headConflict.value = Boolean(this.user.value && this.storage.getItem(this.headKey() + ':conflict'));
   }
 
   restoreSession() {
@@ -220,13 +222,79 @@ export class AdminApiClient {
     });
   }
 
+  headKey() { return 'hairstudio_admin_head:' + this.serverOrigin + ':' + this.user.value?.storeId; }
+  headError() { return Object.assign(new Error('云端账本版本核验失败，请导出核对后由店主重新确认账本'), { status: 409, code: 'CLOUD_INTEGRITY_CONFLICT' }); }
+  flagHeadConflict(reason) {
+    this.storage.setItem(this.headKey() + ':conflict', JSON.stringify({ reason, at: new Date().toISOString() }));
+    this.headConflict.value = true;
+    return this.headError();
+  }
+  observedHead() {
+    if (this.storage.getItem(this.headKey() + ':conflict')) { this.headConflict.value = true; throw this.headError(); }
+    try {
+      const value = JSON.parse(this.storage.getItem(this.headKey()) || 'null');
+      if (value && (!Number.isSafeInteger(value.revision) || value.revision < 0 || !/^[a-f0-9]{64}$/.test(value.integrity || ''))) throw new Error();
+      return value;
+    } catch { throw this.flagHeadConflict('本机版本记录损坏'); }
+  }
+  checkHead(head) {
+    const saved = this.observedHead();
+    if (!head || !Number.isSafeInteger(head.revision) || head.revision < 0 || !/^[a-f0-9]{64}$/.test(head.integrity || '')) throw this.flagHeadConflict('云端版本格式无效');
+    if (saved && (head.revision < saved.revision || head.revision === saved.revision && head.integrity !== saved.integrity)) throw this.flagHeadConflict('版本回退或同版本内容变更');
+    return { revision: head.revision, integrity: head.integrity };
+  }
   async acceptAccount(response, generation) {
     if (!response || !Number.isSafeInteger(response.revision) || response.revision < 0 ||
-        await sha256(canonicalJSON(response.data)) !== response.integrity) throw new Error('云端账本校验失败，待确认操作已保留');
-    const data = localDb.parseAndValidateBackup(JSON.stringify({ data: response.data }), { allowPhoneConflicts: true }).data;
+        await sha256(canonicalJSON(response.data)) !== response.integrity) {
+      this.assertSession(generation); throw this.flagHeadConflict('云端账本校验失败');
+    }
+    let data = localDb.parseAndValidateBackup(JSON.stringify({ data: response.data }), { allowPhoneConflicts: true }).data;
     this.assertSession(generation);
-    if (response.revision < this.accountRevision.value) throw new Error('云端账本版本回退，请联系管理员');
-    this.accountData.value = data; this.accountRevision.value = response.revision;
+    await this.lock('head:' + this.serverOrigin + ':' + this.user.value.storeId, async () => {
+      this.assertSession(generation);
+      const saved = this.observedHead();
+      if (saved && response.revision < saved.revision) {
+        // A slower tab may deliver a snapshot taken before another tab's write.
+        // Confirm the current server state before declaring a durable rollback.
+        const latest = await this.request('/api/v1/account');
+        if (await sha256(canonicalJSON(latest.data)) !== latest.integrity) throw this.flagHeadConflict('云端账本校验失败');
+        this.assertSession(generation);
+        data = localDb.parseAndValidateBackup(JSON.stringify({ data: latest.data }), { allowPhoneConflicts: true }).data;
+        Object.assign(response, { data: latest.data, revision: latest.revision, integrity: latest.integrity });
+      }
+      const head = this.checkHead(response);
+      this.storage.setItem(this.headKey(), JSON.stringify(head));
+      this.accountData.value = data; this.accountRevision.value = response.revision;
+    });
+  }
+
+  async reconciliationBackup() {
+    if (this.user.value?.role !== 'owner') throw new Error('仅店主可以核对账本版本');
+    const remote = await this.request('/api/v1/account');
+    if (await sha256(canonicalJSON(remote.data)) !== remote.integrity) throw new Error('云端数据损坏，请先修复服务器账本');
+    localDb.parseAndValidateBackup(JSON.stringify({ data: remote.data }), { allowPhoneConflicts: true });
+    return { exportedAt: new Date().toISOString(), storeId: this.user.value.storeId, serverOrigin: this.serverOrigin,
+      localData: this.accountData.value, observedHead: this.storage.getItem(this.headKey()),
+      conflict: this.storage.getItem(this.headKey() + ':conflict'), pending: this.storage.getItem(this.scopedKey('pending')),
+      importJob: this.storage.getItem(this.scopedKey('import')), importHistory: this.storage.getItem(this.scopedKey('import_history')), remote };
+  }
+  async reconcileAccount(backup) {
+    const generation = this.generation;
+    return this.lock('writes', async () => {
+      this.assertSession(generation);
+      if (this.isLocked.value || this.user.value.role !== 'owner' || backup.storeId !== this.user.value.storeId || backup.serverOrigin !== this.serverOrigin) throw new Error('请由当前门店店主解锁后核对');
+      const response = await this.request('/api/v1/account/reconcile', { method: 'POST', body: JSON.stringify({ expectedHead: { revision: backup.remote.revision, integrity: backup.remote.integrity } }) });
+      if (await sha256(canonicalJSON(response.data)) !== response.integrity) throw this.flagHeadConflict('核对结果校验失败');
+      await this.lock('head:' + this.serverOrigin + ':' + this.user.value.storeId, () => {
+        this.assertSession(generation);
+        this.storage.setItem(this.headKey() + ':reconciliation:' + newId(), JSON.stringify(backup));
+        this.storage.setItem(this.headKey(), JSON.stringify({ revision: response.revision, integrity: response.integrity }));
+        this.storage.removeItem(this.headKey() + ':conflict'); this.headConflict.value = false;
+      });
+      await this.acceptAccount(response, generation);
+      this.readPending(); this.accountError.value = ''; this.accountStatus.value = this.hasPending.value ? 'pending' : 'synced';
+      return response;
+    });
   }
 
   async getAccount() {
@@ -264,12 +332,21 @@ export class AdminApiClient {
       if (pending && canonicalJSON(pending.operations) !== canonicalJSON(operations)) throw new Error('存在待确认操作，请先重试原操作');
       // A reload can interrupt any sent request before its response is handled.
       // Existing pending IDs, including legacy uncertain:false records, remain uncertain.
-      pending = { ...(pending || { operations, ...(importBatch ? { importBatch } : {}) }), uncertain: true };
+      const savedHead = this.observedHead();
+      pending = { ...(pending || { observedHead: savedHead, operations, ...(importBatch ? { importBatch } : {}) }), uncertain: true };
       this.storage.setItem(key, JSON.stringify(pending));
       this.readPending(); this.loadSequence++;
       this.accountStatus.value = 'saving'; this.accountError.value = '';
       try {
-        const response = await this.request('/api/v1/sync', { method: 'POST', body: JSON.stringify({ operations: pending.operations, ...(pending.importBatch ? { importBatch: pending.importBatch } : {}) }) });
+        const remoteHead = await this.request('/api/v1/account/head');
+        await this.lock('head:' + this.serverOrigin + ':' + this.user.value.storeId, () => {
+          this.assertSession(generation);
+          const checked = this.checkHead(remoteHead);
+          this.storage.setItem(this.headKey(), JSON.stringify(checked));
+          pending = { ...pending, observedHead: checked };
+          this.storage.setItem(key, JSON.stringify(pending));
+        });
+        const response = await this.request('/api/v1/sync', { method: 'POST', body: JSON.stringify({ operations: pending.operations, observedHead: pending.observedHead, ...(pending.importBatch ? { importBatch: pending.importBatch } : {}) }) });
         if (canonicalJSON(response.acknowledged) !== canonicalJSON(pending.operations.map(operation => operation.id))) throw new Error('云端确认单号不匹配，请重试原操作');
         if (pending.importBatch && (response.importReceipt?.signature !== pending.importBatch.signature ||
             !['pending', 'complete'].includes(response.importReceipt.status) || !Number.isInteger(response.importReceipt.count) ||
@@ -279,8 +356,9 @@ export class AdminApiClient {
         this.accountStatus.value = this.hasPending.value ? 'pending' : 'synced';
         return response;
       } catch (error) {
+        if (error.code === 'CLOUD_INTEGRITY_CONFLICT' || error.code === 'INTEGRITY_FAILED') this.flagHeadConflict(error.message);
         // A definitive first-attempt rejection committed nothing. Uncertain retries retain their IDs.
-        if (!retrying && [400, 403, 409, 413, 415, 429].includes(error.status)) this.storage.removeItem(key);
+        if (!retrying && error.code !== 'CLOUD_INTEGRITY_CONFLICT' && error.code !== 'INTEGRITY_FAILED' && [400, 403, 409, 413, 415, 429].includes(error.status)) this.storage.removeItem(key);
         else this.storage.setItem(key, JSON.stringify({ ...pending, uncertain: true }));
         if (generation === this.generation) {
           this.readPending(); this.accountStatus.value = 'error'; this.accountError.value = error.message;

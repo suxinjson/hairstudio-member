@@ -111,6 +111,9 @@
 
       <!-- 动态路由工作台主体 -->
       <div v-if="accountError" class="px-6 py-3 bg-amber-50 text-amber-900 text-sm" role="alert">{{ accountError }}</div>
+      <div v-if="adminApi.headConflict.value && currentUser.role === 'owner'" class="px-6 py-3 bg-amber-50">
+        <button @click="reconcileAccount" :disabled="isLoading || isSubmittingOperations" class="h-9 px-3 bg-amber-200 rounded-xl text-sm font-bold">导出版本冲突并核对账本</button>
+      </div>
       <main :key="currentUser.storeId + ':' + currentUser.id" class="flex-1 overflow-y-auto p-6">
         <div v-if="!accountData" class="p-8 text-center text-slate-600">
           {{ isLoading ? '正在加载当前门店账本…' : '账本尚未加载，请点击刷新重试。' }}
@@ -334,6 +337,20 @@ async function resolvePending() {
     activeTab.value = 'dashboard';
     alert(`已核对：${result.resolved.filter(row => row.status === 'committed').length} 笔已入账，${result.resolved.filter(row => row.status === 'cancelled').length} 笔已取消。${pendingImport.value ? '请取消剩余导入后重新预检。' : '可重新核对后记账。'}`);
   } catch (error) { alert('原操作核对尚未完成：' + error.message); }
+  finally { isSubmittingOperations.value = false; }
+}
+
+async function reconcileAccount() {
+  if (isSubmittingOperations.value) return;
+  isSubmittingOperations.value = true;
+  try {
+    const backup = await adminApi.reconciliationBackup();
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url; link.download = '账本版本冲突核对-' + new Date().toISOString().slice(0, 10) + '.json';
+    link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    if (!confirm(`已发起下载本机记录、待办和云端账本。请确认文件已保存并核对内容。是否采用云端 v${backup.remote.revision} 作为新的版本基准？原待办及导入记录将保留，后续须继续核对。`)) return;
+    await adminApi.reconcileAccount(backup);
+  } catch (error) { alert('账本核对失败：' + error.message); }
   finally { isSubmittingOperations.value = false; }
 }
 

@@ -128,3 +128,5 @@ docker compose exec -T db pg_dump -U member -d member -Fc > backups/member.dump
 可连接到专用 PostgreSQL 17 测试实例，设置 `MEMBER_TEST_DATABASE_URL` 后运行 `npm test`，切换云端集成测试至真实多连接 PostgreSQL，并启用同会员并发消费、不同会员并发消费、恢复与消费竞争三项验证。并发登录额度测试也在同一模式运行。测试在随机生成的独立 schema 中创建表，完成后删除该 schema；连接账号需有创建 schema 权限。未设置此变量时三项账本锁竞争检查跳过，其他测试继续使用 PGlite。
 
 如需真实数据库角色验证，同时设置 `MEMBER_TEST_ADMIN_DATABASE_URL` 指向专用、可丢弃的临时 PostgreSQL 集群；账号需要创建数据库/角色权限，集群不能存在 `member_app`。该测试创建独立数据库并配置固定名称的运行角色，完成后清理。不要连接生产或共享集群。默认角色测试使用独立 PGlite 实例。
+
+2026-11-06 语音及 PC 版本保护升级新增数据库迁移和 API 出站网络，历史天猫精灵配置默认关闭。请按[语音接入与版本冲突恢复说明](voice-integration.md)重新配置签名网关和新密钥。

@@ -1,4 +1,6 @@
 import { ApiError } from './security.js';
+import { assertUnexposedCredential } from './exposed-credentials.js';
+import { assertVoiceUrl, createVoiceFetch, readVoiceBody } from './voice-network.js';
 
 export const DEFAULT_VOICE_CONFIG = {
   enabled: false,
@@ -13,8 +15,10 @@ export const DEFAULT_VOICE_CONFIG = {
     recharge: '{name} 充值 {amount} 元，卡内余额 {balance} 元'
   },
   aligenie: {
-    enabled: true,
+    enabled: false,
     token: '',
+    actorId: '',
+    authVersion: 0,
     verificationFile: '',
     verificationContent: '',
     allowedDevices: []
@@ -56,7 +60,7 @@ export function sanitizeVoiceConfig(raw, previous = {}) {
     if (!url) {
       config.apiUrl = '';
     } else {
-      if (!/^https?:\/\/[^\s]+$/.test(url)) throw new ApiError(400, 'API 地址必须以 http:// 或 https:// 开头');
+      assertVoiceUrl(url);
       config.apiUrl = url;
     }
   }
@@ -66,6 +70,7 @@ export function sanitizeVoiceConfig(raw, previous = {}) {
     // Only update if not blank and not masked
     if (key && !key.includes('****')) {
       if (key.length > 256) throw new ApiError(400, 'API Key 长度不能超过 256 个字符');
+      assertUnexposedCredential(key);
       config.apiKey = key;
     }
   }
@@ -99,17 +104,45 @@ export function sanitizeVoiceConfig(raw, previous = {}) {
   if (raw.aligenie && typeof raw.aligenie === 'object') {
     const prevAli = config.aligenie || DEFAULT_VOICE_CONFIG.aligenie;
     config.aligenie = {
+      authVersion: typeof raw.aligenie.token === 'string' && raw.aligenie.token.trim() ? 2 : (prevAli.authVersion || 0),
       enabled: typeof raw.aligenie.enabled === 'boolean' ? raw.aligenie.enabled : prevAli.enabled,
-      token: typeof raw.aligenie.token === 'string' ? raw.aligenie.token.trim().slice(0, 100) : prevAli.token,
+      token: typeof raw.aligenie.token === 'string' && raw.aligenie.token.trim() ? raw.aligenie.token.trim() : prevAli.token,
+      actorId: typeof raw.aligenie.actorId === 'string' ? raw.aligenie.actorId.trim() : (prevAli.actorId || ''),
       verificationFile: typeof raw.aligenie.verificationFile === 'string' ? raw.aligenie.verificationFile.trim().slice(0, 100) : prevAli.verificationFile,
       verificationContent: typeof raw.aligenie.verificationContent === 'string' ? raw.aligenie.verificationContent.trim().slice(0, 200) : prevAli.verificationContent,
       allowedDevices: Array.isArray(raw.aligenie.allowedDevices)
         ? raw.aligenie.allowedDevices.map(d => String(d).trim()).filter(Boolean).slice(0, 50)
         : (prevAli.allowedDevices || [])
     };
+    if (Array.isArray(raw.aligenie.allowedDevices) && (raw.aligenie.allowedDevices.length > 50 || raw.aligenie.allowedDevices.some(d => typeof d !== 'string' || !d.trim() || d.length > 128))) throw new ApiError(400, '设备白名单最多 50 个，每个标识为 1–128 位文本');
+    if (raw.aligenie.clearToken === true) config.aligenie.token = '';
+    if (config.aligenie.token && (config.aligenie.token.length < 32 || config.aligenie.token.length > 100 || !/^[a-zA-Z0-9_-]+$/.test(config.aligenie.token))) throw new ApiError(400, '语音签名密钥须为 32–100 位随机字符');
+    if (config.aligenie.actorId && !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(config.aligenie.actorId)) throw new ApiError(400, '语音记账账号标识无效');
   }
 
   return config;
+}
+
+// Existing unsafe settings remain readable for repair, but cannot be used.
+export function readVoiceConfig(saved = {}) {
+  const safe = { ...saved, apiKey: saved.apiKey || '', aligenie: { ...DEFAULT_VOICE_CONFIG.aligenie, ...saved.aligenie } };
+  try { assertUnexposedCredential(safe.apiKey); } catch { safe.apiKey = ''; safe.enabled = false; }
+  try { if (safe.apiUrl) assertVoiceUrl(safe.apiUrl); } catch { safe.apiUrl = ''; safe.enabled = false; }
+  if (safe.aligenie.authVersion !== 2 || !/^[a-zA-Z0-9_-]{32,100}$/.test(safe.aligenie.token || '')) {
+    safe.aligenie.enabled = false; safe.aligenie.token = ''; safe.aligenie.authVersion = 0;
+  }
+  return { ...DEFAULT_VOICE_CONFIG, ...safe };
+}
+
+export function publicVoiceConfig(config, role) {
+  const { enabled, provider, model, voiceId, volume, templates } = config;
+  const result = { enabled, provider, model, voiceId, volume, templates, apiKey: '', hasApiKey: Boolean(config.apiKey) };
+  if (role === 'owner') Object.assign(result, { apiUrl: config.apiUrl, aligenie: {
+    enabled: config.aligenie.enabled, actorId: config.aligenie.actorId, authVersion: config.aligenie.authVersion,
+    allowedDevices: config.aligenie.allowedDevices, hasToken: Boolean(config.aligenie.token),
+    verificationFile: config.aligenie.verificationFile, verificationContent: config.aligenie.verificationContent
+  } });
+  return result;
 }
 
 export async function synthesizeTTS({
@@ -119,7 +152,7 @@ export async function synthesizeTTS({
   model = '',
   voiceId = '',
   text = '',
-  fetchFn = fetch
+  fetchFn
 }) {
   if (!text || typeof text !== 'string') throw new ApiError(400, '播报文本不能为空');
   const trimmedText = text.trim();
@@ -131,6 +164,8 @@ export async function synthesizeTTS({
   }
 
   const cleanKey = apiKey.trim();
+  assertUnexposedCredential(cleanKey);
+  const request = createVoiceFetch({ fetchFn });
 
   if (provider === 'fish_audio') {
     const endpoint = apiUrl?.trim() || PROVIDER_DEFAULTS.fish_audio.apiUrl;
@@ -140,7 +175,7 @@ export async function synthesizeTTS({
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await fetchFn(endpoint, {
+      const response = await request(endpoint, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${cleanKey}`,
@@ -156,19 +191,14 @@ export async function synthesizeTTS({
       });
 
       if (!response.ok) {
-        let errMessage = 'Fish Audio 合成失败';
-        try {
-          const errJson = await response.json();
-          errMessage = errJson.message || errJson.error || errMessage;
-        } catch {
-          try { errMessage = await response.text(); } catch {}
-        }
-        throw new ApiError(502, `Fish Audio 接口错误 (${response.status}): ${errMessage}`);
+        try { await readVoiceBody(response, 8192, controller); } catch {}
+        throw new ApiError(502, `Fish Audio 接口错误 (${response.status})`);
       }
 
       const contentType = response.headers.get('content-type') || 'audio/mpeg';
-      const arrayBuffer = await response.arrayBuffer();
-      return { buffer: Buffer.from(arrayBuffer), contentType };
+      const buffer = await readVoiceBody(response, 8 * 1024 * 1024, controller);
+      if (!buffer.length || !/^audio\//i.test(contentType)) throw new ApiError(502, '语音服务未返回音频');
+      return { buffer, contentType };
     } catch (err) {
       if (err instanceof ApiError) throw err;
       if (err.name === 'AbortError') throw new ApiError(504, 'Fish Audio 请求超时');
@@ -184,7 +214,7 @@ export async function synthesizeTTS({
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 25000);
     try {
-      const response = await fetchFn(endpoint, {
+      const response = await request(endpoint, {
         method: 'POST',
         headers: {
           'X-Api-Key': cleanKey,
@@ -201,26 +231,21 @@ export async function synthesizeTTS({
       });
 
       if (!response.ok) {
-        let errMessage = 'HeyGen 合成失败';
-        try {
-          const errJson = await response.json();
-          errMessage = errJson.error?.message || errJson.message || errMessage;
-        } catch {
-          try { errMessage = await response.text(); } catch {}
-        }
-        throw new ApiError(502, `HeyGen 接口错误 (${response.status}): ${errMessage}`);
+        try { await readVoiceBody(response, 8192, controller); } catch {}
+        throw new ApiError(502, `HeyGen 接口错误 (${response.status})`);
       }
 
-      const data = await response.json();
+      const data = JSON.parse((await readVoiceBody(response, 64 * 1024, controller)).toString('utf8'));
       const audioUrl = data?.data?.audio_url || data?.data?.url;
       if (!audioUrl) throw new ApiError(502, 'HeyGen 未返回有效的音频地址');
 
-      const audioRes = await fetchFn(audioUrl, { signal: controller.signal });
+      const audioRes = await request(audioUrl, { signal: controller.signal });
       if (!audioRes.ok) throw new ApiError(502, `获取 HeyGen 音频文件失败 (${audioRes.status})`);
 
       const contentType = audioRes.headers.get('content-type') || 'audio/wav';
-      const arrayBuffer = await audioRes.arrayBuffer();
-      return { buffer: Buffer.from(arrayBuffer), contentType };
+      const buffer = await readVoiceBody(audioRes, 8 * 1024 * 1024, controller);
+      if (!buffer.length || !/^audio\//i.test(contentType)) throw new ApiError(502, '语音服务未返回音频');
+      return { buffer, contentType };
     } catch (err) {
       if (err instanceof ApiError) throw err;
       if (err.name === 'AbortError') throw new ApiError(504, 'HeyGen 请求超时');

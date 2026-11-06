@@ -60,12 +60,13 @@ class VoicePlayer {
     }
   }
 
-  async queueSpeak(text, { volume = 1.0, testOptions = null } = {}) {
+  async queueSpeak(text, { volume = 1.0, testOptions = null, onStatus = null } = {}) {
     return new Promise((resolve, reject) => {
       this.queue.push({
         text,
         volume,
         testOptions,
+        onStatus,
         resolve,
         reject
       });
@@ -84,9 +85,11 @@ class VoicePlayer {
         ? { text: item.text, test: true, ...item.testOptions }
         : { text: item.text };
 
+      item.onStatus?.('synthesizing');
       const blob = await adminApi.synthesizeVoice(options);
       objectUrl = URL.createObjectURL(blob);
 
+      item.onStatus?.('playing');
       await this.playAudioUrl(objectUrl, item.volume);
       item.resolve();
     } catch (err) {
@@ -108,41 +111,83 @@ class VoicePlayer {
       audio.volume = Math.max(0, Math.min(1, volume));
       audio.src = url;
 
+      let settled = false;
+      let timeoutTimer = null;
+
       const cleanup = () => {
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         audio.removeEventListener('ended', onEnded);
         audio.removeEventListener('error', onError);
         if (this.currentAudio === audio) this.currentAudio = null;
+        this.stopCurrent = null;
       };
 
       const onEnded = () => {
+        if (settled) return;
+        settled = true;
         cleanup();
         resolve();
       };
 
-      const onError = (e) => {
+      const onError = () => {
+        if (settled) return;
+        settled = true;
         cleanup();
-        reject(new Error('音频播放失败'));
+        reject(new Error('音频解码或播放失败'));
+      };
+
+      this.stopCurrent = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        try {
+          audio.pause();
+          audio.currentTime = 0;
+        } catch {}
+        resolve();
       };
 
       audio.addEventListener('ended', onEnded);
       audio.addEventListener('error', onError);
 
+      // Max playback safety timeout (60 seconds) to avoid hanging
+      timeoutTimer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          try { audio.pause(); } catch {}
+          resolve();
+        }
+      }, 60000);
+
       audio.play().catch(err => {
+        if (settled) return;
+        settled = true;
         cleanup();
-        reject(err);
+        if (err.name === 'NotAllowedError') {
+          reject(new Error('浏览器拦截了音频播放，请先在页面上任意点击以激活音频权限'));
+        } else {
+          reject(err);
+        }
       });
     });
   }
 
   stop() {
-    if (this.currentAudio) {
+    if (typeof this.stopCurrent === 'function') {
+      try { this.stopCurrent(); } catch {}
+      this.stopCurrent = null;
+    } else if (this.currentAudio) {
       try {
         this.currentAudio.pause();
         this.currentAudio.currentTime = 0;
       } catch {}
       this.currentAudio = null;
     }
-    this.queue = [];
+    while (this.queue.length > 0) {
+      const item = this.queue.shift();
+      try { item.reject(new Error('播放已停止')); } catch {}
+    }
     this.isPlaying = false;
   }
 }

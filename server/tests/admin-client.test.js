@@ -34,7 +34,7 @@ before(async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); url = 'http://127.0.0.1:' + server.address().port;
 });
 after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await db.close(); });
-const newClient = (saved, requestFetch = fetch) => new AdminApiClient({ storage: saved, eventTarget: null, fetch: (path, options) => requestFetch(url + path, options) });
+const newClient = (saved, requestFetch = fetch) => new AdminApiClient({ storage: saved, eventTarget: null, serverOrigin: url, fetch: (path, options) => requestFetch(url + path, options) });
 beforeEach(async () => {
   await pool.query('TRUNCATE stores,login_limits,releases RESTART IDENTITY CASCADE');
   await service.createOwner({ username: 'owner', password });
@@ -107,7 +107,7 @@ test('admin can load and repair several legacy phone conflicts without changing 
   const data = JSON.parse(JSON.stringify(await seed(4)));
   data.members[1].phone = data.members[0].phone.slice(0, 3) + ' ' + data.members[0].phone.slice(3);
   data.members[3].phone = data.members[2].phone.slice(0, 3) + '-' + data.members[2].phone.slice(3);
-  await pool.query('UPDATE accounts SET data=$1,integrity=$2 WHERE store_id=$3', [data, integrity(data), identity.store_id]);
+  await pool.query('UPDATE accounts SET data=$1,integrity=$2,revision=revision+1 WHERE store_id=$3', [data, integrity(data), identity.store_id]);
   await client.getAccount();
   assert.deepEqual(client.accountData.value, data);
   assert.throws(() => buildAdminOperation('recharge', [{ memberId: data.members[0].id, actualPay: 10 }], data, client.identity()), /会员单号/);
@@ -231,6 +231,7 @@ for (const status of [429, 403, 409]) {
     client.requestFetch = async (path, options) => {
       const response = await fetch(url + path, options);
       await response.clone().json();
+      if (path !== '/api/v1/sync') return response;
       // Capture the durable state before the disappearing page can handle a response/error.
       const saved = JSON.parse(storage.getItem(client.scopedKey('pending')));
       assert.equal(saved.uncertain, true);
@@ -316,8 +317,11 @@ test('a corrupt acknowledgment retains the original operation until a valid retr
     }
     return response;
   };
-  await assert.rejects(client.sync([recharge(data)]), /校验失败/);
+  await assert.rejects(client.sync([recharge(data)]), { code: 'CLOUD_INTEGRITY_CONFLICT' });
   assert.equal(client.accountStatus.value, 'error'); assert.equal(client.hasPending.value, true);
+  await assert.rejects(client.retryPending(), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+  const backup = await client.reconciliationBackup();
+  await client.reconcileAccount(backup);
   await client.retryPending(); assert.equal(client.accountData.value.members[0].balance, 15000);
 });
 
@@ -522,4 +526,63 @@ test('failed resolution persistence sends no cancellation request and keeps the 
   assert.equal(requests, 0);
   const pending = JSON.parse(storage.getItem(client.scopedKey('pending')));
   assert.equal(pending.operations[0].id, op.id); assert.equal(pending.resolving, undefined);
+});
+
+for (const change of ['rollback', 'same-revision']) {
+  test(`PC observes ${change} across reload and blocks every financial upload until owner reconciliation`, async () => {
+    const data = await seed(), op = recharge(data), previous = await service.account(identity);
+    const altered = JSON.parse(JSON.stringify(data)); altered.members[0].notes = '云端发生恢复';
+    await pool.query('UPDATE accounts SET data=$1,integrity=$2,revision=$3 WHERE store_id=$4', [altered, integrity(altered), previous.revision - (change === 'rollback' ? 1 : 0), identity.store_id]);
+    let writes = 0;
+    const restored = newClient(storage, (path, options) => { if (new URL(path).pathname === '/api/v1/sync') writes++; return fetch(path, options); });
+    await assert.rejects(restored.getAccount(), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+    await assert.rejects(restored.sync([op]), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+    assert.equal(writes, 0); assert.equal(restored.headConflict.value, true);
+    // Restoring the server alone must not silently erase the persisted conflict.
+    await pool.query('UPDATE accounts SET data=$1,integrity=$2,revision=$3 WHERE store_id=$4', [data, previous.integrity, previous.revision, identity.store_id]);
+    const again = newClient(storage);
+    await assert.rejects(again.getAccount(), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+    const backup = await again.reconciliationBackup(); await again.reconcileAccount(backup);
+    await again.sync([op]); assert.equal(again.accountData.value.members[0].balance, 15000);
+    restored.dispose(); again.dispose();
+  });
+}
+
+test('server checks the observed revision inside the transaction when rollback happens after the PC head read', async () => {
+  const data = await seed(), original = await service.account(identity);
+  client.requestFetch = async (path, options) => {
+    if (path === '/api/v1/sync') {
+      assert.deepEqual(JSON.parse(options.body).observedHead, { revision: original.revision, integrity: original.integrity });
+      await pool.query('UPDATE accounts SET revision=revision-1 WHERE store_id=$1', [identity.store_id]);
+    }
+    return fetch(url + path, options);
+  };
+  await assert.rejects(client.sync([recharge(data)]), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+  assert.equal((await service.account(identity)).data.members[0].balance, 10000);
+  assert.equal(client.headConflict.value, true);
+});
+
+test('PC head records are scoped to server and store, and malformed stored heads fail closed', async () => {
+  await seed();
+  const other = new AdminApiClient({ storage, eventTarget: null, serverOrigin: 'https://other.example', fetch: (path, options) => fetch(url + path, options) });
+  assert.equal(other.observedHead(), null); await other.getAccount(); assert.notEqual(other.headKey(), client.headKey());
+  storage.setItem(client.headKey(), '{damaged');
+  await assert.rejects(client.getAccount(), { code: 'CLOUD_INTEGRITY_CONFLICT' });
+  assert.equal(client.headConflict.value, true);
+  await other.getAccount(); other.dispose();
+});
+
+test('a delayed snapshot from another tab is refreshed without creating a false rollback conflict', async () => {
+  const data = await seed(); let release, arrived;
+  const waiting = new Promise(resolve => { release = resolve; }), received = new Promise(resolve => { arrived = resolve; });
+  let first = true;
+  const other = newClient(storage, async (path, options) => {
+    const response = await fetch(path, options);
+    if (new URL(path).pathname === '/api/v1/account' && first) { first = false; await response.clone().json(); arrived(); await waiting; }
+    return response;
+  });
+  const loading = other.getAccount(); await received;
+  await client.sync([recharge(data)]); release(); await loading;
+  assert.equal(other.headConflict.value, false); assert.equal(other.accountData.value.members[0].balance, 15000);
+  other.dispose();
 });

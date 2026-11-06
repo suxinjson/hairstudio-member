@@ -35,7 +35,7 @@
 
     <!-- 权限提示 (非店主) -->
     <div v-if="!isOwner" class="p-4 bg-amber-50 text-amber-900 rounded-2xl border border-amber-200 text-xs font-bold flex items-center gap-2">
-      <span>🔒</span> 提示：您当前以收银员/店员身份登录，仅支持查看与试听。修改语音播报配置需店主权限。
+      <span>🔒</span> 提示：您当前以收银员/店员身份登录，仅支持查看与播放已启用的播报。修改语音播报配置需店主权限。
     </div>
 
     <!-- 消息提示栏 -->
@@ -108,14 +108,7 @@
         <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
           <span>2. {{ form.provider === 'fish_audio' ? 'Fish Audio' : 'HeyGen' }} 接口参数设置</span>
         </h3>
-        <button
-          v-if="isOwner"
-          type="button"
-          @click="fillPresetCredentials"
-          class="text-xs text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 hover:bg-emerald-100 transition"
-        >
-          ✨ 填入我的配置预设
-        </button>
+
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -161,7 +154,7 @@
               v-model="form.apiKey"
               :disabled="!isOwner"
               :type="showKey ? 'text' : 'password'"
-              :placeholder="hasSavedKey ? '已加密存储 (留空表示不修改)' : (form.provider === 'fish_audio' ? 'sk-fish-...' : 'sk_V2_...')"
+              :placeholder="hasSavedKey ? '云端已配置 (留空表示不修改)' : (form.provider === 'fish_audio' ? 'sk-fish-...' : 'sk_V2_...')"
               class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
             />
           </div>
@@ -314,16 +307,17 @@
           />
           <button
             type="button"
-            :disabled="isTesting || !testText.trim()"
+            :disabled="testStatus !== 'idle' || !testText.trim()"
             @click="handleTestPlay"
             class="h-11 px-6 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-md shadow-emerald-900/20 disabled:opacity-50 shrink-0"
           >
-            <span v-if="isTesting" class="animate-spin text-sm">⏳</span>
+            <span v-if="testStatus === 'synthesizing'" class="animate-spin text-sm">⏳</span>
+            <span v-else-if="testStatus === 'playing'" class="animate-pulse text-sm">🔊</span>
             <span v-else>▶</span>
-            <span>{{ isTesting ? '合成中...' : (isPlaying ? '正在播放中' : '试听测试') }}</span>
+            <span>{{ testStatus === 'synthesizing' ? '合成中...' : (testStatus === 'playing' ? '正在播放中' : '试听测试') }}</span>
           </button>
           <button
-            v-if="isPlaying"
+            v-if="testStatus === 'playing'"
             type="button"
             @click="handleStopPlay"
             class="h-11 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition shrink-0"
@@ -331,11 +325,44 @@
             ⏹ 停止
           </button>
         </div>
+
+        <!-- 本区即时状态与错误反馈 -->
+        <div
+          v-if="testMessage"
+          class="p-3 rounded-xl text-xs font-bold transition flex items-center justify-between"
+          :class="testMessageType === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'"
+        >
+          <div class="flex items-center gap-2">
+            <span>{{ testMessageType === 'success' ? '✅' : '⚠️' }}</span>
+            <span>{{ testMessage }}</span>
+          </div>
+          <button type="button" @click="testMessage = ''" class="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
         <p class="text-[11px] text-slate-400">
           💡 点击试听测试将实时调用后端合成接口验证当前的 API Key、服务商与音色 ID，确认生效后点击下方保存。
         </p>
       </div>
     </div>
+
+    <section v-if="isOwner" class="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
+      <h3 class="font-bold text-slate-900">天猫精灵语音记账</h3>
+      <p class="text-xs text-slate-500">通过已校验平台身份的签名网关接入。启用前请配置记账账号、设备和新的随机签名密钥。</p>
+      <label class="flex gap-2 text-sm"><input type="checkbox" v-model="ali.enabled">启用语音查询与记账</label>
+      <label class="block text-sm">记账账号
+        <select v-model="ali.actorId" class="block w-full border rounded-lg p-2 mt-1">
+          <option value="">请选择在用店主或收银员</option>
+          <option v-for="user in voiceActors" :key="user.id" :value="user.id">{{ user.displayName }}（{{ user.role === 'owner' ? '店主' : '收银员' }}）</option>
+        </select>
+      </label>
+      <label class="block text-sm">签名密钥
+        <input type="password" v-model="ali.token" autocomplete="new-password" maxlength="100" :placeholder="aliHasToken ? '已配置；留空保留' : '32–100 位随机字符'" class="block w-full border rounded-lg p-2 mt-1">
+      </label>
+      <button type="button" @click="generateSigningSecret" class="text-sm text-emerald-700">生成新签名密钥</button>
+      <p v-if="generatedSecret" class="text-xs break-all">请复制到签名网关后保存：<code>{{ generatedSecret }}</code></p>
+      <label class="block text-sm">允许的设备标识（每行一个）
+        <textarea v-model="aliDevices" rows="3" class="block w-full border rounded-lg p-2 mt-1" />
+      </label>
+    </section>
 
     <!-- 底部保存按钮 -->
     <div v-if="isOwner" class="flex justify-end gap-3 pt-2">
@@ -378,20 +405,6 @@ const DEFAULTS = {
   }
 };
 
-// 预设用户提供的测试凭证，方便一键快捷填入
-const PRESETS = {
-  fish_audio: {
-    apiKey: 'sk-fish-rIZLqffVSL97Y_D8p825oOP4KmXBmZxF6NFPDRaU6V4',
-    voiceId: '74c6aba5cbf94a15bbdc547ffce5cb38',
-    model: 's2.1-pro-free'
-  },
-  heygen: {
-    apiKey: 'sk_V2_hgu_kkKageLNzi1_JcihQIEY0JuhqYqc8iUFLWlkzHgwsnDF',
-    voiceId: '83548de556df48ba8c09c42a57c51d85',
-    model: 'heygen-voice-1-turbo-free'
-  }
-};
-
 const isOwner = computed(() => adminApi.user.value?.role === 'owner');
 
 const form = reactive({
@@ -408,11 +421,31 @@ const form = reactive({
   }
 });
 
+const ali = reactive({ enabled: false, actorId: '', token: '' });
+const aliDevices = ref('');
+const aliHasToken = ref(false);
+const generatedSecret = ref('');
+const voiceActors = ref([]);
+function generateSigningSecret() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  generatedSecret.value = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  ali.token = generatedSecret.value;
+}
+
 const hasSavedKey = ref(false);
 const showKey = ref(false);
 const testText = ref('欢迎光临梦飞空间，张三消费 50 元，卡内余额 200 元');
-const isTesting = ref(false);
-const isPlaying = ref(false);
+const testStatus = ref('idle');
+const testMessage = ref('');
+const testMessageType = ref('success');
+const isTesting = computed(() => testStatus.value === 'synthesizing');
+const isPlaying = computed(() => testStatus.value === 'playing');
+
+function showTestTip(text, type = 'success') {
+  testMessage.value = text;
+  testMessageType.value = type;
+  showTip(text, type);
+}
 const isSaving = ref(false);
 const message = ref('');
 const messageType = ref('success');
@@ -457,15 +490,6 @@ function resetDefaultVoiceId() {
   form.voiceId = DEFAULTS[form.provider]?.voiceId || '';
 }
 
-function fillPresetCredentials() {
-  const preset = PRESETS[form.provider];
-  if (!preset) return;
-  form.apiKey = preset.apiKey;
-  form.voiceId = preset.voiceId;
-  form.model = preset.model;
-  form.apiUrl = DEFAULTS[form.provider].apiUrl;
-  showTip(`已载入 ${form.provider === 'fish_audio' ? 'Fish Audio' : 'HeyGen'} 预设凭证，可直接点击试听`, 'success');
-}
 
 function insertVar(type, variable) {
   if (!isOwner.value) return;
@@ -479,7 +503,7 @@ async function loadConfig() {
     form.enabled = Boolean(data.enabled);
     form.provider = data.provider || 'fish_audio';
     form.apiUrl = data.apiUrl || '';
-    form.apiKey = data.apiKey || '';
+    form.apiKey = '';
     form.model = data.model || DEFAULTS[form.provider].model;
     form.voiceId = data.voiceId || DEFAULTS[form.provider].voiceId;
     form.volume = typeof data.volume === 'number' ? data.volume : 1.0;
@@ -488,41 +512,66 @@ async function loadConfig() {
       form.templates.recharge = data.templates.recharge || '{name} 充值 {amount} 元，卡内余额 {balance} 元';
     }
     hasSavedKey.value = Boolean(data.hasApiKey);
+    ali.enabled = Boolean(data.aligenie?.enabled); ali.actorId = data.aligenie?.actorId || '';
+    ali.token = ''; generatedSecret.value = ''; aliHasToken.value = Boolean(data.aligenie?.hasToken);
+    aliDevices.value = (data.aligenie?.allowedDevices || []).join('\n');
+    if (isOwner.value) voiceActors.value = (await adminApi.getUsers()).filter(user => user.active && user.role !== 'viewer');
   } catch (err) {
     showTip('加载语音配置失败: ' + err.message, 'error');
   }
 }
 
 async function handleTestPlay() {
-  if (!testText.value.trim()) return;
-  isTesting.value = true;
-  isPlaying.value = true;
-  message.value = '';
+  if (!testText.value.trim()) {
+    showTestTip('请输入需要试听的测试文本', 'error');
+    return;
+  }
+
+  if (isOwner.value && !form.apiKey.trim() && !hasSavedKey.value) {
+    showTestTip('未检测到 API Key，请先在上方输入 API Key 后再试听', 'error');
+    return;
+  }
+
+  if (!isOwner.value && !form.enabled) {
+    showTestTip('当前语音播报功能未启用，仅店主可试听草稿配置', 'error');
+    return;
+  }
+
+  testStatus.value = 'synthesizing';
+  testMessage.value = '';
+
+  try {
+    const dummyAudio = new Audio();
+    dummyAudio.volume = 0;
+    dummyAudio.play().catch(() => {});
+  } catch {}
 
   try {
     await voicePlayer.queueSpeak(testText.value.trim(), {
       volume: form.volume,
-      testOptions: {
+      testOptions: isOwner.value ? {
         provider: form.provider,
         apiUrl: form.apiUrl || defaultUrl.value,
         apiKey: form.apiKey,
         model: form.model || defaultModel.value,
         voiceId: form.voiceId || defaultVoiceId.value
+      } : null,
+      onStatus: status => {
+        testStatus.value = status;
       }
     });
-    showTip('音频合成并播放成功！', 'success');
+    showTestTip('音频合成并播放成功！', 'success');
   } catch (err) {
-    showTip('试听失败: ' + err.message, 'error');
+    showTestTip('试听失败: ' + err.message, 'error');
   } finally {
-    isTesting.value = false;
-    isPlaying.value = false;
+    testStatus.value = 'idle';
   }
 }
 
 function handleStopPlay() {
   voicePlayer.stop();
-  isPlaying.value = false;
-  isTesting.value = false;
+  testStatus.value = 'idle';
+  showTestTip('试听已停止', 'success');
 }
 
 async function handleSave() {
@@ -539,6 +588,7 @@ async function handleSave() {
       model: form.model.trim(),
       voiceId: form.voiceId.trim(),
       volume: form.volume,
+      aligenie: { ...ali, allowedDevices: aliDevices.value.split(/[,\n]/).map(value => value.trim()).filter(Boolean) },
       templates: {
         consume: form.templates.consume.trim(),
         recharge: form.templates.recharge.trim()
@@ -547,6 +597,7 @@ async function handleSave() {
 
     const result = await adminApi.saveVoiceConfig(payload);
     hasSavedKey.value = Boolean(result.hasApiKey);
+    form.apiKey = ''; ali.token = ''; generatedSecret.value = ''; aliHasToken.value = Boolean(result.aligenie?.hasToken);
     voicePlayer.invalidateConfig();
     showTip('语音播报配置已成功保存！', 'success');
   } catch (err) {

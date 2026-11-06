@@ -5,7 +5,7 @@ import { createLocalDb, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from '../src/
 import { replayOperation } from '../src/cloud-storage.js';
 import { canWrite, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
 import { DATA_LIMITS, assertAccountLimits, assertJsonBudget, boundedText } from '../src/data-limits.js';
-import { sanitizeVoiceConfig, synthesizeTTS, maskApiKey } from './voice.js';
+import { sanitizeVoiceConfig, readVoiceConfig, publicVoiceConfig, synthesizeTTS } from './voice.js';
 import { handleAliGenieWebhook, getAliGenieVerificationContent } from './aligenie.js';
 
 export function validateSnapshot(data, options) {
@@ -32,7 +32,10 @@ function validateImportReceipt(value, operations) {
   }
 }
 
-export function createService(pool, { fetchFn = fetch } = {}) {
+let activeSynthesis = 0;
+const MAX_SYNTHESIS = 4;
+
+export function createService(pool, { fetchFn } = {}) {
   async function importReceipts(client, user, signature) {
     return (await client.query("SELECT request_hash,result FROM operations WHERE store_id=$1 AND method='admin_import_batch' AND id LIKE $2 ORDER BY (result->>'batchIndex')::int", [user.store_id, 'IMPORT-' + signature + '-%'])).rows;
   }
@@ -150,6 +153,18 @@ export function createService(pool, { fetchFn = fetch } = {}) {
         const user = await lockedUser(client, identity);
         const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1', [user.store_id]);
         if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败，请联系管理员', 'INTEGRITY_FAILED');
+        return { data: account.data, revision: account.revision, integrity: account.integrity };
+      });
+    },
+    async reconcileAccount(identity, expectedHead) {
+      if (!Number.isSafeInteger(expectedHead?.revision) || expectedHead.revision < 0 || !/^[a-f0-9]{64}$/.test(expectedHead.integrity || '')) throw new ApiError(400, '核对版本无效');
+      return transaction(pool, async client => {
+        const user = await lockedUser(client, identity);
+        if (user.role !== 'owner') throw new ApiError(403, '仅店主可以重新确认账本版本');
+        const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
+        if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端数据损坏，请先修复服务器账本');
+        if (account.revision !== expectedHead.revision || account.integrity !== expectedHead.integrity) throw new ApiError(409, '云端账本已变化，请重新导出核对');
+        await audit(client, user, 'account_version_reconciled', { expectedHead });
         return { data: account.data, revision: account.revision, integrity: account.integrity };
       });
     },
@@ -353,12 +368,8 @@ export function createService(pool, { fetchFn = fetch } = {}) {
         const user = await lockedUser(client, identity);
         const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
         const saved = rows[0]?.voice_config || {};
-        const config = sanitizeVoiceConfig(saved);
-        return {
-          ...config,
-          apiKey: user.role === 'owner' ? config.apiKey : maskApiKey(config.apiKey),
-          hasApiKey: Boolean(config.apiKey)
-        };
+        const config = readVoiceConfig(saved);
+        return publicVoiceConfig(config, user.role);
       });
     },
     async saveVoiceConfig(identity, input) {
@@ -367,61 +378,40 @@ export function createService(pool, { fetchFn = fetch } = {}) {
         const user = await lockedUser(client, identity);
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以修改语音播报配置');
         const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1 FOR UPDATE', [user.store_id]);
-        const previous = rows[0]?.voice_config || {};
+        const previous = readVoiceConfig(rows[0]?.voice_config || {});
+        if (rows[0]?.voice_config?.aligenie?.authVersion !== 2 && input?.aligenie?.token && input.aligenie.token === rows[0]?.voice_config?.aligenie?.token) throw new ApiError(400, '旧语音口令已泄漏，请生成新的随机签名密钥');
         const next = sanitizeVoiceConfig(input, previous);
+        if (next.aligenie.enabled) {
+          const { rows: [actor] } = await client.query('SELECT id,role,active FROM users WHERE store_id=$1 AND id=$2', [user.store_id, next.aligenie.actorId || null]);
+          if (!actor?.active || actor.role === 'viewer' || !next.aligenie.token || !next.aligenie.allowedDevices.length || next.aligenie.authVersion !== 2) throw new ApiError(400, '启用语音记账须配置新签名密钥、在用记账账号和设备白名单');
+        }
         await client.query(
           'INSERT INTO store_settings(store_id, voice_config, updated_at) VALUES($1, $2, now()) ON CONFLICT(store_id) DO UPDATE SET voice_config=$2, updated_at=now()',
           [user.store_id, JSON.stringify(next)]
         );
         await audit(client, user, 'voice_config_updated', { provider: next.provider, enabled: next.enabled });
-        return {
-          ...next,
-          apiKey: next.apiKey,
-          hasApiKey: Boolean(next.apiKey)
-        };
+        return publicVoiceConfig(next, user.role);
       });
     },
     async synthesizeVoice(identity, options = {}) {
-      return transaction(pool, async client => {
-        const user = await lockedUser(client, identity);
-        const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
-        const saved = rows[0]?.voice_config || {};
-        const config = sanitizeVoiceConfig(saved);
-
-        let provider = config.provider;
-        let apiUrl = config.apiUrl;
-        let apiKey = config.apiKey;
-        let model = config.model;
-        let voiceId = config.voiceId;
-        const text = options.text;
-
-        if (user.role === 'owner' && options.test) {
-          if (options.provider && ['fish_audio', 'heygen'].includes(options.provider)) provider = options.provider;
-          if (typeof options.apiUrl === 'string') apiUrl = options.apiUrl.trim();
-          if (typeof options.apiKey === 'string' && options.apiKey.trim() && !options.apiKey.includes('****')) {
-            apiKey = options.apiKey.trim();
-          }
-          if (typeof options.model === 'string') model = options.model.trim();
-          if (typeof options.voiceId === 'string') voiceId = options.voiceId.trim();
-        }
-
-        if (!config.enabled && !options.test) {
-          throw new ApiError(400, '语音播报功能未启用');
-        }
-
-        return synthesizeTTS({
-          provider,
-          apiUrl,
-          apiKey,
-          model,
-          voiceId,
-          text,
-          fetchFn
+      if (activeSynthesis >= MAX_SYNTHESIS) throw new ApiError(429, '语音合成繁忙，请稍后重试', 'VOICE_BUSY');
+      activeSynthesis++;
+      try {
+        const config = await transaction(pool, async client => {
+          const user = await lockedUser(client, identity);
+          if (options.test === true && user.role !== 'owner') throw new ApiError(403, '仅店主可以试听草稿配置');
+          const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
+          const saved = readVoiceConfig(rows[0]?.voice_config || {});
+          const ownerTest = user.role === 'owner' && options.test === true;
+          if (!saved.enabled && !ownerTest) throw new ApiError(400, '语音播报功能未启用');
+          return ownerTest ? sanitizeVoiceConfig(options, saved) : saved;
         });
-      });
+        // No database connection or account/session lock is held during network IO.
+        return await synthesizeTTS({ ...config, text: options.text, fetchFn });
+      } finally { activeSynthesis--; }
     },
-    async handleAliGenieWebhook(body, { token = '', storeId = '', headers = {} } = {}) {
-      return handleAliGenieWebhook({ pool, body, query: { token, storeId }, headers });
+    async handleAliGenieWebhook(body, { headers = {} } = {}) {
+      return handleAliGenieWebhook({ pool, body, headers });
     },
     async getAliGenieVerification(fileName) {
       return getAliGenieVerificationContent(fileName, pool);

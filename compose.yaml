@@ -54,13 +54,14 @@ services:
       PGPASSWORD: ${APP_DATABASE_PASSWORD:?请设置独立的应用数据库随机密码}
       TRUSTED_PROXY_IPS: ${MEMBER_PROXY_IP:-172.30.184.10}
       ALLOWED_ORIGINS: https://localhost,https://${PUBLIC_DOMAIN:?请设置公网域名}
+      VOICE_ALLOWED_ORIGINS: ${VOICE_ALLOWED_ORIGINS:-}
       RELEASE_DIRECTORY: /app/releases
       RELEASE_CERT_SHA256: ${RELEASE_CERT_SHA256:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
     volumes: ["packages:/app/releases:ro"]
-    networks: [private]
+    networks: [private, voice_egress]
     read_only: true
     tmpfs: ["/tmp:size=32m,mode=1777"]
     cap_drop: [ALL]
@@ -100,3 +101,4 @@ networks:
       config:
         - subnet: ${MEMBER_PRIVATE_SUBNET:-172.30.184.0/24}
   public:
+  voice_egress:

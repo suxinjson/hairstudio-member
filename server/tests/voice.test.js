@@ -85,12 +85,12 @@ test('HeyGen TTS synthesis requests audio URL and downloads audio stream', async
         ok: true,
         status: 200,
         headers: new Headers({ 'content-type': 'application/json' }),
-        json: async () => ({
+        arrayBuffer: async () => new TextEncoder().encode(JSON.stringify({
           data: {
             audio_url: 'https://resource2.heygen.ai/audio/sample.wav',
             duration: 3.5
           }
-        })
+        })).buffer
       };
     }
     if (url === 'https://resource2.heygen.ai/audio/sample.wav') {
@@ -209,7 +209,7 @@ test('Voice configuration endpoints and synthesis API security and flow', async 
     assert.equal(ownerSaveRes.status, 200);
     const savedData = await ownerSaveRes.json();
     assert.equal(savedData.enabled, true);
-    assert.equal(savedData.apiKey, 'sk-fish-valid-key-12345678');
+    assert.equal(savedData.apiKey, '');
     assert.equal(savedData.hasApiKey, true);
 
     // 6. Clerk reads voice config: apiKey must be masked
@@ -219,7 +219,8 @@ test('Voice configuration endpoints and synthesis API security and flow', async 
     const clerkConfig = await clerkReadRes.json();
     assert.equal(clerkConfig.enabled, true);
     assert.equal(clerkConfig.hasApiKey, true);
-    assert.equal(clerkConfig.apiKey, 'sk-f****5678');
+    assert.equal(clerkConfig.apiKey, '');
+    assert.equal(clerkConfig.aligenie, undefined);
 
     // 7. Synthesize voice through API proxy
     const synthRes = await fetch(`${baseUrl}/api/v1/voice/synthesize`, {

@@ -27,13 +27,15 @@ export async function configureRuntimeRole(pool, password) {
     await client.query('GRANT USAGE ON SCHEMA public TO member_app');
     await client.query('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM member_app');
     await client.query('REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM member_app');
-    await client.query('REVOKE ALL ON stores,users,accounts,sessions,login_limits,operations,audit_events,releases,store_settings FROM PUBLIC');
+    await client.query('REVOKE ALL ON stores,users,accounts,sessions,login_limits,operations,audit_events,releases,store_settings,voice_dialogs,voice_requests FROM PUBLIC');
     await client.query('REVOKE ALL ON SEQUENCE audit_events_id_seq FROM PUBLIC');
     await client.query('GRANT SELECT ON stores,releases TO member_app');
     await client.query('GRANT UPDATE(id) ON stores TO member_app'); // FOR UPDATE store serialization.
     await client.query('GRANT SELECT,INSERT,UPDATE ON users,store_settings TO member_app');
     await client.query('GRANT SELECT,UPDATE ON accounts TO member_app');
     await client.query('GRANT SELECT,INSERT,UPDATE,DELETE ON sessions,login_limits TO member_app');
+    await client.query('GRANT SELECT,INSERT,UPDATE,DELETE ON voice_dialogs TO member_app');
+    await client.query('GRANT SELECT,INSERT,DELETE ON voice_requests TO member_app');
     await client.query('GRANT SELECT,INSERT ON operations,audit_events TO member_app');
     await client.query('GRANT USAGE ON SEQUENCE audit_events_id_seq TO member_app');
   });
@@ -43,7 +45,7 @@ export async function assertRuntimeRole(pool) {
   if (!role || role.rolname !== 'member_app' || ['rolsuper', 'rolcreatedb', 'rolcreaterole', 'rolreplication', 'rolbypassrls', 'memberships', 'database_create', 'database_temp', 'schema_create'].some(key => role[key])) throw new Error('生产 API 必须使用受限的 member_app 数据库账号，请先运行迁移任务');
   const { rows } = await pool.query("SELECT 1 FROM pg_class c JOIN pg_roles r ON r.oid=c.relowner WHERE r.rolname=current_user AND c.relnamespace='public'::regnamespace LIMIT 1");
   if (rows.length) throw new Error('运行时账号不能拥有生产数据库对象');
-  const { rows: [grants] } = await pool.query("SELECT has_table_privilege(current_user,'accounts','INSERT,DELETE,TRUNCATE') OR has_table_privilege(current_user,'releases','INSERT,UPDATE,DELETE,TRUNCATE') OR has_table_privilege(current_user,'operations','UPDATE,DELETE,TRUNCATE') OR has_table_privilege(current_user,'audit_events','UPDATE,DELETE,TRUNCATE') AS forbidden");
+  const { rows: [grants] } = await pool.query("SELECT has_table_privilege(current_user,'accounts','INSERT,DELETE,TRUNCATE') OR has_table_privilege(current_user,'releases','INSERT,UPDATE,DELETE,TRUNCATE') OR has_table_privilege(current_user,'operations','UPDATE,DELETE,TRUNCATE') OR has_table_privilege(current_user,'audit_events','UPDATE,DELETE,TRUNCATE') OR has_table_privilege(current_user,'voice_requests','UPDATE,TRUNCATE') OR has_table_privilege(current_user,'voice_dialogs','TRUNCATE') AS forbidden");
   if (grants.forbidden) throw new Error('运行时账号具有超出业务所需的数据库写入权限');
 }
 export async function transaction(pool, callback) {

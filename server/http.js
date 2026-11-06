@@ -88,8 +88,6 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
         guard.take('voice_aligenie:' + ip, 60);
         const input = await body(request, 32 * 1024);
         const result = await service.handleAliGenieWebhook(input, {
-          token: url.searchParams.get('token') || '',
-          storeId: url.searchParams.get('storeId') || '',
           headers: request.headers
         });
         return send(200, result);
@@ -100,6 +98,7 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       if (request.method !== 'GET') guard.take('write:' + identity.id, 30);
       if (route === 'POST /api/v1/auth/logout') { await service.logout(identity); return send(200, { success: true }); }
       if (route === 'GET /api/v1/account') return send(200, await service.account(identity));
+      if (route === 'POST /api/v1/account/reconcile') return send(200, await service.reconcileAccount(identity, (await body(request, 1024)).expectedHead));
       if (route === 'GET /api/v1/account/head') {
         const { revision, integrity } = await service.account(identity);
         return send(200, { revision, integrity });

@@ -1,4 +1,5 @@
-import { ref } from 'vue';
+import { ref, getCurrentScope, onScopeDispose } from 'vue';
+import { DATA_LIMITS } from '../data-limits.js';
 import { exportFile, isExportCancelled } from '../file-export.js';
 
 export function useBackupOperations({
@@ -17,6 +18,13 @@ export function useBackupOperations({
   const isRestoringBackup = ref(false);
   const restoreMode = ref('merge');
   const localSnapshots = ref([]);
+  let currentReader = null, readGeneration = 0;
+  function cancelRead() {
+    readGeneration++;
+    const old = currentReader; currentReader = null;
+    if (old?.readyState === 1) old.abort();
+  }
+  if (getCurrentScope()) onScopeDispose(cancelRead);
 
   function showExportResult(result, extra = '') {
     const message = result.kind === 'shared'
@@ -139,6 +147,7 @@ export function useBackupOperations({
 
   // 从快照快速触发恢复
   function handleRestoreSnapshot(s, mode = 'merge') {
+    cancelRead();
     try {
       const preview = localDb.previewBackup(s.content);
       restoreMode.value = preview.currentDataError ? 'replace' : mode;
@@ -156,10 +165,19 @@ export function useBackupOperations({
   function handleImportBackup(e) {
     const input = e.target;
     const file = input.files?.[0];
+    cancelRead();
     if (!file) return;
-
+    if (file.size > DATA_LIMITS.backupBytes) {
+      input.value = '';
+      showFeedback('备份文件超过 20 MiB 限制，请选择较小的有效备份。', 'error', { title: '备份读取失败' });
+      return;
+    }
+    const generation = readGeneration;
     const reader = new FileReader();
+    currentReader = reader;
     reader.onload = (event) => {
+      if (generation !== readGeneration) return;
+      currentReader = null;
       try {
         const content = String(event.target.result || '');
         const preview = localDb.previewBackup(content);
@@ -176,6 +194,8 @@ export function useBackupOperations({
       }
     };
     reader.onerror = () => {
+      if (generation !== readGeneration) return;
+      currentReader = null;
       input.value = '';
       showFeedback('无法读取所选文件，请重新选择备份文件。', 'error', { title: '备份读取失败' });
     };

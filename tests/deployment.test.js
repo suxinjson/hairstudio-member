@@ -296,3 +296,12 @@ test('the API Docker stage includes every relative source dependency of its copi
     }
   }
 });
+
+test('voice API has egress while PostgreSQL remains isolated and unexposed', async () => {
+  const compose = await readFile(new URL('../compose.yaml', import.meta.url), 'utf8');
+  const database = compose.slice(compose.indexOf('  db:'), compose.indexOf('  migrate:'));
+  const api = compose.slice(compose.indexOf('  api:'), compose.indexOf('  web:'));
+  assert.match(api, /networks: \[private, voice_egress\]/); assert.match(api, /VOICE_ALLOWED_ORIGINS:/);
+  assert.match(database, /networks: \[private\]/); assert.doesNotMatch(database, /ports:/);
+  assert.match(compose, /private:\s+internal: true/); assert.match(compose, /voice_egress:\s*$/);
+});
