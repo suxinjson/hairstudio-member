@@ -77,6 +77,13 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
         });
         return response.end(content);
       }
+      if (route === 'GET /api/v1/voice/aligenie') {
+        return send(200, {
+          status: 'ok',
+          service: 'AliGenie Voice Webhook',
+          time: new Date().toISOString()
+        });
+      }
       if (route === 'POST /api/v1/voice/aligenie') {
         guard.take('voice_aligenie:' + ip, 60);
         const input = await body(request, 32 * 1024);

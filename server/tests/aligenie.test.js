@@ -13,15 +13,22 @@ import {
   parseAmount,
   cleanMemberQuery,
   findMatchingMembers,
+  findMemberFromUtterance,
   lookupServicePrice,
   formatAliGenieResponse
 } from '../aligenie.js';
 
 test('AliGenie parser and utility functions', () => {
-  // 1. Amount parsing
+  // 1. Amount parsing (Arabic + Chinese numerals)
   assert.equal(parseAmount('38元'), 38);
   assert.equal(parseAmount('38.5块钱'), 38.5);
   assert.equal(parseAmount('100'), 100);
+  assert.equal(parseAmount('一百'), 100);
+  assert.equal(parseAmount('三十八'), 38);
+  assert.equal(parseAmount('两百元'), 200);
+  assert.equal(parseAmount('十五块'), 15);
+  assert.equal(parseAmount('五十'), 50);
+  assert.equal(parseAmount('一百五'), 150);
   assert.equal(parseAmount('0'), null);
   assert.equal(parseAmount(''), null);
   assert.equal(parseAmount(null), null);
@@ -64,6 +71,27 @@ test('AliGenie parser and utility functions', () => {
   assert.deepEqual(lookupServicePrice(services, '精致洗剪吹'), { name: '精致洗剪吹', price: 38 });
   assert.deepEqual(lookupServicePrice(services, '洗剪吹'), { name: '精致洗剪吹', price: 38 });
   assert.deepEqual(lookupServicePrice(services, '染发'), null);
+
+  // 4.1 Utterance member extraction
+  assert.equal(findMemberFromUtterance(testMembers, '张三消费一百')?.id, 'm1');
+  assert.equal(findMemberFromUtterance(testMembers, '张三丰剪发38元')?.id, 'm3');
+  assert.equal(findMemberFromUtterance(testMembers, '查一下李四余额')?.id, 'm2');
+  assert.equal(findMemberFromUtterance(testMembers, '尾号5678充值200')?.id, 'm2');
+
+  // 4.2 Format response verification (supports both 1.0 returnCode/returnValue and 2.0 outputSpeech)
+  const resp1 = formatAliGenieResponse({ text: '欢迎使用', shouldEndSession: false });
+  assert.equal(resp1.returnCode, '0');
+  assert.equal(resp1.returnValue.reply, '欢迎使用');
+  assert.equal(resp1.returnValue.resultType, 'ASK_INF');
+  assert.equal(resp1.version, '2.0');
+  assert.equal(resp1.response.outputSpeech.text, '欢迎使用');
+  assert.equal(resp1.response.outputSpeechs[0].text, '欢迎使用');
+  assert.equal(resp1.response.shouldEndSession, false);
+
+  const resp2 = formatAliGenieResponse({ text: '扣款完成', shouldEndSession: true });
+  assert.equal(resp2.returnCode, '0');
+  assert.equal(resp2.returnValue.resultType, 'RESULT');
+  assert.equal(resp2.response.shouldEndSession, true);
 
   // 5. 2.0 Request parsing
   const v2Body = {
@@ -321,8 +349,24 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.match(consumeData1.response.outputSpeechs[0].text, /本次洗剪吹理发消费 38.00 元/);
     assert.match(consumeData1.response.outputSpeechs[0].text, /扣款后卡内剩余 62.00 元/);
     assert.match(consumeData1.response.outputSpeechs[0].text, /请问确认扣款吗/);
+    assert.equal(consumeData1.returnCode, '0');
+    assert.equal(consumeData1.returnValue.resultType, 'ASK_INF');
     assert.equal(consumeData1.response.directives[0].type, 'Dialog.Confirm');
     assert.equal(consumeData1.response.shouldEndSession, false);
+
+    // 5.1.1 Direct utterance "张三消费一百" without slots (supports Chinese number "一百")
+    const pureRes = await fetch(`${baseUrl}/api/v1/voice/aligenie`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        utterance: '张三消费一百'
+      })
+    });
+    const pureData = await pureRes.json();
+    assert.equal(pureData.returnCode, '0');
+    assert.match(pureData.returnValue.reply, /会员张三本次洗剪吹理发消费 100.00 元/);
+    assert.match(pureData.returnValue.reply, /扣款后卡内剩余 0.00 元/);
+    assert.match(pureData.returnValue.reply, /请问确认扣款吗/);
 
     // Verify Zhang San balance has NOT changed yet in DB
     const head1 = await service.account(identity);
