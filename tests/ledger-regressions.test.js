@@ -4,6 +4,7 @@ import { parse } from 'csv-parse/sync';
 import { localDb } from '../src/storage.js';
 import { validateAccountHistory } from '../src/accounting.js';
 import { moneyToCent, isValidMoney } from '../src/money.js';
+import { useMemberCrud } from '../src/composables/useMemberCrud.js';
 
 const membersKey = 'hairstudio_members_v2';
 const ledgersKey = 'hairstudio_ledgers_v2';
@@ -28,6 +29,26 @@ beforeEach(() => {
 
 const newMember = (initialBalance = 100) => localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance });
 const backup = () => localDb.exportBackupData({ archiveSnapshot: false });
+
+test('member edits reject a newer profile without losing the form and reopen against the latest data', () => {
+  const member = newMember(), feedback = [];
+  const edit = useMemberCrud({ localDb, refreshAll() {}, selectMember() {}, showToast() {},
+    showFeedback: message => feedback.push(message), askConfirm: async () => true, selectedMember: { value: null } });
+  edit.openEditMemberModal(member);
+  edit.memberForm.value.name = '新姓名';
+  localDb.updateMember(member.id, { notes: '其他设备新备注' });
+  edit.submitMemberForm();
+  assert.match(feedback[0], /重新打开/);
+  assert.equal(edit.showMemberModal.value, true);
+  assert.equal(edit.memberForm.value.name, '新姓名');
+  assert.equal(localDb.getMemberById(member.id).name, member.name);
+  assert.equal(localDb.getMemberById(member.id).notes, '其他设备新备注');
+  edit.openEditMemberModal(localDb.getMemberById(member.id));
+  edit.memberForm.value.name = '新姓名'; edit.submitMemberForm();
+  assert.equal(edit.showMemberModal.value, false);
+  assert.equal(localDb.getMemberById(member.id).name, '新姓名');
+  assert.equal(localDb.getMemberById(member.id).notes, '其他设备新备注');
+});
 
 test('legacy phone conflicts remain readable and repairable by ID while all financial writes stay blocked', () => {
   const members = Array.from({ length: 5 }, (_, i) => localDb.createMember({

@@ -349,6 +349,7 @@ import { isValidMoney, moneyToCent } from '../../../src/money.js';
 import { normalizeMemberPhone } from '../../../src/accounting.js';
 import { memberTagText } from '../../../src/member-tags.js';
 import { voicePlayer } from '../utils/voice-player.js';
+import { canonicalJSON, mutationPrecondition } from '../../../src/sync-protocol.js';
 
 const props = defineProps({
   members: { type: Array, default: () => [] },
@@ -495,16 +496,19 @@ async function submitRecharge() {
 
 // 登记 / 修改业务
 const editingMember = ref(null);
+let editBaseline = null;
 const editForm = ref({ name: '', phone: '', initialBalanceStr: '', tag: '', remark: '' });
 const editError = ref('');
 
 function openNewModal() {
+  editBaseline = null;
   editingMember.value = {};
   editForm.value = { name: '', phone: '', initialBalanceStr: '', tag: '', remark: '' };
   editError.value = '';
 }
 
 function openEditModal(member) {
+  editBaseline = { members: [JSON.parse(JSON.stringify(member))] };
   editingMember.value = member;
   const noteStr = member.notes || member.remark || '';
   const tagMatch = /^\[([^\]]+)\]\s*(.*)$/.exec(noteStr);
@@ -540,6 +544,9 @@ async function submitMemberForm() {
     const notes = [tagPart ? `[${tagPart}]` : '', remarkPart].filter(Boolean).join(' ');
 
     if (editingMember.value.id) {
+      const current = mutationPrecondition({ members: props.members }, 'updateMember', [editingMember.value.id]);
+      const original = mutationPrecondition(editBaseline, 'updateMember', [editingMember.value.id]);
+      if (canonicalJSON(current) !== canonicalJSON(original)) throw new Error('会员档案已变化，请重新打开编辑窗口核对后保存');
       // 修改已有：两参数 (memberId, patch)
       await submitOperation('updateMember', [
         editingMember.value.id,
@@ -548,7 +555,7 @@ async function submitMemberForm() {
           phone,
           notes
         }
-      ]);
+      ], editBaseline);
     } else {
       // 新建：初始储值金额为元 (initBal)
       const initBal = String(editForm.value.initialBalanceStr || '0').trim();

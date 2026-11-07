@@ -11,6 +11,7 @@ export function getCloudState(storage = globalThis.localStorage) {
       (state.binding && (typeof state.binding.storeId !== 'string' || !state.serverUrl || typeof state.deviceId !== 'string')) ||
       (state.user && !['owner', 'clerk', 'viewer'].includes(state.user.role)) ||
       (state.cloudAdoption && (!Number.isSafeInteger(state.cloudAdoption.cursor) || state.cloudAdoption.cursor < 0 ||
+        ![undefined, 'upload'].includes(state.cloudAdoption.mode) ||
         state.cloudAdoption.cursor > state.outbox.length || typeof state.cloudAdoption.bootstrapResolved !== 'boolean' ||
         typeof state.cloudAdoption.actorId !== 'string' || !Number.isSafeInteger(state.cloudAdoption.revision) ||
         state.cloudAdoption.revision < 0 || !/^[a-f0-9]{64}$/.test(state.cloudAdoption.integrity || '')))) throw new Error('云端同步记录损坏，请保留本地账本并联系支持');

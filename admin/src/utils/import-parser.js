@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { checkZipBudget } from './zip-budget.js';
 
 export const IMPORT_LIMITS = Object.freeze({ bytes: 10 * 1024 * 1024, rows: 10005, columns: 128, cells: 500000,
   expandedBytes: 64 * 1024 * 1024, cellText: 4096, resultBytes: 10 * 1024 * 1024 });
@@ -30,28 +31,6 @@ export function assertImportRowsBudget(rows) {
   return rows;
 }
 
-// Check ZIP directory sizes before XLSX can inflate compressed worksheets.
-function checkZipBudget(buffer) {
-  const bytes = new Uint8Array(buffer), view = new DataView(buffer);
-  if (bytes.length < 22 || view.getUint32(0, true) !== 0x04034b50) return;
-  let end = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
-    if (view.getUint32(i, true) === 0x06054b50 && i + 22 + view.getUint16(i + 20, true) === bytes.length) { end = i; break; }
-  }
-  if (end < 0) throw new Error('Excel 压缩文件目录无效');
-  const entries = view.getUint16(end + 10, true), size = view.getUint32(end + 12, true);
-  let offset = view.getUint32(end + 16, true), expanded = 0;
-  if (entries > 2048 || entries === 0xffff || offset + size > end) throw new Error('Excel 压缩文件超出解析限制');
-  const directoryEnd = offset + size;
-  for (let i = 0; i < entries; i++) {
-    if (offset + 46 > directoryEnd || view.getUint32(offset, true) !== 0x02014b50) throw new Error('Excel 压缩文件目录无效');
-    expanded += view.getUint32(offset + 24, true);
-    if (expanded > IMPORT_LIMITS.expandedBytes) throw new Error('Excel 解压数据过大，请分批导入');
-    offset += 46 + view.getUint16(offset + 28, true) + view.getUint16(offset + 30, true) + view.getUint16(offset + 32, true);
-    if (offset > directoryEnd) throw new Error('Excel 压缩文件目录无效');
-  }
-}
-
 export function parseImportBuffer(buffer, isCsv) {
   if (buffer.byteLength > IMPORT_LIMITS.bytes) throw new Error('导入文件过大，最大支持 10MB');
   const options = { sheetRows: IMPORT_LIMITS.rows + 1, sheets: 0 };
@@ -62,7 +41,7 @@ export function parseImportBuffer(buffer, isCsv) {
     catch { text = new TextDecoder('gbk').decode(buffer); }
     workbook = XLSX.read(text, { ...options, type: 'string', raw: true });
   } else {
-    checkZipBudget(buffer);
+    checkZipBudget(buffer, IMPORT_LIMITS.expandedBytes);
     workbook = XLSX.read(buffer, { ...options, type: 'array' });
   }
   const sheet = workbook.Sheets[workbook.SheetNames[0]];

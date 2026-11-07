@@ -30,8 +30,8 @@
       <div v-if="state.status === 'needs-choice' || state.status === 'conflict' || recoveryRequired" class="rounded-xl p-3 bg-amber-50 space-y-3">
         <p>{{ resolutionMessage }}</p>
         <button @click="exportPending" :disabled="state.busy" class="rounded-xl p-3 bg-white border font-bold">导出本机账本与待同步记录</button>
-        <button @click="useCloud" :disabled="state.busy || !canRequest" class="rounded-xl p-3 border border-rose-300 text-rose-800 font-bold">{{ state.cloudAdoption ? '继续核对并采用云端账本' : '采用云端账本，放弃本机待同步变更' }}</button>
-        <button v-if="!state.cloudAdoption && state.status === 'conflict' && ['recovery', 'integrity'].includes(state.conflictReason) && state.user.role === 'owner'" @click="uploadRecovered" :disabled="state.busy || !state.online || recoveryRequired" class="rounded-xl p-3 border border-indigo-300 text-indigo-800 font-bold">{{ state.conflictReason === 'integrity' ? '确认上传本机完整账本' : '确认上传恢复后的本机账本' }}</button>
+        <button v-if="state.cloudAdoption?.mode !== 'upload'" @click="useCloud" :disabled="state.busy || !canResolve" class="rounded-xl p-3 border border-rose-300 text-rose-800 font-bold">{{ state.cloudAdoption ? '继续核对并采用云端账本' : '采用云端账本，放弃本机待同步变更' }}</button>
+        <button v-if="(!state.cloudAdoption || state.cloudAdoption.mode === 'upload') && state.status === 'conflict' && ['recovery', 'integrity'].includes(state.conflictReason) && state.user.role === 'owner'" @click="uploadRecovered" :disabled="state.busy || !canResolve || recoveryRequired" class="rounded-xl p-3 border border-indigo-300 text-indigo-800 font-bold">{{ state.cloudAdoption?.mode === 'upload' ? '继续核对并上传恢复账本' : state.conflictReason === 'integrity' ? '确认上传本机完整账本' : '确认上传恢复后的本机账本' }}</button>
       </div>
       <div class="flex flex-wrap gap-2">
         <button @click="perform(() => cloudClient.sync())" :disabled="state.busy || !state.binding || state.status === 'conflict' || !canRequest" class="rounded-xl p-3 bg-emerald-700 text-white font-bold disabled:opacity-50">立即同步</button>
@@ -100,6 +100,9 @@ const statuses = { local: '仅本机账本', pending: '等待同步', synced: '�
 const eventNames = { login: '登录', online: '联网', offline: '断网', bootstrap: '初始迁移', createMember: '新增会员', updateMember: '修改会员', deleteMember: '注销会员', recharge: '充值', consume: '消费', refundLedger: '撤销', saveService: '修改服务', deleteService: '删除服务', saveRechargeSettings: '修改充值赠送规则', importBackupData: '恢复备份', user_created: '创建账号', user_permissions_changed: '修改权限', sync_conflict_resolved: '处理同步冲突' };
 const state = ref(cloudClient.snapshot());
 const canRequest = computed(() => Boolean(state.value.user && !state.value.syncLoginRequired && state.value.online));
+// A transient transport failure must not disable the only action that can resume resolution.
+const canResolve = computed(() => canRequest.value || Boolean(state.value.user && !state.value.syncLoginRequired &&
+  (state.value.error || state.value.syncError) && globalThis.navigator?.onLine !== false));
 const unsubscribe = cloudClient.subscribe(value => { state.value = value; });
 onUnmounted(unsubscribe);
 const browserOrigin = /^https?:$/.test(globalThis.location?.protocol || '') ? globalThis.location.origin : '';
@@ -118,6 +121,7 @@ async function promptConfirm(options) {
 }
 const message = ref(''), users = ref(null), audit = ref(null), update = ref(null), downloaded = ref(null), downloading = ref(false), progress = ref(0);
 const resolutionMessage = computed(() => {
+  if (state.value.cloudAdoption?.mode === 'upload') return '正在核对原待办，未提交的交易会取消，核对完成后上传本机完整恢复账本。期间暂停记账和自动同步；断网或重启后请继续核对并上传，本机账本和原待办仍保留。';
   if (state.value.cloudAdoption) return '正在逐笔核对原待办：已提交的交易会保留，尚未提交的交易会取消。核对完成前已暂停记账和自动同步；断网或重启后请继续核对。本机账本与原待办仍保留。';
   if (props.recoveryRequired) return '本机账本无法读取。可先导出原始数据与待办，联网后采用云端账本；店主也可通过备份中心恢复本机账本。';
   if (state.value.conflictReason === 'integrity') return '云端版本回退或完整性发生变化，已暂停记账和自动同步。本机账本及待办仍保留，请先导出核对；云端回退时须由店主恢复，店主也可确认上传本机完整账本。';
@@ -168,7 +172,7 @@ async function useCloud() {
 async function uploadRecovered() {
   const confirmed = await promptConfirm({
     title: '覆盖云端账本确认',
-    message: '确认用本机完整账本覆盖云端？\n请先导出并核对原待办和云端流水，避免遗漏其他设备交易。原待办将归档，再上传本次完整恢复。',
+    message: '确认用本机完整账本覆盖云端？\n请先导出并核对原待办和云端流水，避免遗漏其他设备交易。系统会核对并取消未提交的原待办，再上传本次完整恢复。',
     confirmText: '确认覆盖云端',
     cancelText: '取消',
     danger: true

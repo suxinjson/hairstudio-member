@@ -199,6 +199,32 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     localStorage.setItem('hairstudio_cloud_pre_replace_v1', JSON.stringify(safety));
   }
 
+  async function resolveOriginalWrites() {
+    async function resolve(body, ids, progress) {
+      const receipt = await verifyAccount(await request('/sync/resolve', body));
+      if (!Array.isArray(receipt.resolved) || receipt.resolved.length !== ids.length ||
+          receipt.resolved.some((item, i) => item?.id !== ids[i] || !['committed', 'cancelled'].includes(item?.status))) {
+        throw new Error('云端核对结果不匹配，本机账本与待同步记录已保留');
+      }
+      const current = getCloudState(), adoption = current.cloudAdoption;
+      assertRemoteHead(receipt, { binding: true, revision: adoption.revision, remoteIntegrity: adoption.integrity });
+      setState({ ...current, cloudAdoption: { ...adoption, ...progress, revision: receipt.revision, integrity: receipt.integrity } });
+    }
+    let state = getCloudState();
+    if (!state.cloudAdoption.bootstrapResolved) {
+      await resolve({ operations: [], bootstrap: state.bootstrap }, [state.bootstrap.id], { bootstrapResolved: true });
+    }
+    while (getCloudState().cloudAdoption.cursor < getCloudState().outbox.length) {
+      state = getCloudState();
+      const operations = selectSyncBatch(state.outbox.slice(state.cloudAdoption.cursor));
+      await resolve({ operations }, operations.map(op => op.id), { cursor: state.cloudAdoption.cursor + operations.length });
+    }
+    const remote = await verifyAccount(await request('/account'));
+    state = getCloudState();
+    assertRemoteHead(remote, { binding: true, revision: state.cloudAdoption.revision, remoteIntegrity: state.cloudAdoption.integrity });
+    return remote;
+  }
+
   const client = {
     snapshot() { try { return { ...getCloudState(), busy, online: isOnline() && !networkUnavailable, error: lastError }; } catch (error) { return { status: 'error', outbox: [], activity: [], busy, error: error.message }; } },
     subscribe(listener) { listeners.add(listener); listener(this.snapshot()); return () => listeners.delete(listener); },
@@ -316,6 +342,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
       return run(async () => {
         if (!getCloudState().user) throw new Error('请先登录');
         let state = getCloudState();
+        if (state.cloudAdoption?.mode === 'upload') throw new Error('请继续核对并上传恢复账本');
         if (!state.cloudAdoption) {
           const head = await verifyAccount(await request('/account'));
           state = getCloudState();
@@ -326,28 +353,8 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
             cloudAdoption: { cursor: 0, bootstrapResolved: !state.bootstrap, actorId: state.user.id,
               revision: head.revision, integrity: head.integrity } });
         }
-        async function resolve(body, ids, progress) {
-          const receipt = await verifyAccount(await request('/sync/resolve', body));
-          if (!Array.isArray(receipt.resolved) || receipt.resolved.length !== ids.length ||
-              receipt.resolved.some((item, i) => item?.id !== ids[i] || !['committed', 'cancelled'].includes(item?.status))) {
-            throw new Error('云端核对结果不匹配，本机账本与待同步记录已保留');
-          }
-          const current = getCloudState(), adoption = current.cloudAdoption;
-          assertRemoteHead(receipt, { binding: true, revision: adoption.revision, remoteIntegrity: adoption.integrity });
-          setState({ ...current, cloudAdoption: { ...adoption, ...progress, revision: receipt.revision, integrity: receipt.integrity } });
-        }
+        const remote = await resolveOriginalWrites();
         state = getCloudState();
-        if (!state.cloudAdoption.bootstrapResolved) {
-          await resolve({ operations: [], bootstrap: state.bootstrap }, [state.bootstrap.id], { bootstrapResolved: true });
-        }
-        while (getCloudState().cloudAdoption.cursor < getCloudState().outbox.length) {
-          state = getCloudState();
-          const operations = selectSyncBatch(state.outbox.slice(state.cloudAdoption.cursor));
-          await resolve({ operations }, operations.map(op => op.id), { cursor: state.cloudAdoption.cursor + operations.length });
-        }
-        const remote = await verifyAccount(await request('/account'));
-        state = getCloudState();
-        assertRemoteHead(remote, { binding: true, revision: state.cloudAdoption.revision, remoteIntegrity: state.cloudAdoption.integrity });
         localDb.applyCloudSnapshot(remote.data, CLOUD_STATE_KEY, { ...state, binding: { storeId: state.user.storeId },
           outbox: [], bootstrap: null, cloudAdoption: null, status: 'synced', revision: remote.revision, remoteIntegrity: remote.integrity,
           syncStatus: 'confirmed', syncError: '', lastSync: clock(), remoteConflict: null, conflictReason: null }, { allowRecovery: true, allowPhoneConflicts: true });
@@ -358,10 +365,22 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     async uploadRecoveredLedger() {
       return run(async () => {
         const initial = getCloudState();
-        if (initial.cloudAdoption) throw new Error('请先完成采用云端账本的核对');
+        if (initial.cloudAdoption && initial.cloudAdoption.mode !== 'upload') throw new Error('请先完成采用云端账本的核对');
         if (initial.user?.role !== 'owner' || initial.status !== 'conflict' || !['recovery', 'integrity'].includes(initial.conflictReason)) throw new Error('仅店主可以确认上传需核对的本机完整账本；已上传的恢复操作请通过同步重试');
         if (!isOnline()) throw new Error('请联网后上传恢复账本');
-        const remote = await verifyAccount(await request('/account'));
+        // Keep the restored ledger and original IDs until every original request is fenced.
+        // The durable mode lets a restart resume this action without adopting the remote data.
+        if (!initial.cloudAdoption) {
+          localDb.readBackupState();
+          const head = await verifyAccount(await request('/account'));
+          const current = getCloudState();
+          if (current.user?.role !== 'owner' || current.conflictReason !== initial.conflictReason) throw new Error('账号权限已变化，恢复账本尚未上传');
+          if (head.revision < current.revision && current.conflictReason !== 'integrity') throw integrityError('云端版本发生回退，不能上传恢复账本');
+          preserveLocal(current);
+          setState({ ...current, cloudAdoption: { mode: 'upload', cursor: 0, bootstrapResolved: !current.bootstrap,
+            actorId: current.user.id, revision: head.revision, integrity: head.integrity } });
+        }
+        const remote = await resolveOriginalWrites();
         const state = getCloudState();
         if (state.user?.role !== 'owner' || state.conflictReason !== initial.conflictReason) throw new Error('账号权限已变化，恢复账本尚未上传');
         if (remote.revision < state.revision && state.conflictReason !== 'integrity') throw integrityError('云端版本发生回退，不能上传恢复账本');
@@ -371,9 +390,9 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
           actorId: state.user.id, deviceId: state.deviceId, generated: { ids: [], times: [clock()] },
           precondition: mutationPrecondition(remote.data, 'importBackupData', args) };
         validateOperation(operation);
-        preserveLocal(state);
-        // 店主确认完整恢复后，用一个可重试的恢复操作替代已归档的原待办。
+        // Only replace the original queue after all cancellation receipts are durable.
         localDb.applyCloudSnapshot(data, CLOUD_STATE_KEY, { ...state, outbox: [operation], bootstrap: null,
+          cloudAdoption: null,
           remoteConflict: null, revision: remote.revision, remoteIntegrity: remote.integrity,
           conflictReason: state.conflictReason === 'integrity' ? null : state.conflictReason,
           syncStatus: 'pending', syncError: '', status: 'pending' });

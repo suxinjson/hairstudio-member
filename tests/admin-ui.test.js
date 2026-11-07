@@ -213,6 +213,29 @@ test('legacy string tags render all members and populate the editor without thro
   assert.equal(document.querySelector('input[placeholder="如：VIP、常客、烫染年卡"]').value, 'VIP');
 });
 
+test('PC member edits reject synchronized changes, retain inputs, and reopen with the latest profile', async () => {
+  data.members[0].notes = '旧备注';
+  const state = ref(data); let calls = 0, submitted;
+  app = createApp({ render: () => h(Members, { members: state.value.members, submitOperations: async operations => {
+    calls++; submitted = operations[0]; return {};
+  } }) });
+  app.mount('#app'); await flush(); button('修改').click(); await nextTick();
+  await input('input[placeholder="请输入会员姓名"]', '新姓名');
+  state.value = { ...data, members: [{ ...data.members[0], notes: '新备注', updated_at: '2026-02-01T00:00:00.000Z' }] };
+  adminApi.accountData.value = state.value; await flush();
+  button('确认保存').click(); await flush();
+  assert.equal(calls, 0); assert.match(document.body.textContent, /重新打开/);
+  assert.equal(document.querySelector('input[placeholder="请输入会员姓名"]').value, '新姓名');
+  button('取消').click(); await nextTick(); button('修改').click(); await nextTick();
+  await input('input[placeholder="请输入会员姓名"]', '新姓名');
+  // A newer API cache cannot silently change the baseline used by this form.
+  adminApi.accountData.value = { ...state.value, members: [{ ...state.value.members[0], notes: '提交前又更新' }] };
+  button('确认保存').click(); await flush();
+  assert.equal(calls, 1);
+  assert.equal(submitted.precondition.member.notes, '新备注');
+  assert.equal(submitted.args[1].notes, '新备注');
+});
+
 test('manual header selection resets mapping approval and precheck and reports physical file rows', async () => {
   await mount(ImportExport, { members: data.members, ledgers: [] });
   const csv = new TextEncoder().encode('梦飞空间会员批量导入\n会员姓名,手机号码,本金余额,赠金余额\n\n坏号码,123,10,0\n会员姓名,手机号码,本金余额,赠金余额\n新客户,13900001111,20,0');

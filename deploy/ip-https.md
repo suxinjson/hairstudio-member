@@ -203,4 +203,4 @@ sudo journalctl -u member-certbot-renew.service -n 50 --no-pager
 
 后续启动、更新、查看日志时都要带上 `-f compose.yaml -f deploy/compose.ip.yaml`。证书申请完成后不要再使用 bootstrap 配置。也不要改为 `tls internal` 或关闭 App 的证书校验。
 
-HTTPS 保护网络传输和服务器身份，账号权限、限流、输入校验及服务器防护仍须分别完成。当前安全审查结果见 [接口安全审查](security-review.md)。
+HTTPS 保护网络传输和服务器身份，账号权限、限流、输入校验及服务器防护仍须分别完成。配置与权限说明见 [安全配置](security-configuration.md)。

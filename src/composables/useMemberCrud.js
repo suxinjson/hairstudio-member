@@ -1,9 +1,11 @@
 import { ref } from 'vue';
+import { canonicalJSON, mutationPrecondition } from '../sync-protocol.js';
 
 export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, showFeedback, askConfirm, selectedMember }) {
   const showMemberModal = ref(false);
   const isSavingMember = ref(false);
   const editingMemberId = ref(null);
+  let editBaseline = null;
   const memberForm = ref({
     name: '',
     phone: '',
@@ -13,6 +15,7 @@ export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, sh
 
   function openNewMemberModal() {
     editingMemberId.value = null;
+    editBaseline = null;
     memberForm.value = {
       name: '',
       phone: '',
@@ -24,6 +27,7 @@ export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, sh
 
   function openEditMemberModal(m) {
     editingMemberId.value = m.id;
+    editBaseline = mutationPrecondition({ members: [m] }, 'updateMember', [m.id]);
     memberForm.value = {
       name: m.name,
       phone: m.phone,
@@ -37,6 +41,8 @@ export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, sh
     isSavingMember.value = true;
     try {
       if (editingMemberId.value) {
+        const current = mutationPrecondition({ members: localDb.getMembers() }, 'updateMember', [editingMemberId.value]);
+        if (canonicalJSON(current) !== canonicalJSON(editBaseline)) throw new Error('会员档案已变化，请重新打开编辑窗口核对后保存');
         const updated = localDb.updateMember(editingMemberId.value, memberForm.value);
         showMemberModal.value = false;
         showToast('会员档案修改成功！');

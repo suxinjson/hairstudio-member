@@ -455,6 +455,21 @@ test('pending cloud adoption disables accounting controls and exposes a continua
   assert.equal(button('解除云端绑定').disabled, true);
 });
 
+test('pending recovery upload exposes its continuation after a transport failure and blocks cloud adoption', async t => {
+  const state = { ...getCloudState(), serverUrl: 'https://localhost', binding: { storeId: 'store-A' },
+    deviceId: 'device-test-123456', user: { id: 'owner-A', storeId: 'store-A', role: 'owner', displayName: '店主' },
+    status: 'conflict', conflictReason: 'recovery', online: false, error: '暂时无法连接服务器',
+    cloudAdoption: { mode: 'upload', cursor: 0, bootstrapResolved: true, actorId: 'owner-A', revision: 1, integrity: 'a'.repeat(64) } };
+  t.mock.method(cloudClient, 'start', async () => () => {});
+  t.mock.method(cloudClient, 'snapshot', () => state);
+  t.mock.method(cloudClient, 'subscribe', listener => { listener(state); return () => {}; });
+  await mount(); await settings('account');
+  assert.equal(button('继续核对并上传恢复账本').disabled, false);
+  assert.equal(document.body.textContent.includes('采用云端账本，放弃'), false);
+  assert.equal(button('立即同步').disabled, true);
+  assert.equal(button('解除云端绑定').disabled, true);
+});
+
 test('App cancels speech on account changes and unmount while routine sync updates keep playing', async t => {
   const state = { ...getCloudState(), serverUrl: 'https://member.example.com', deviceId: 'device-00000000001',
     user: { id: 'owner-A', storeId: 'store-A', role: 'owner' }, binding: { storeId: 'store-A' }, online: true };

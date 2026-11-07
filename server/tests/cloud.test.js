@@ -1621,6 +1621,130 @@ test('an explicitly confirmed recovered ledger uploads atomically and retries a 
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='importBackupData'")).rows[0].count, 1);
 });
 
+test('recovery upload fences a late original charge before replacing the queue', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount(); let online = false, held;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (input.endsWith('/sync') && !held) {
+      held = { input, options: { ...options, signal: undefined } }; throw new TypeError('unknown outcome');
+    }
+    return fetch(input, options);
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 10 }); online = true;
+  await assert.rejects(client.sync(), { network: true });
+  const pending = getCloudState().outbox;
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+  localDb.importBackupData(JSON.stringify({ data: account.data }));
+  await client.uploadRecoveredLedger();
+  assert.equal(getCloudState().cloudAdoption, null);
+  assert.equal(getCloudState().outbox.length, 0);
+  const late = await fetch(held.input, held.options);
+  assert.equal(late.status, 409); assert.equal((await late.json()).code, 'OPERATION_CANCELLED');
+  assert.equal((await service.account(owner.identity)).data.members[0].balance, 10000);
+  assert.deepEqual(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).cloud.outbox, pending);
+});
+
+for (const failure of ['response', 'progress-storage', 'replacement-storage']) {
+  test(`recovery upload resumes ${failure} failure across restart without sending original operations`, async t => {
+    t.mock.method(console, 'error', () => {});
+    const account = await initialAccount(); let online = false, fail = true, restores = 0;
+    const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+      if (input.endsWith('/sync')) restores++;
+      const response = await fetch(input, options);
+      const resolving = input.endsWith('/sync/resolve');
+      const replacing = input.endsWith('/account') && getCloudState().cloudAdoption?.cursor === 1;
+      if (fail && (failure === 'replacement-storage' ? replacing : resolving)) {
+        fail = false;
+        if (failure === 'response') { await response.arrayBuffer(); throw new TypeError('lost acknowledgment'); }
+        localStorage.failKey = CLOUD_STATE_KEY; localStorage.failOnce = true;
+      }
+      return response;
+    } });
+    localDb.consume({ memberId: account.member.id, amount: 10 });
+    const pending = getCloudState().outbox;
+    localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+    localDb.importBackupData(JSON.stringify({ data: account.data }));
+    online = true;
+    await assert.rejects(client.uploadRecoveredLedger());
+    assert.equal(getCloudState().cloudAdoption.mode, 'upload');
+    assert.deepEqual(getCloudState().outbox, pending);
+    assert.equal(localDb.getMemberById(account.member.id).balance, 10000);
+    assert.throws(() => localDb.consume({ memberId: account.member.id, amount: 1 }), /核对/);
+    await client.sync(); assert.equal(restores, 0);
+    await assert.rejects(client.useCloudLedger(), /上传恢复账本/);
+    const restarted = createCloudClient({ isOnline: () => true });
+    await restarted.login(url, 'owner', password);
+    await restarted.uploadRecoveredLedger();
+    assert.equal(getCloudState().cloudAdoption, null);
+    assert.equal(getCloudState().outbox.length, 0);
+    assert.equal((await service.account(owner.identity)).data.members[0].balance, 10000);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='importBackupData'")).rows[0].count, 1);
+  });
+}
+
+test('recovery upload resolves over 100 originals including a committed charge before using the latest remote precondition', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount(); let online = false, batches = [];
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (input.endsWith('/sync/resolve')) batches.push(JSON.parse(options.body).operations.length);
+    return fetch(input, options);
+  } });
+  for (let i = 0; i < 101; i++) localDb.updateMember(account.member.id, { notes: '待办' + i });
+  const original = getCloudState().outbox;
+  const session = await login('owner', getCloudState().deviceId);
+  await service.sync(session.identity, [original[0]]);
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken');
+  localDb.importBackupData(JSON.stringify({ data: account.data }));
+  online = true; await client.uploadRecoveredLedger();
+  assert.deepEqual(batches, [100, 1]);
+  assert.equal(getCloudState().outbox.length, 0);
+  assert.equal((await service.account(owner.identity)).data.members[0].notes, account.member.notes);
+  assert.equal((await service.account(owner.identity)).revision, 3);
+});
+
+for (const committed of [false, true]) {
+  test(`recovery upload resolves an uncertain bootstrap before full replacement (committed=${committed})`, async t => {
+    t.mock.method(console, 'error', () => {});
+    const member = localDb.createMember({ name: '迁移客户', phone: '13900000123', initialBalance: 88 });
+    const backup = localDb.exportBackupData({ archiveSnapshot: false }); let pending;
+    const client = await connectedClient({ online: () => true, requestFetch: async (input, options) => {
+      if (input.endsWith('/account/bootstrap')) {
+        pending = JSON.parse(options.body);
+        if (committed) { const response = await fetch(input, options); await response.arrayBuffer(); }
+        throw new TypeError('unknown bootstrap outcome');
+      }
+      return fetch(input, options);
+    } });
+    await assert.rejects(client.bootstrap(), { network: true });
+    localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken'); localDb.importBackupData(backup);
+    await client.uploadRecoveredLedger();
+    assert.equal(getCloudState().bootstrap, null);
+    assert.equal((await service.account(owner.identity)).data.members[0].balance, 8800);
+    const identity = (await login('owner', getCloudState().deviceId)).identity;
+    if (committed) await service.bootstrap(identity, pending);
+    else await assert.rejects(service.bootstrap(identity, pending), { status: 409, code: 'OPERATION_CANCELLED' });
+    assert.equal(localDb.getMemberById(member.id).balance, 8800);
+  });
+}
+
+test('recovery upload does not cancel originals until its write fence is saved', async t => {
+  t.mock.method(console, 'error', () => {});
+  const account = await initialAccount(); let resolutions = 0, online = false;
+  const client = await connectedClient({ online: () => online, requestFetch: async (input, options) => {
+    if (input.endsWith('/sync/resolve')) resolutions++;
+    return fetch(input, options);
+  } });
+  localDb.consume({ memberId: account.member.id, amount: 10 });
+  const pending = getCloudState().outbox;
+  localStorage.setItem(STORAGE_KEYS.MEMBERS, '{broken'); localDb.importBackupData(JSON.stringify({ data: account.data }));
+  online = true;
+  localStorage.failKey = CLOUD_STATE_KEY; localStorage.failOnce = true;
+  await assert.rejects(client.uploadRecoveredLedger());
+  assert.equal(resolutions, 0); assert.deepEqual(getCloudState().outbox, pending);
+  await client.uploadRecoveredLedger();
+  assert.equal(resolutions, 1); assert.equal(getCloudState().outbox.length, 0);
+});
+
 test('concurrent remote changes reject a recovered snapshot without clearing the recovery operation', async t => {
   t.mock.method(console, 'error', () => {});
   const account = await initialAccount();
