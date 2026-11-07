@@ -82,6 +82,7 @@ test('platform Header welcomes and business validation replies use the skill pro
     });
     for (const body of [
       { intentName: 'DefaultWelcomeIntent', utterance: '梦飞管家' },
+      { intentName: 'DefaultWelcomeIntent', utterance: '顾客' },
       { utterance: '打开梦飞管家' },
       { version: '2.0', request: { type: 'LaunchRequest' } },
       { requestId: randomUUID(), sessionId: 'platform-test', intentName: 'DefaultWelcomeIntent',
@@ -90,7 +91,7 @@ test('platform Header welcomes and business validation replies use the skill pro
       const res = await post(body);
       const result = await res.json();
       assert.equal(res.status, 200, JSON.stringify(result));
-      assert.match(result.returnValue.reply, /梦飞管家为您服务/);
+      assert.equal(result.returnValue.reply, '梦飞空间欢迎您，请说');
       assert.equal(result.resultType, 'ASK_INF');
       assert.equal(result.response.shouldEndSession, false);
       assert.equal(result.response.expectSpeech, true);
@@ -200,6 +201,8 @@ test('AliGenie parser and utility functions', () => {
   assert.equal(cleanMemberQuery('查一下王五'), '王五');
   assert.equal(cleanMemberQuery('查询客户赵六'), '赵六');
   assert.equal(cleanMemberQuery('尾号1234'), '1234');
+  assert.equal(cleanMemberQuery('查询苏新用户'), '苏新');
+  assert.equal(cleanMemberQuery('用户苏新'), '苏新');
 
   // 3. Member matching
   const testMembers = [
@@ -411,7 +414,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.equal(welcomeRes.status, 200);
     const welcomeData = await welcomeRes.json();
     assert.equal(welcomeData.version, '2.0');
-    assert.match(welcomeData.response.outputSpeechs[0].text, /梦飞管家为您服务/);
+    assert.equal(welcomeData.response.outputSpeechs[0].text, '梦飞空间欢迎您，请说');
     assert.equal(welcomeData.response.shouldEndSession, false);
     assert.equal(welcomeData.response.expectSpeech, true);
 

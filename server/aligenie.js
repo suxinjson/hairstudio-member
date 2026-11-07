@@ -33,7 +33,7 @@ function getDialogReply(utterance) {
 
 function welcomeResponse() {
   return formatAliGenieResponse({
-    text: '梦飞管家为您服务，您可以对我说：张三洗剪吹扣款38元、李四充值200元、或查询尾号1234余额。',
+    text: '梦飞空间欢迎您，请说',
     shouldEndSession: false,
     expectSpeech: true
   });
@@ -231,10 +231,10 @@ function stripMemberQuery(raw) {
     .trim()
     .replace(/^[给为对向]/, '')
     .replace(/^(查询|查一下|查看看|查一查|查看|找一下|找找|查|找)/, '')
-    .replace(/^(会员|客户|顾客)/, '')
+    .replace(/^(会员|客户|顾客|用户)/, '')
     .replace(/^尾号/, '')
     .replace(/[的得]$/, '')
-    .replace(/[的得]?(会员|客户|顾客|账户|账本)$/, '')
+    .replace(/[的得]?(会员|客户|顾客|用户|账户|账本)$/, '')
     .trim();
 }
 
