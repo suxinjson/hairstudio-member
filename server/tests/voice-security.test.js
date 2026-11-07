@@ -6,9 +6,10 @@ import { EventEmitter } from 'node:events';
 import { PGlite } from '@electric-sql/pglite';
 import { migrate } from '../database.js';
 import { createService } from '../service.js';
+import { createApi } from '../http.js';
 import { createLocalDb } from '../../src/storage.js';
 import { integrity } from '../security.js';
-import { signAliGenieRequest, parseAmount, extractAmountFromUtterance, membersFromUtterance } from '../aligenie.js';
+import { signAliGenieRequest, parseAmount, extractAmountFromUtterance, membersFromUtterance, cleanMemberQuery, findMatchingMembers } from '../aligenie.js';
 import { readVoiceConfig, synthesizeTTS } from '../voice.js';
 import { assertVoiceUrl, resolveVoiceTarget, isPublicAddress, createVoiceFetch, readVoiceBody } from '../voice-network.js';
 
@@ -49,6 +50,173 @@ function send(body, instance = service, storeId = identity.store_id, key = secre
     'x-aligenie-signature': signAliGenieRequest(key, timestamp, storeId, body) } });
 }
 const balance = async () => (await service.account(identity)).data.members.find(m => m.id === memberId).balance;
+
+let slotTimestamp = Date.now();
+const platformRequest = (action = 'consume') => {
+  const createdAt = ++slotTimestamp, amount = action === 'consume' ? '38元' : '200元';
+  return { requestId: randomUUID(), sessionId: 'system-speaker-session', domainId: 10, skillId: 20,
+    intentId: action === 'consume' ? 30 : 40, intentName: action === 'consume' ? 'ConsumeIntent' : 'RechargeIntent',
+    utterance: action === 'consume' ? '张三扣款38元' : '张三充值200元', confirmStatus: 'NONE',
+    requestData: { deviceOpenId: 'device-a', userOpenId: 'voice-user' }, device: { deviceOpenId: 'device-a' },
+    skillSession: { skillSessionId: 'real-skill-session', newSession: false },
+    slotEntities: [['memberQuery', '张三', 'member_entity'], ['amount', amount, 'sys.price']].map(([name, value, entity], i) => ({
+      intentParameterId: 50 + i, intentParameterName: name, originalValue: value, standardValue: value,
+      liveTime: 0, createTimeStamp: createdAt, slotName: name + ':' + entity, slotValue: value
+    })) };
+};
+const platformConfirm = preview => ({ ...structuredClone(preview), requestId: randomUUID(), utterance: '是的', confirmStatus: 'CONFIRMED',
+  slotEntities: preview.slotEntities.map(slot => ({ ...slot, liveTime: slot.liveTime + 1 })) });
+async function platformApi(t, instance = service) {
+  const server = createApi({ service: instance, pool, production: false });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const close = async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); };
+  t.after(close);
+  const url = `http://127.0.0.1:${server.address().port}/api/v1/voice/aligenie`;
+  return { close, post: async (body, headers = {}) => {
+    const res = await fetch(url, { method: 'POST', body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json', 'x-aligenie-token': secret, ...headers } });
+    const data = await res.json(); assert.equal(res.status, 200, JSON.stringify(data)); return data;
+  } };
+}
+
+test('spoken identity digits normalize only in member queries and cannot become amounts', () => {
+  const members = [{ id: 'spoken', name: '苏新', phone: '13901730840' }];
+  assert.equal(cleanMemberQuery('顾客幺七三零八四零'), '1730840');
+  assert.equal(cleanMemberQuery('尾号零八四零'), '0840');
+  assert.equal(cleanMemberQuery('一百'), '一百');
+  assert.equal(cleanMemberQuery('幺妹'), '幺妹');
+  assert.deepEqual(findMatchingMembers(members, '幺七三零八四零').map(m => m.id), ['spoken']);
+  assert.deepEqual(membersFromUtterance(members, '查询尾号零八四零余额').map(m => m.id), ['spoken']);
+  assert.deepEqual(membersFromUtterance(members, '手机号幺三九零幺七三零八四零消费一百元').map(m => m.id), ['spoken']);
+  assert.deepEqual(membersFromUtterance(members, '幺七三零八四零'), []);
+  assert.equal(extractAmountFromUtterance('尾号幺七三零八四零消费一百元'), 100);
+  assert.equal(parseAmount('幺七三零八四零'), null);
+  assert.deepEqual(findMatchingMembers(members, '顾客'), []);
+  assert.deepEqual(findMatchingMembers([
+    { id: 'name', name: '一二三', phone: '13900008888' },
+    { id: 'phone', name: '另一位', phone: '13900000123' }
+  ], '顾客一二三').map(m => m.id), ['name']);
+});
+
+for (const action of ['consume', 'recharge']) {
+  test(`real Web Service 1.0 ${action} confirmation works without invented fields and survives restart`, async t => {
+    const api = await platformApi(t), preview = platformRequest(action);
+    const reply = await api.post(preview);
+    assert.equal(reply.returnValue.resultType, 'CONFIRM');
+    assert.equal(reply.returnResult.resultType, 'CONFIRM');
+    assert.equal(reply.returnValue.confirmParaInfo, undefined);
+    assert.equal(await balance(), 10000);
+    const confirmation = platformConfirm(preview);
+    assert.equal(confirmation.confirmationRequestId, undefined);
+    const restarted = await platformApi(t, createService(pool));
+    const done = await restarted.post(confirmation);
+    assert.match(done.returnValue.reply, action === 'consume' ? /扣款成功/ : /充值成功/);
+    assert.deepEqual(await restarted.post(confirmation), done);
+    const late = await restarted.post({ ...confirmation, requestId: randomUUID() });
+    assert.match(late.returnValue.reply, /没有待确认/);
+    assert.equal(await balance(), action === 'consume' ? 6200 : 32000);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM operations WHERE method=$1', [action])).rows[0].count, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM audit_events WHERE event=$1', ['voice_' + action])).rows[0].count, 1);
+  });
+}
+
+test('platform confirmation requires matching original intent, values, timestamps, next round and identity', async t => {
+  const { post } = await platformApi(t), preview = platformRequest(); await post(preview);
+  const changes = [
+    body => { body.confirmStatus = 'NONE'; },
+    body => { body.intentName = 'RechargeIntent'; },
+    body => { body.intentId++; },
+    body => { body.skillId++; },
+    body => { body.slotEntities[0].standardValue = '李四'; },
+    body => { body.slotEntities[1].standardValue = '100元'; },
+    body => { body.slotEntities[1].createTimeStamp++; },
+    body => { body.slotEntities[1].liveTime = 0; },
+    body => { body.slotEntities[1].liveTime = 2; },
+    body => { delete body.slotEntities[1].createTimeStamp; },
+    body => { body.slotEntities.push({ ...body.slotEntities[0] }); },
+    body => { body.slotEntities = []; },
+    body => { body.confirmationRequestId = 'another-preview'; },
+    body => { body.requestData.deviceOpenId = 'device-b'; },
+    body => { body.requestData.userOpenId = 'another-user'; },
+    body => { body.skillSession.skillSessionId = 'another-dialog'; }
+  ];
+  for (const change of changes) {
+    const body = platformConfirm(preview); change(body);
+    assert.doesNotMatch((await post(body)).returnValue.reply, /扣款成功/);
+    assert.equal(await balance(), 10000);
+  }
+  assert.match((await post(platformConfirm(preview))).returnValue.reply, /扣款成功/);
+  assert.equal(await balance(), 6200);
+});
+
+test('cancelled platform previews fence late confirms even for identical member and amount', async t => {
+  const { post } = await platformApi(t), old = platformRequest(); await post(old);
+  await post({ ...platformConfirm(old), utterance: '不是', confirmStatus: 'DENIED' });
+  const next = platformRequest(); await post(next);
+  assert.doesNotMatch((await post(platformConfirm(old))).returnValue.reply, /扣款成功/);
+  assert.equal(await balance(), 10000);
+  assert.match((await post(platformConfirm(next))).returnValue.reply, /扣款成功/);
+  assert.equal(await balance(), 6200);
+});
+
+test('reused platform slot creation timestamps and lifetimes cannot create a second preview', async t => {
+  const { post } = await platformApi(t), old = platformRequest(); await post(old);
+  await post({ ...platformConfirm(old), confirmStatus: 'DENIED', utterance: '不是' });
+  const reused = { ...structuredClone(old), requestId: randomUUID() };
+  assert.equal((await post(reused)).returnValue.resultType, 'RESULT');
+  assert.doesNotMatch((await post(platformConfirm(old))).returnValue.reply, /扣款成功/);
+  assert.equal(await balance(), 10000);
+  const missing = platformRequest(); delete missing.slotEntities[0].createTimeStamp;
+  assert.equal((await post(missing)).returnValue.resultType, 'RESULT');
+  assert.equal((await pool.query('SELECT count(*)::int AS count FROM voice_dialogs')).rows[0].count, 0);
+});
+
+test('platform new sessions, expired previews, and caller-supplied adapter flags cannot authorize accounting', async t => {
+  const { post } = await platformApi(t), preview = platformRequest(); await post(preview);
+  const newSession = platformConfirm(preview); newSession.skillSession.newSession = true;
+  assert.doesNotMatch((await post(newSession)).returnValue.reply, /扣款成功/);
+  const expired = platformRequest(); await post(expired);
+  await pool.query("UPDATE voice_dialogs SET expires_at=now()-interval '1 second'");
+  assert.doesNotMatch((await post(platformConfirm(expired))).returnValue.reply, /扣款成功/);
+  const current = platformRequest(); await post(current);
+  const fake = { ...platformConfirm(current), platformTokenAuthenticated: true };
+  const timestamp = String(Date.now());
+  const signedReply = await post(fake, { 'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp,
+    'x-aligenie-signature': signAliGenieRequest(secret, timestamp, identity.store_id, fake) });
+  assert.doesNotMatch(signedReply.returnValue.reply, /扣款成功/);
+  assert.equal(await balance(), 10000);
+  assert.match((await post(platformConfirm(current))).returnValue.reply, /扣款成功/);
+});
+
+for (const action of ['consume', 'recharge']) {
+  test(`platform ${action} amount elicitation carries the current intent ID through the next confirmation`, async t => {
+    const { post } = await platformApi(t), partial = platformRequest(action);
+    partial.intentId = 987654;
+    partial.utterance = action === 'consume' ? '张三消费' : '张三充值';
+    const amountSlot = partial.slotEntities.pop();
+    const question = await post(partial);
+    assert.equal(question.returnValue.resultType, 'ASK_INF');
+    assert.deepEqual(question.returnValue.askedInfos, [{ parameterName: 'amount', intentId: partial.intentId }]);
+    assert.equal(question.confirmationRequestId, undefined);
+    const next = { ...structuredClone(partial), requestId: randomUUID(), utterance: amountSlot.standardValue,
+      slotEntities: [{ ...partial.slotEntities[0], liveTime: 1 }, { ...amountSlot, createTimeStamp: ++slotTimestamp }] };
+    assert.equal((await post(next)).returnValue.resultType, 'CONFIRM');
+    assert.equal(await balance(), 10000);
+    assert.match((await post(platformConfirm(next))).returnValue.reply, action === 'consume' ? /扣款成功/ : /充值成功/);
+  });
+}
+
+test('platform member elicitation uses the current query intent and accepts a spoken phone suffix', async t => {
+  const { post } = await platformApi(t), partial = { ...platformRequest(), intentName: 'QueryMemberIntent',
+    intentId: 765432, utterance: '', slotEntities: [] };
+  const question = await post(partial);
+  assert.deepEqual(question.returnValue.askedInfos, [{ parameterName: 'memberQuery', intentId: partial.intentId }]);
+  const answer = { ...partial, requestId: randomUUID(), utterance: '幺二三四', slotEntities: [
+    { ...platformRequest().slotEntities[0], originalValue: '幺二三四', standardValue: '幺二三四', slotValue: '幺二三四' }
+  ] };
+  assert.match((await post(answer)).returnValue.reply, /会员张三.*余额 100/);
+  assert.equal(await balance(), 10000);
+});
 
 test('strict amounts reject partial numbers and identity numbers, preserving supported Chinese amounts', () => {
   for (const raw of ['-38', '+38', '1e3', '38.999', '38元垃圾', 'NaN', 'Infinity', '1234充值', '负三十八', '一百百', '一万五', '999999999999999999999']) assert.equal(parseAmount(raw), null, raw);

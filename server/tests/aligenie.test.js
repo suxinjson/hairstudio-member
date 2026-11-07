@@ -532,7 +532,8 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.match(consumeData1.response.outputSpeechs[0].text, /扣款后卡内剩余 62 元/);
     assert.match(consumeData1.response.outputSpeechs[0].text, /请问确认扣款吗/);
     assert.equal(consumeData1.returnCode, '0');
-    assert.equal(consumeData1.returnValue.resultType, 'ASK_INF');
+    assert.equal(consumeData1.returnValue.resultType, 'CONFIRM');
+    assert.equal(consumeData1.returnValue.confirmParaInfo, undefined);
     assert.equal(consumeData1.response.directives[0].type, 'Dialog.Confirm');
     assert.equal(consumeData1.response.shouldEndSession, false);
 

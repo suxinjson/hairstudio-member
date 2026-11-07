@@ -113,7 +113,7 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
           }
         }
         try {
-          const result = await service.handleAliGenieWebhook(input, { headers });
+          const result = await service.handleAliGenieWebhook(input, { headers, platformTokenAuthenticated });
           return send(200, result);
         } catch (error) {
           const reply = platformTokenAuthenticated && formatAliGeniePlatformError(error, input);

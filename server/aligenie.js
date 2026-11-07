@@ -123,13 +123,47 @@ export function parseAliGenieRequest(body) {
     sessionId,
     isNew,
     intentName,
+    intentId: body.intentId || payload.intentId || null,
     slots,
     utterance,
     confirmationStatus,
     confirmationRequestId: String(body.confirmationRequestId || reqV2.confirmationRequestId || payload.confirmationRequestId || ''),
+    platformConfirmation: isV2 ? null : platformConfirmationSnapshot(body, slotList),
     deviceOpenId,
     userOpenId
   };
+}
+
+// Web Service 1.0 retains slot creation timestamps and advances liveTime on
+// confirmation. Unlike custom response attributes, these fields round-trip.
+function platformConfirmationSnapshot(body, slotList) {
+  const intentName = String(body.intentName || '').trim();
+  if (!/^(ConsumeIntent|RechargeIntent)$/.test(intentName) || !slotList.length) return null;
+  const ids = [body.domainId, body.skillId, body.intentId].map(Number);
+  if (ids.some(id => !Number.isSafeInteger(id) || id <= 0)) return null;
+  const names = new Set(), slots = [];
+  for (const slot of slotList) {
+    const name = slot.intentParameterName;
+    const parameterId = Number(slot.intentParameterId), createdAt = Number(slot.createTimeStamp), liveTime = slot.liveTime;
+    if (typeof name !== 'string' || !name || names.has(name) ||
+        !Number.isSafeInteger(parameterId) || parameterId <= 0 ||
+        !Number.isSafeInteger(createdAt) || createdAt <= 0 ||
+        !Number.isSafeInteger(liveTime) || liveTime < 0 ||
+        ['originalValue', 'standardValue', 'slotName', 'slotValue'].some(key => typeof slot[key] !== 'string')) return null;
+    names.add(name);
+    slots.push({ name, parameterId, createdAt, liveTime,
+      originalValue: slot.originalValue, standardValue: slot.standardValue,
+      slotName: slot.slotName, slotValue: slot.slotValue });
+  }
+  if (!names.has('memberQuery') || !(names.has('amount') || (intentName === 'ConsumeIntent' && names.has('service')))) return null;
+  slots.sort((a, b) => a.name.localeCompare(b.name));
+  return { ids, intentName, slots };
+}
+
+function matchesPlatformConfirmation(preview, current) {
+  if (!preview || !current) return false;
+  const expected = { ...preview, slots: preview.slots.map(slot => ({ ...slot, liveTime: slot.liveTime + 1 })) };
+  return canonicalJSON(expected) === canonicalJSON(current);
 }
 
 export function parseAmount(raw) {
@@ -191,7 +225,7 @@ export function extractAmountFromUtterance(utterance, memberName = '') {
   return parseAmount(candidate);
 }
 
-export function cleanMemberQuery(raw) {
+function stripMemberQuery(raw) {
   if (!raw) return '';
   return String(raw)
     .trim()
@@ -204,10 +238,28 @@ export function cleanMemberQuery(raw) {
     .trim();
 }
 
+export function cleanMemberQuery(raw) {
+  const query = stripMemberQuery(raw);
+  const digits = { 零: '0', 〇: '0', 一: '1', 幺: '1', 二: '2', 两: '2', 三: '3', 四: '4', 五: '5', 六: '6', 七: '7', 八: '8', 九: '9' };
+  // Only identity sequences are normalized, never money or general utterances.
+  if (/^[\d零〇一幺二两三四五六七八九\s]+$/.test(query)) {
+    const number = query.replace(/\s/g, '').replace(/[零〇一幺二两三四五六七八九]/g, c => digits[c]);
+    if ((number.length >= 3 && number.length <= 8) || number.length === 11) return number;
+  }
+  return query;
+}
+
 export function findMatchingMembers(members, rawQuery) {
   if (!rawQuery) return [];
   const active = members.filter(m => !m.isArchived);
   const query = cleanMemberQuery(rawQuery);
+  if (!query) return [];
+  // Preserve a real name made of numeral characters before phone normalization.
+  const literalQuery = stripMemberQuery(rawQuery);
+  if (literalQuery !== query) {
+    const named = active.filter(m => m.name.trim() === literalQuery);
+    if (named.length) return named;
+  }
   const digits = query.replace(/\D/g, '');
 
   // 1. Exact 11-digit phone match
@@ -277,8 +329,8 @@ export function membersFromUtterance(members, utterance) {
       return remaining.includes(m.name);
     });
   }
-  const identity = utterance.match(/(?:尾号\s*(\d{3,8})|(?<!\d)(1\d{10})(?!\d))/);
-  return identity ? findMatchingMembers(active, identity[1] || identity[2]) : [];
+  const identity = utterance.match(/(?:尾号\s*([\d零〇一幺二两三四五六七八九]{3,8})(?![\d零〇一幺二两三四五六七八九])|(?:手机|手机号|电话)\s*([\d零〇一幺二两三四五六七八九]{11})(?![\d零〇一幺二两三四五六七八九])|(?<!\d)(1\d{10})(?!\d))/);
+  return identity ? findMatchingMembers(active, identity[1] || identity[2] || identity[3]) : [];
 }
 export function findMemberFromUtterance(members, utterance) {
   const matches = membersFromUtterance(members, utterance);
@@ -290,11 +342,12 @@ export function formatAliGenieResponse({
   shouldEndSession = true,
   expectSpeech = false,
   directive = null,
+  askedInfos = null,
   executeCode = 'SUCCESS',
   msgInfo = ''
 }) {
   const cleanText = normalizeVoiceText(String(text || '').trim());
-  const resultType = shouldEndSession ? 'RESULT' : 'ASK_INF';
+  const resultType = directive?.type === 'Dialog.Confirm' ? 'CONFIRM' : shouldEndSession ? 'RESULT' : 'ASK_INF';
 
   const res = {
     // Protocol 1.0 & AliGenie Standard Custom Skill Response
@@ -340,7 +393,18 @@ export function formatAliGenieResponse({
   if (directive) {
     res.response.directives = [directive];
   }
+  if (askedInfos?.length) {
+    res.returnValue.askedInfos = askedInfos;
+    res.returnResult.askedInfos = askedInfos;
+  }
   return res;
+}
+
+function askAliGenieParameter(req, parameterName, text) {
+  const intentId = Number(req.intentId);
+  return formatAliGenieResponse({ text, shouldEndSession: false, expectSpeech: true,
+    askedInfos: req.version === '1.0' && Number.isSafeInteger(intentId) && intentId > 0
+      ? [{ parameterName, intentId }] : null });
 }
 
 // Only the authenticated platform Header adapter should convert these rejections
@@ -370,11 +434,8 @@ export function formatAliGeniePlatformError(error, body) {
 
 export function makeConfirmDirective() {
   return {
-    type: 'Dialog.Confirm',
-    confirmParaInfo: {
-      confirmParameterName: 'confirm',
-      denyParameterName: 'deny'
-    }
+    // Use the built-in yes/no model; no nonexistent custom intent parameters.
+    type: 'Dialog.Confirm'
   };
 }
 
@@ -442,7 +503,7 @@ async function rememberAliGenieDevice(pool, storeId, req, config) {
   });
 }
 
-export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
+export async function handleAliGenieWebhook({ pool, body, headers = {}, platformTokenAuthenticated = false }) {
   const storeId = headers['x-store-id'];
   const timestamp = headers['x-aligenie-timestamp'];
   const signature = headers['x-aligenie-signature'];
@@ -516,9 +577,30 @@ export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
     const sessionStore = {
       get: () => nextPending,
       delete: () => { nextPending = null; },
-      set: (_key, value) => { nextPending = { ...value, previewRequestId: req.requestId, servicesIntegrity: integrity(account.data.services || []), operation: pendingOperation(value, account.data, actor.id, 'voice-' + digest(req.deviceOpenId), receiptId) }; }
+      set: async (_key, value) => {
+        const platformConfirmation = platformTokenAuthenticated && req.version === '1.0' ? req.platformConfirmation : null;
+        if (platformTokenAuthenticated && req.version === '1.0') {
+          if (!platformConfirmation) {
+            nextPending = null;
+            return false;
+          }
+          // Remember each platform preview turn after cancellation/completion.
+          // Reusing the same slot timestamps AND lifetimes must not create a
+          // second operation that a delayed confirmation could authorize.
+          const markerId = digest(scope + ':platform-preview:' + canonicalJSON(platformConfirmation));
+          const { rows: [seen] } = await client.query('SELECT id FROM voice_requests WHERE store_id=$1 AND id=$2', [storeId, markerId]);
+          if (seen) { nextPending = null; return false; }
+          if (Number(counts.requests) >= 9999) throw new ApiError(429, '语音请求过多，请稍后重试');
+          await client.query('INSERT INTO voice_requests(store_id,id,request_hash,response) VALUES($1,$2,$3,$4)',
+            [storeId, markerId, integrity(platformConfirmation), { previewRequestId: req.requestId }]);
+        }
+        nextPending = { ...value, platformConfirmation, previewRequestId: req.requestId,
+          servicesIntegrity: integrity(account.data.services || []),
+          operation: pendingOperation(value, account.data, actor.id, 'voice-' + digest(req.deviceOpenId), receiptId) };
+        return true;
+      }
     };
-    const response = await dispatchVoiceDialog({ req, account, client, targetStoreId: storeId, sessionStore });
+    const response = await dispatchVoiceDialog({ req, account, client, targetStoreId: storeId, sessionStore, platformTokenAuthenticated });
     if (nextPending && !dialog && Number(counts.dialogs) >= 256) throw new ApiError(429, '语音待确认操作过多，请稍后重试');
     if (nextPending?.previewRequestId === req.requestId) response.confirmationRequestId = req.requestId;
     if (nextPending) await client.query('INSERT INTO voice_dialogs(store_id,scope,pending,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(store_id,scope) DO UPDATE SET pending=$3,expires_at=$4', [storeId, scope, nextPending, new Date(nextPending.expiresAt)]);
@@ -528,13 +610,17 @@ export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
   });
 }
 
-async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessionStore }) {
+async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessionStore, platformTokenAuthenticated }) {
     const now = Date.now(), accountData = account.data;
     const members = accountData.members || [], services = accountData.services || [];
     const rechargeSettings = accountData.rechargeSettings;
     // 3. Multi-turn Session Check (Pending Confirmation)
     const pending = sessionStore.get(req.sessionId);
     const dialogReply = getDialogReply(req.utterance);
+
+    if (!pending && (req.confirmationStatus !== 'NONE' || dialogReply)) {
+      return formatAliGenieResponse({ text: '当前没有待确认的操作，请重新说完整的消费或充值指令。' });
+    }
 
     if (pending && (req.confirmationStatus === 'DENIED' || dialogReply === 'deny')) {
       sessionStore.delete(req.sessionId);
@@ -545,7 +631,10 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     }
 
     if (pending && (req.confirmationStatus === 'CONFIRMED' || dialogReply === 'confirm' || req.intentName === 'ConfirmIntent')) {
-      if (req.confirmationRequestId !== pending.previewRequestId) return formatAliGenieResponse({ text: '确认请求与本次预览不匹配，请重新核对并确认。', shouldEndSession: false, expectSpeech: true });
+      const explicitMatch = req.confirmationRequestId === pending.previewRequestId;
+      const platformMatch = !req.confirmationRequestId && platformTokenAuthenticated && req.version === '1.0' &&
+        req.confirmationStatus === 'CONFIRMED' && matchesPlatformConfirmation(pending.platformConfirmation, req.platformConfirmation);
+      if (!explicitMatch && !platformMatch) return formatAliGenieResponse({ text: '确认请求与本次预览不匹配，请重新说完整的消费或充值指令。' });
       if (pending.servicesIntegrity !== integrity(account.data.services || [])) {
         sessionStore.delete(req.sessionId);
         return formatAliGenieResponse({ text: '服务价格已变化，请重新发起操作并确认。', shouldEndSession: true });
@@ -599,11 +688,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     if (normalizedIntent.includes('query') || normalizedIntent.includes('balance') || /(查一下|查询|查|看看|看|余额|流水)/.test(utterance)) {
       const memberQuery = req.slots.member || utterance;
       if (!memberQuery || memberQuery.length < 1) {
-        return formatAliGenieResponse({
-          text: '请问您想查询哪位会员，或者报手机尾号？',
-          shouldEndSession: false,
-          expectSpeech: true
-        });
+        return askAliGenieParameter(req, 'memberQuery', '请问您想查询哪位会员，或者报手机尾号？');
       }
       const matched = req.slots.member ? findMatchingMembers(members, memberQuery) : membersFromUtterance(members, utterance);
       if (matched.length === 0) {
@@ -614,11 +699,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
       }
       if (matched.length > 1) {
         const names = matched.slice(0, 3).map(m => `${m.name}（手机尾号${(m.phone || '').slice(-4)}）`).join('、');
-        return formatAliGenieResponse({
-          text: `找到多位会员：${names}，请问您要查询哪一位？`,
-          shouldEndSession: false,
-          expectSpeech: true
-        });
+        return askAliGenieParameter(req, 'memberQuery', `找到多位会员：${names}，请问您要查询哪一位？`);
       }
 
       const m = matched[0];
@@ -650,11 +731,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     if (normalizedIntent.includes('consume') || /(消费|扣款|扣除|结账|买单)/.test(utterance)) {
       const memberQuery = req.slots.member || utterance;
       if (!memberQuery) {
-        return formatAliGenieResponse({
-          text: '请问是哪位会员需要扣款？',
-          shouldEndSession: false,
-          expectSpeech: true
-        });
+        return askAliGenieParameter(req, 'memberQuery', '请问是哪位会员需要扣款？');
       }
 
       const matched = req.slots.member ? findMatchingMembers(members, memberQuery) : membersFromUtterance(members, utterance);
@@ -666,11 +743,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
       }
       if (matched.length > 1) {
         const names = matched.slice(0, 3).map(m => `${m.name}（手机尾号${(m.phone || '').slice(-4)}）`).join('、');
-        return formatAliGenieResponse({
-          text: `找到多位会员：${names}，请问是哪一位？`,
-          shouldEndSession: false,
-          expectSpeech: true
-        });
+        return askAliGenieParameter(req, 'memberQuery', `找到多位会员：${names}，请问是哪一位？`);
       }
 
       const m = matched[0];
@@ -687,11 +760,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
       }
 
       if (!amount) {
-        return formatAliGenieResponse({
-          text: `已找到会员${m.name}，请问本次消费扣款多少元？`,
-          shouldEndSession: false,
-          expectSpeech: true
-        });
+        return askAliGenieParameter(req, 'amount', `已找到会员${m.name}，请问本次消费扣款多少元？请说金额加元，例如一百元。`);
       }
 
       const amountCent = moneyToCent(amount);
@@ -707,7 +776,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
       }
 
       // Save pending action in session cache
-      sessionStore.set(req.sessionId, {
+      const saved = await sessionStore.set(req.sessionId, {
         action: 'consume',
         memberId: m.id,
         memberName: m.name,
@@ -717,6 +786,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
         remark: '天猫精灵语音扣款',
         expiresAt: now + SESSION_TTL_MS
       });
+      if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新唤起梦飞管家并说完整的消费指令。' });
 
       return formatAliGenieResponse({
         text: confirmPrompt,
@@ -730,11 +800,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     if (normalizedIntent.includes('recharge') || /(充值|充|存)/.test(utterance)) {
       const memberQuery = req.slots.member || utterance;
       if (!memberQuery) {
-        return formatAliGenieResponse({
-          text: '请问要为哪位会员充值？',
-          shouldEndSession: false,
-          expectSpeech: true
-        });
+        return askAliGenieParameter(req, 'memberQuery', '请问要为哪位会员充值？');
       }
 
       const matched = req.slots.member ? findMatchingMembers(members, memberQuery) : membersFromUtterance(members, utterance);
@@ -746,21 +812,13 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
       }
       if (matched.length > 1) {
         const names = matched.slice(0, 3).map(m => `${m.name}（手机尾号${(m.phone || '').slice(-4)}）`).join('、');
-        return formatAliGenieResponse({
-          text: `找到多位会员：${names}，请问是哪一位？`,
-          shouldEndSession: false,
-          expectSpeech: true
-        });
+        return askAliGenieParameter(req, 'memberQuery', `找到多位会员：${names}，请问是哪一位？`);
       }
 
       const m = matched[0];
       const amount = req.slots.amount !== undefined ? parseAmount(req.slots.amount) : extractAmountFromUtterance(utterance, m.name);
       if (!amount) {
-        return formatAliGenieResponse({
-          text: `已找到会员${m.name}，请问充值多少金额？`,
-          shouldEndSession: false,
-          expectSpeech: true
-        });
+        return askAliGenieParameter(req, 'amount', `已找到会员${m.name}，请问充值多少金额？请说金额加元，例如两百元。`);
       }
 
       const actualCent = moneyToCent(amount);
@@ -783,7 +841,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
         confirmPrompt = `即将为会员${m.name}充值 ${(actualCent / 100).toFixed(2)} 元，充值后卡内余额为 ${(balanceAfter / 100).toFixed(2)} 元，请问确认充值吗？`;
       }
 
-      sessionStore.set(req.sessionId, {
+      const saved = await sessionStore.set(req.sessionId, {
         action: 'recharge',
         memberId: m.id,
         memberName: m.name,
@@ -791,6 +849,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
         giftCent,
         expiresAt: now + SESSION_TTL_MS
       });
+      if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新唤起梦飞管家并说完整的充值指令。' });
 
       return formatAliGenieResponse({
         text: confirmPrompt,
