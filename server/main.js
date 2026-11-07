@@ -1,9 +1,11 @@
 import { createPool, assertRuntimeRole } from './database.js';
 import { createService } from './service.js';
 import { createApi, defaultAllowedOrigins } from './http.js';
+import { writeAliGenieLog } from './aligenie-log.js';
 const pool = createPool();
 if (process.env.NODE_ENV === 'production') await assertRuntimeRole(pool);
 const server = createApi({ service: createService(pool), pool,
+  aligenieLogger: process.env.ALIGENIE_LOG_ENABLED === 'false' ? null : writeAliGenieLog,
   production: process.env.NODE_ENV === 'production',
   trustedProxyIPs: (process.env.TRUSTED_PROXY_IPS || '').split(',').map(value => value.trim()).filter(Boolean),
   allowedOrigins: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(value => value.trim()).filter(Boolean) : defaultAllowedOrigins(process.env.NODE_ENV === 'production'),

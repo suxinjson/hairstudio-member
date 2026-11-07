@@ -66,8 +66,8 @@ const platformRequest = (action = 'consume') => {
 };
 const platformConfirm = preview => ({ ...structuredClone(preview), requestId: randomUUID(), utterance: '是的', confirmStatus: 'CONFIRMED',
   slotEntities: preview.slotEntities.map(slot => ({ ...slot, liveTime: slot.liveTime + 1 })) });
-async function platformApi(t, instance = service) {
-  const server = createApi({ service: instance, pool, production: false });
+async function platformApi(t, instance = service, aligenieLogger = null) {
+  const server = createApi({ service: instance, pool, production: false, aligenieLogger });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const close = async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); };
   t.after(close);
@@ -119,6 +119,41 @@ for (const action of ['consume', 'recharge']) {
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM audit_events WHERE event=$1', ['voice_' + action])).rows[0].count, 1);
   });
 }
+
+for (const action of ['consume', 'recharge']) {
+  test(`platform sys.price JSON ${action} previews and confirms the original spoken amount exactly once`, async t => {
+    const records = [], { post } = await platformApi(t, service, record => records.push(record));
+    const preview = platformRequest(action), amountSlot = preview.slotEntities[1];
+    amountSlot.originalValue = action === 'consume' ? '三十八元' : '两百元';
+    amountSlot.standardValue = JSON.stringify({ success: true, type: 'CNY', unit: '元', value: action === 'consume' ? 38 : 200 });
+    const reply = await post(preview);
+    assert.equal(reply.returnValue.resultType, 'CONFIRM');
+    assert.match(reply.returnValue.reply, action === 'consume' ? /消费 38 元/ : /(?:充值|实充) 200 元/);
+    assert.equal(await balance(), 10000);
+    const confirmation = platformConfirm(preview);
+    assert.match((await post(confirmation)).returnValue.reply, action === 'consume' ? /扣款成功/ : /充值成功/);
+    await post(confirmation);
+    assert.equal(await balance(), action === 'consume' ? 6200 : 32000);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM operations WHERE method=$1', [action])).rows[0].count, 1);
+    assert.ok(records.some(record => record.event === 'aligenie.parsed' && record.slots.amount === amountSlot.originalValue));
+    assert.ok(records.some(record => record.outcome === 'transaction_committed'));
+    assert.ok(records.some(record => record.outcome === 'receipt_replayed'));
+    assert.ok(!JSON.stringify(records).includes(secret));
+  });
+}
+
+test('sys.price JSON without valid original CNY speech and failed log writers cannot change accounting behavior', async t => {
+  const { post } = await platformApi(t, service, () => { throw new Error('log writer failed'); });
+  const invalid = platformRequest();
+  invalid.slotEntities[1].standardValue = JSON.stringify({ success: true, type: 'USD', unit: '美元', value: 38 });
+  assert.equal((await post(invalid)).returnValue.resultType, 'ASK_INF');
+  assert.equal(await balance(), 10000);
+  const valid = platformRequest();
+  valid.slotEntities[1].standardValue = JSON.stringify({ success: true, type: 'CNY', unit: '元', value: 38 });
+  assert.equal((await post(valid)).returnValue.resultType, 'CONFIRM');
+  assert.match((await post(platformConfirm(valid))).returnValue.reply, /扣款成功/);
+  assert.equal(await balance(), 6200);
+});
 
 test('platform confirmation requires matching original intent, values, timestamps, next round and identity', async t => {
   const { post } = await platformApi(t), preview = platformRequest(); await post(preview);

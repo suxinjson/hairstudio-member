@@ -434,8 +434,8 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         return await synthesizeTTS({ ...config, text: options.text, fetchFn, socketFn });
       } finally { activeSynthesis--; }
     },
-    async handleAliGenieWebhook(body, { headers = {}, platformTokenAuthenticated = false } = {}) {
-      return handleAliGenieWebhook({ pool, body, headers, platformTokenAuthenticated });
+    async handleAliGenieWebhook(body, { headers = {}, platformTokenAuthenticated = false, trace = null } = {}) {
+      return handleAliGenieWebhook({ pool, body, headers, platformTokenAuthenticated, trace });
     },
     async getAliGenieVerification(fileName) {
       return getAliGenieVerificationContent(fileName, pool);

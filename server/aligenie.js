@@ -93,7 +93,8 @@ export function parseAliGenieRequest(body) {
       : [];
   for (const item of slotList) {
     const key = item.intentParameterName || item.slotName;
-    const val = item.standardValue ?? item.originalValue ?? item.slotValue;
+    const val = /^(amount|actualamount|price|sys\.price|money|giftamount|gift)$/i.test(key || '')
+      ? normalizeMoneySlot(item) : item.standardValue ?? item.originalValue ?? item.slotValue;
     if (key && val !== undefined) {
       rawSlots[key] = val;
     }
@@ -132,6 +133,23 @@ export function parseAliGenieRequest(body) {
     deviceOpenId,
     userOpenId
   };
+}
+
+function normalizeMoneySlot(slot) {
+  const standard = slot.standardValue ?? slot.originalValue ?? slot.slotValue;
+  let price = standard;
+  if (typeof standard === 'string' && standard.trim().startsWith('{')) {
+    try { price = JSON.parse(standard); } catch { return standard; }
+  }
+  if (price && typeof price === 'object' && !Array.isArray(price)) {
+    // sys.price can return a JSON normalization result. Its originalValue is
+    // the actual spoken amount; do not pick an arbitrary number from the JSON.
+    const original = String(slot.originalValue ?? slot.slotValue ?? '').trim();
+    if (price.success === true && price.type === 'CNY' && ['元', '块', '块钱'].includes(price.unit) &&
+        (parseAmount(original) !== null || /^(?:0(?:\.0{1,2})?|零)(?:元|块钱|块)?$/.test(original))) return original;
+    return typeof standard === 'string' ? standard : JSON.stringify(standard);
+  }
+  return standard;
 }
 
 // Web Service 1.0 retains slot creation timestamps and advances liveTime on
@@ -503,7 +521,7 @@ async function rememberAliGenieDevice(pool, storeId, req, config) {
   });
 }
 
-export async function handleAliGenieWebhook({ pool, body, headers = {}, platformTokenAuthenticated = false }) {
+export async function handleAliGenieWebhook({ pool, body, headers = {}, platformTokenAuthenticated = false, trace = null }) {
   const storeId = headers['x-store-id'];
   const timestamp = headers['x-aligenie-timestamp'];
   const signature = headers['x-aligenie-signature'];
@@ -538,7 +556,9 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
   // In that case, return only a greeting; bound sessions keep their existing reset/receipt flow.
   if (isWelcomeRequest(req)) {
     authenticate(configured, false);
+    trace?.parsed(req, body);
     if (!hasAccountingIdentity || !Array.isArray(configured.allowedDevices) || !configured.allowedDevices.includes(req.deviceOpenId)) {
+      trace?.state('welcome_without_bound_identity');
       if (hasAccountingIdentity) await rememberAliGenieDevice(pool, storeId, req, configured);
       return welcomeResponse();
     }
@@ -549,16 +569,18 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
     throw error;
   }
   authenticate(configured, false);
+  trace?.parsed(req, body);
   if (!Array.isArray(configured.allowedDevices) || !configured.allowedDevices.includes(req.deviceOpenId)) {
     await rememberAliGenieDevice(pool, storeId, req, configured);
     throw new ApiError(401, '当前天猫精灵设备未绑定此门店', 'VOICE_DEVICE_UNBOUND');
   }
-  return transaction(pool, async client => {
+  const response = await transaction(pool, async client => {
     const { rows: [actor] } = await client.query('SELECT * FROM users WHERE store_id=$1 AND id=$2 FOR SHARE', [storeId, configured.actorId || null]);
     if (!actor?.active || actor.role === 'viewer') throw new ApiError(403, '语音记账账号已停用或无权限');
     const { rows: [settings] } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1 FOR SHARE', [storeId]);
     authenticate(settings?.voice_config?.aligenie);
     if (settings.voice_config.aligenie.actorId !== actor.id) throw new ApiError(409, '语音记账账号已变化，请重试');
+    trace?.state('account_authorized', { storeRef: digest(storeId).slice(0, 16), actorRef: digest(actor.id).slice(0, 16) });
     const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [storeId]);
     if (!account || integrity(account.data) !== account.integrity) throw new ApiError(503, '账本完整性检查失败');
     const scope = digest(canonicalJSON([storeId, actor.id, req.deviceOpenId, req.userOpenId, req.sessionId, integrity(settings.voice_config.aligenie)]));
@@ -566,6 +588,7 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
     const { rows: [receipt] } = await client.query('SELECT * FROM voice_requests WHERE store_id=$1 AND id=$2', [storeId, receiptId]);
     if (receipt) {
       if (receipt.request_hash !== hash) throw new ApiError(409, '语音请求单号与原内容不一致');
+      trace?.state('receipt_replayed');
       return receipt.response;
     }
     await client.query('DELETE FROM voice_dialogs WHERE store_id=$1 AND expires_at<=now()', [storeId]);
@@ -600,6 +623,8 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
         return true;
       }
     };
+    trace?.state('pending_loaded', { hasPending: Boolean(nextPending), pendingAction: nextPending?.action || null,
+      previewRef: nextPending ? digest(nextPending.previewRequestId).slice(0, 16) : null });
     const response = await dispatchVoiceDialog({ req, account, client, targetStoreId: storeId, sessionStore, platformTokenAuthenticated });
     if (nextPending && !dialog && Number(counts.dialogs) >= 256) throw new ApiError(429, '语音待确认操作过多，请稍后重试');
     if (nextPending?.previewRequestId === req.requestId) response.confirmationRequestId = req.requestId;
@@ -608,6 +633,8 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
     await client.query('INSERT INTO voice_requests(store_id,id,request_hash,response) VALUES($1,$2,$3,$4)', [storeId, receiptId, hash, response]);
     return response;
   });
+  trace?.state('transaction_committed');
+  return response;
 }
 
 async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessionStore, platformTokenAuthenticated }) {

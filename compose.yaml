@@ -55,6 +55,7 @@ services:
       TRUSTED_PROXY_IPS: ${MEMBER_PROXY_IP:-172.30.184.10}
       ALLOWED_ORIGINS: https://localhost,https://${PUBLIC_DOMAIN:?请设置公网域名}
       VOICE_ALLOWED_ORIGINS: ${VOICE_ALLOWED_ORIGINS:-}
+      ALIGENIE_LOG_ENABLED: ${ALIGENIE_LOG_ENABLED:-true}
       XFYUN_APP_ID: ${XFYUN_APP_ID:-}
       XFYUN_API_PASSWORD: ${XFYUN_API_PASSWORD:-}
       RELEASE_DIRECTORY: /app/releases
@@ -64,6 +65,11 @@ services:
         condition: service_completed_successfully
     volumes: ["packages:/app/releases:ro"]
     networks: [private, voice_egress]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     read_only: true
     tmpfs: ["/tmp:size=32m,mode=1777"]
     cap_drop: [ALL]

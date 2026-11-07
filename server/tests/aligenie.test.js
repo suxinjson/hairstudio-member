@@ -143,6 +143,12 @@ test('platform Header welcomes and business validation replies use the skill pro
     const detail = JSON.parse(platformResult.returnValue.msgInfo);
     assert.equal(detail.code, 'VOICE_IDENTIFIERS_REQUIRED');
     assert.deepEqual(detail.missingFields, ['userOpenId', 'deviceOpenId']);
+    const normalizedPriceBody = structuredClone(platformBody);
+    normalizedPriceBody.slotEntities[2].originalValue = '一百元';
+    normalizedPriceBody.slotEntities[2].standardValue = JSON.stringify({ success: true, type: 'CNY', unit: '元', value: 100 });
+    const normalizedPriceResult = await (await post(normalizedPriceBody)).json();
+    assert.match(normalizedPriceResult.returnValue.reply, /金额一百元/);
+    assert.doesNotMatch(normalizedPriceResult.returnValue.reply, /success|CNY|\{/);
     const timestamp = String(Date.now());
     const internalRes = await post(platformBody, {
       'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp,

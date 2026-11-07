@@ -5,7 +5,8 @@ import { resolve, join } from 'node:path';
 import { ApiError } from './security.js';
 import { DATA_LIMITS, assertJsonBudget } from '../src/data-limits.js';
 import { normalizeIP, proxyIdentity, createRequestGuard } from './request-guard.js';
-import { signAliGenieRequest, formatAliGeniePlatformError } from './aligenie.js';
+import { signAliGenieRequest, formatAliGeniePlatformError, parseAliGenieRequest } from './aligenie.js';
+import { createAliGenieTrace } from './aligenie-log.js';
 
 async function body(request, maximum = 16 * 1024) {
   if (!String(request.headers['content-type'] || '').startsWith('application/json')) throw new ApiError(415, '请求必须使用 JSON');
@@ -29,14 +30,15 @@ export function defaultAllowedOrigins(production = false) {
   return production ? ['https://localhost'] : ['https://localhost', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174'];
 }
 
-export function createApi({ service, pool, production = false, allowedOrigins = defaultAllowedOrigins(production), releaseDirectory = './releases', trustedProxyIPs = [], rateLimits = production }) {
+export function createApi({ service, pool, production = false, allowedOrigins = defaultAllowedOrigins(production), releaseDirectory = './releases', trustedProxyIPs = [], rateLimits = production, aligenieLogger = null }) {
   const origins = new Set(allowedOrigins);
   const trustedProxies = new Set(trustedProxyIPs.map(value => {
     const ip = normalizeIP(value); if (!ip) throw new Error('可信代理必须配置为明确的 IP 地址'); return ip;
   }));
   const guard = createRequestGuard({ enabled: rateLimits });
   const server = createServer(async (request, response) => {
-    const send = (status, value) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(value)); };
+    let voiceTrace = null;
+    const send = (status, value) => { voiceTrace?.response(status, value); response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); response.end(JSON.stringify(value)); };
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Vary', 'Origin');
@@ -48,6 +50,7 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       const url = new URL(request.url, 'http://internal');
       const path = url.pathname;
       const route = request.method + ' ' + path;
+      if (route === 'POST /api/v1/voice/aligenie') voiceTrace = createAliGenieTrace(aligenieLogger);
       const heavy = /^(GET|POST) \/api\/v1\/(account(?:\/head|\/bootstrap)?|sync(?:\/resolve)?)$/.test(route);
       release = guard.enter(heavy ? 'account' : null, 2);
       guard.take('ip:' + ip, 180);
@@ -88,6 +91,7 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       if (route === 'POST /api/v1/voice/aligenie') {
         guard.take('voice_aligenie:' + ip, 60);
         const input = await body(request, 32 * 1024);
+        voiceTrace?.received(input, request.headers['x-aligenie-signature'] ? 'signed_request' : 'platform_or_unsigned');
         let headers = request.headers;
         let platformTokenAuthenticated = false;
         if (!headers['x-aligenie-signature']) {
@@ -113,9 +117,11 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
           }
         }
         try {
-          const result = await service.handleAliGenieWebhook(input, { headers, platformTokenAuthenticated });
+          if (platformTokenAuthenticated) voiceTrace?.parsed(parseAliGenieRequest(input), input);
+          const result = await service.handleAliGenieWebhook(input, { headers, platformTokenAuthenticated, trace: voiceTrace });
           return send(200, result);
         } catch (error) {
+          voiceTrace?.reject(error);
           const reply = platformTokenAuthenticated && formatAliGeniePlatformError(error, input);
           if (reply) return send(200, reply);
           throw error;
@@ -201,7 +207,8 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
     } catch (error) {
       if (response.headersSent) return response.destroy();
       const status = error.status || (error.code === '23505' ? 409 : error instanceof TypeError || error instanceof SyntaxError ? 400 : 500);
-      if (status === 500) console.error('API 请求失败:', error.message);
+      voiceTrace?.reject(error, status);
+      if (status === 500 && !voiceTrace) console.error('API 请求失败:', error.message);
       if (status === 429 || status === 503) response.setHeader('Retry-After', status === 429 ? '60' : '5');
       if (!request.complete) response.setHeader('Connection', 'close');
       send(status, { error: status === 500 ? '服务暂时不可用，请稍后重试' : error.message, code: error.status ? error.code : 'REQUEST_FAILED' });
