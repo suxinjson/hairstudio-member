@@ -608,6 +608,10 @@ export class AdminApiClient {
     return this.request('/api/v1/voice/config');
   }
 
+  async getAliGenieDevices() {
+    return this.request('/api/v1/voice/aligenie/devices');
+  }
+
   async saveVoiceConfig(config) {
     return this.request('/api/v1/voice/config', {
       method: 'POST',

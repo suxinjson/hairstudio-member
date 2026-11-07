@@ -397,6 +397,24 @@
       <label class="block text-sm">允许的设备标识（每行一个）
         <textarea v-model="aliDevices" aria-label="天猫精灵设备白名单" rows="3" class="block w-full border rounded-lg p-2 mt-1" />
       </label>
+      <div class="rounded-xl border border-slate-200 p-4 space-y-3">
+        <div class="flex items-center justify-between gap-3">
+          <h4 class="text-sm font-bold text-slate-900">待绑定音箱</h4>
+          <button type="button" @click="loadAliGenieDevices" :disabled="isLoadingDevices || isSaving"
+            class="text-sm text-emerald-700 disabled:text-slate-400">{{ isLoadingDevices ? '正在刷新…' : '刷新待绑定音箱' }}</button>
+        </div>
+        <p class="text-xs text-slate-500">先在开放平台开启真机测试，再用音箱调用当前技能，然后点击刷新。选择音箱并保存配置后完成绑定。* 不能放行所有设备。</p>
+        <p v-if="devicesChecked && !candidateDevices.length" class="text-xs text-slate-500">暂未发现待绑定音箱。请确认真机测试已开启、接口密钥配置一致，再用音箱调用技能。网页在线测试没有真实设备标识。</p>
+        <div v-for="device in candidateDevices" :key="device.deviceOpenId" class="rounded-lg bg-slate-50 p-3 space-y-2">
+          <p class="text-xs text-slate-500">最近调用：{{ new Date(device.lastSeenAt).toLocaleString() }}</p>
+          <p class="text-xs font-mono break-all text-slate-700">{{ device.deviceOpenId }}</p>
+          <div class="flex flex-wrap gap-4 text-sm">
+            <button type="button" @click="copyValue(device.deviceOpenId, '设备标识')" class="text-emerald-700">复制设备标识</button>
+            <button type="button" @click="addAliGenieDevice(device.deviceOpenId)" :disabled="stagedDeviceIds.includes(device.deviceOpenId)"
+              class="text-emerald-700 disabled:text-slate-400">{{ stagedDeviceIds.includes(device.deviceOpenId) ? '已加入，保存后生效' : '加入允许设备' }}</button>
+          </div>
+        </div>
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label class="block text-sm">平台域名校验文件名
           <input type="text" v-model="ali.verificationFile" maxlength="100" placeholder="例如 b3e0f13ccb082b486a3c85c834b6598a.txt" class="block w-full border rounded-lg p-2 mt-1 text-xs">
@@ -483,6 +501,30 @@ const aliDevices = ref('');
 const aliHasToken = ref(false);
 const generatedSecret = ref('');
 const voiceActors = ref([]);
+const candidateDevices = ref([]), isLoadingDevices = ref(false), devicesChecked = ref(false);
+let deviceLoadSequence = 0;
+const stagedDeviceIds = computed(() => aliDevices.value.split(/[,\n]/).map(value => value.trim()).filter(Boolean));
+async function loadAliGenieDevices() {
+  if (!isOwner.value || !loaded.value || isLoadingDevices.value || isSaving.value) return;
+  const sequence = ++deviceLoadSequence;
+  isLoadingDevices.value = true;
+  try {
+    const devices = await props.api.getAliGenieDevices();
+    if (!alive || sequence !== deviceLoadSequence) return;
+    candidateDevices.value = devices;
+    devicesChecked.value = true;
+  } catch (error) {
+    if (alive && sequence === deviceLoadSequence) showTip('读取待绑定音箱失败: ' + error.message, 'error');
+  } finally { if (alive && sequence === deviceLoadSequence) isLoadingDevices.value = false; }
+}
+function addAliGenieDevice(deviceOpenId) {
+  if (!isOwner.value || !loaded.value || isSaving.value) return;
+  const ids = stagedDeviceIds.value.filter(value => value !== '*');
+  if (!ids.includes(deviceOpenId)) ids.push(deviceOpenId);
+  if (ids.length > 50) { showTip('最多允许 50 台设备', 'error'); return; }
+  aliDevices.value = ids.join('\n');
+  showTip('音箱已加入允许设备，请点击保存播报配置完成绑定');
+}
 function generateSigningSecret() {
   if (!isOwner.value || !loaded.value || isSaving.value) return;
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -564,6 +606,7 @@ function insertVar(type, variable) {
 
 async function loadConfig() {
   if (isSaving.value) return;
+  deviceLoadSequence++; candidateDevices.value = []; devicesChecked.value = false; isLoadingDevices.value = false;
   const sequence = ++loadSequence;
   loaded.value = false; isLoading.value = true;
   try {
@@ -707,7 +750,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  alive = false; loadSequence++; previewSequence++; clearTimeout(tipTimer);
+  alive = false; loadSequence++; previewSequence++; deviceLoadSequence++; clearTimeout(tipTimer);
   props.player.stop();
 });
 </script>

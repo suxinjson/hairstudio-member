@@ -435,6 +435,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     },
     request,
     getVoiceConfig() { return request('/voice/config'); },
+    getAliGenieDevices() { return request('/voice/aligenie/devices'); },
     getUsers() { return request('/users'); },
     saveVoiceConfig(config) { return request('/voice/config', config, 'POST'); },
     previewVoice(options, { signal } = {}) {

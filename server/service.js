@@ -6,7 +6,7 @@ import { replayOperation } from '../src/cloud-storage.js';
 import { canWrite, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
 import { DATA_LIMITS, assertAccountLimits, assertJsonBudget, boundedText } from '../src/data-limits.js';
 import { sanitizeVoiceConfig, readVoiceConfig, publicVoiceConfig, synthesizeTTS } from './voice.js';
-import { handleAliGenieWebhook, getAliGenieVerificationContent } from './aligenie.js';
+import { handleAliGenieWebhook, getAliGenieVerificationContent, aliGenieDeviceScope } from './aligenie.js';
 
 export function validateSnapshot(data, options) {
   assertAccountLimits(data && { ...data, ledgers: data.ledgers ?? [], services: data.services ?? DEFAULT_SERVICES, rechargePlans: data.rechargePlans ?? DEFAULT_RECHARGE_PLANS });
@@ -371,6 +371,20 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         if (!/^[1-9]\d{0,2}$/.test(String(limit)) || Number(limit) > 500 ||
             before !== null && (!/^[1-9]\d{0,18}$/.test(String(before)) || BigInt(before) > 9223372036854775807n)) throw new ApiError(400, '审计日志分页参数无效');
         return (await client.query('SELECT a.id,a.event,a.device_id,a.details,a.occurred_at,a.received_at,u.display_name FROM audit_events a LEFT JOIN users u ON u.id=a.user_id WHERE a.store_id=$1 AND ($2::bigint IS NULL OR a.id<$2::bigint) ORDER BY a.id DESC LIMIT $3', [user.store_id, before, Number(limit)])).rows;
+      });
+    },
+    async getAliGenieDevices(identity) {
+      return transaction(pool, async client => {
+        const user = await lockedUser(client, identity);
+        if (user.role !== 'owner') throw new ApiError(403, '仅店主可以查看待绑定音箱');
+        const { rows: [settings] } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
+        const config = settings?.voice_config?.aligenie;
+        if (!config?.enabled || config.authVersion !== 2 || !config.token) return [];
+        return (await client.query(`SELECT device_open_id AS "deviceOpenId",request_id AS "requestId",intent_name AS "intentName",
+          first_seen_at AS "firstSeenAt",last_seen_at AS "lastSeenAt" FROM voice_device_candidates
+          WHERE store_id=$1 AND credential_scope=$2 AND last_seen_at>=now()-interval '1 day'
+          AND NOT(device_open_id=ANY($3::text[])) ORDER BY last_seen_at DESC,device_open_id LIMIT 20`,
+          [user.store_id, aliGenieDeviceScope(config), config.allowedDevices || []])).rows;
       });
     },
     async getVoiceConfig(identity) {

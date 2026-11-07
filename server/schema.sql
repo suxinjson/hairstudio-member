@@ -58,3 +58,11 @@ CREATE TABLE IF NOT EXISTS voice_requests (
   received_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(store_id,id)
 );
 CREATE INDEX IF NOT EXISTS voice_request_expiry ON voice_requests(store_id,received_at);
+
+-- Recent authenticated devices awaiting an explicit owner whitelist update.
+CREATE TABLE IF NOT EXISTS voice_device_candidates (
+  store_id uuid NOT NULL REFERENCES stores(id), device_open_id text NOT NULL,
+  credential_scope text NOT NULL, request_id text NOT NULL, intent_name text NOT NULL,
+  first_seen_at timestamptz NOT NULL DEFAULT now(), last_seen_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(store_id,device_open_id)
+);

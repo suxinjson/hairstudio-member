@@ -419,6 +419,29 @@ export function signAliGenieRequest(secret, timestamp, storeId, body) {
   return createHmac('sha256', secret).update(String(timestamp) + '\n' + storeId + '\n' + canonicalJSON(body)).digest('hex');
 }
 
+export function aliGenieDeviceScope(config) {
+  return digest(canonicalJSON([config?.authVersion, config?.token]));
+}
+
+async function rememberAliGenieDevice(pool, storeId, req, config) {
+  const scope = aliGenieDeviceScope(config);
+  await transaction(pool, async client => {
+    // Serialize candidate retention and configuration changes for this store.
+    await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [storeId]);
+    const { rows: [settings] } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [storeId]);
+    const current = settings?.voice_config?.aligenie;
+    if (!current?.enabled || current.authVersion !== 2 || aliGenieDeviceScope(current) !== scope ||
+        current.allowedDevices?.includes(req.deviceOpenId)) return;
+    await client.query("DELETE FROM voice_device_candidates WHERE store_id=$1 AND (credential_scope<>$2 OR last_seen_at<now()-interval '1 day')", [storeId, scope]);
+    await client.query(`INSERT INTO voice_device_candidates(store_id,device_open_id,credential_scope,request_id,intent_name)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(store_id,device_open_id) DO UPDATE
+      SET request_id=$4,intent_name=$5,last_seen_at=now()`,
+      [storeId, req.deviceOpenId, scope, req.requestId, req.intentName.slice(0, 128)]);
+    await client.query(`DELETE FROM voice_device_candidates WHERE store_id=$1 AND device_open_id IN
+      (SELECT device_open_id FROM voice_device_candidates WHERE store_id=$1 ORDER BY last_seen_at DESC,device_open_id OFFSET 20)`, [storeId]);
+  });
+}
+
 export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
   const storeId = headers['x-store-id'];
   const timestamp = headers['x-aligenie-timestamp'];
@@ -455,6 +478,7 @@ export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
   if (isWelcomeRequest(req)) {
     authenticate(configured, false);
     if (!hasAccountingIdentity || !Array.isArray(configured.allowedDevices) || !configured.allowedDevices.includes(req.deviceOpenId)) {
+      if (hasAccountingIdentity) await rememberAliGenieDevice(pool, storeId, req, configured);
       return welcomeResponse();
     }
   }
@@ -463,7 +487,11 @@ export async function handleAliGenieWebhook({ pool, body, headers = {} }) {
     error.missingFields = missingFields;
     throw error;
   }
-  authenticate(configured);
+  authenticate(configured, false);
+  if (!Array.isArray(configured.allowedDevices) || !configured.allowedDevices.includes(req.deviceOpenId)) {
+    await rememberAliGenieDevice(pool, storeId, req, configured);
+    throw new ApiError(401, '当前天猫精灵设备未绑定此门店', 'VOICE_DEVICE_UNBOUND');
+  }
   return transaction(pool, async client => {
     const { rows: [actor] } = await client.query('SELECT * FROM users WHERE store_id=$1 AND id=$2 FOR SHARE', [storeId, configured.actorId || null]);
     if (!actor?.active || actor.role === 'viewer') throw new ApiError(403, '语音记账账号已停用或无权限');

@@ -62,6 +62,8 @@ test('migration preserves existing accounts and runtime grants support business 
     assert.match((await voice(confirmation)).returnValue.reply, /充值成功/);
     await service.refresh(session.refreshToken);
     await service.auditLog(identity); await query('SELECT * FROM releases');
+    await assert.rejects(voice({ ...preview, requestId:randomUUID(), context:{System:{device:{deviceOpenId:'candidate-device'},user:{userOpenId:'runtime-user'}}} }), { code:'VOICE_DEVICE_UNBOUND' });
+    assert.equal((await service.getAliGenieDevices(identity))[0].deviceOpenId,'candidate-device');
     for (const sql of ['CREATE TABLE forbidden(id int)', 'CREATE ROLE forbidden_role', 'CREATE DATABASE forbidden_db', 'DROP TABLE accounts', 'TRUNCATE accounts', 'DELETE FROM accounts', "UPDATE voice_requests SET response='{}'", 'TRUNCATE voice_dialogs', "UPDATE releases SET notes='forged'", 'GRANT "' + administrator.replaceAll('"', '""') + '" TO member_app', "COPY stores TO PROGRAM 'echo forbidden'"]) {
       await assert.rejects(query(sql), { code: '42501' });
     }

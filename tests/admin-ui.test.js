@@ -331,6 +331,24 @@ for (const event of ['focus', 'visibilitychange']) {
   });
 }
 
+test('owner stages a discovered speaker, removes the literal wildcard, and binds only when saving', async t => {
+  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ provider: 'fish_audio', hasApiKey: true,
+    aligenie: { enabled: true, actorId: owner.id, allowedDevices: ['*','existing-device'], hasToken: true } }));
+  t.mock.method(adminApi, 'getUsers', async () => [{ ...owner, active: true }]);
+  t.mock.method(adminApi, 'getAliGenieDevices', async () => [{deviceOpenId:'new-speaker-id',lastSeenAt:'2026-11-07T08:00:00Z'}]);
+  const save = t.mock.method(adminApi, 'saveVoiceConfig', async config => ({...config,hasApiKey:true,aligenie:{...config.aligenie,hasToken:true}}));
+  await mount(VoiceSettings);
+  button('刷新待绑定音箱').click(); await flush();
+  assert.ok(document.body.textContent.includes('new-speaker-id'));
+  button('加入允许设备').click(); await flush();
+  assert.equal(document.querySelector('[aria-label="天猫精灵设备白名单"]').value, 'existing-device\nnew-speaker-id');
+  assert.equal(save.mock.callCount(), 0);
+  assert.equal(button('已加入，保存后生效').disabled, true);
+  button('保存播报配置').click(); await flush();
+  assert.deepEqual(save.mock.calls[0].arguments[0].aligenie.allowedDevices,['existing-device','new-speaker-id']);
+  assert.equal(save.mock.calls[0].arguments[0].aligenie.token,'');
+});
+
 test('owner voice settings use blank secret inputs and clear newly submitted credentials after saving', async t => {
   t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', apiKey: '', hasApiKey: true,
     aligenie: { enabled: true, actorId: owner.id, allowedDevices: ['test-device'], hasToken: true } }));

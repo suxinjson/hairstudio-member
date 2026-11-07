@@ -160,6 +160,7 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       if (route === 'GET /api/v1/activity') return send(200, await service.auditLog(identity, {
         before: url.searchParams.get('before'), limit: url.searchParams.get('limit') ?? 100
       }));
+      if (route === 'GET /api/v1/voice/aligenie/devices') return send(200, await service.getAliGenieDevices(identity));
       if (route === 'GET /api/v1/voice/config') return send(200, await service.getVoiceConfig(identity));
       if (route === 'POST /api/v1/voice/config') {
         await service.authorize(identity, 'owner'); guard.take('admin:' + identity.id, 10);
