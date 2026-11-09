@@ -96,6 +96,23 @@ test('HTTP rejections and malformed JSON are logged once with accurate statuses'
   assert.equal(records.at(-1).status, 400);
 });
 
+test('platform actor-change replies use fixed explanations and unexpected server errors remain HTTP errors', async t => {
+  const records = [], privateMessage = 'internal credential must never be spoken';
+  let error = new ApiError(409, privateMessage, 'VOICE_ACTOR_CHANGED');
+  const post = await startApi(t, { async handleAliGenieWebhook() { throw error; } }, record => records.push(record));
+  const res = await post(body), reply = await res.json();
+  assert.equal(res.status, 200);
+  assert.match(reply.returnValue.reply, /记账账号已变化/);
+  assert.equal(JSON.parse(reply.returnValue.msgInfo).code, 'VOICE_ACTOR_CHANGED');
+  assert.ok(!JSON.stringify(reply).includes(privateMessage));
+  assert.ok(records.some(record => record.event === 'aligenie.rejected' && record.status === 409));
+  error = new Error(privateMessage);
+  const unexpected = await post({ ...body, requestId: 'unexpected-error' });
+  assert.equal(unexpected.status, 500);
+  assert.deepEqual(await unexpected.json(), { error: '服务暂时不可用，请稍后重试', code: 'REQUEST_FAILED' });
+  assert.ok(!JSON.stringify(records).includes(privateMessage));
+});
+
 test('broken log writers cannot prevent HTTP replies', async t => {
   const post = await startApi(t, { async handleAliGenieWebhook() { return formatAliGenieResponse({ text: '处理完成' }); } }, () => { throw new Error('log writer unavailable'); });
   const res = await post(body); assert.equal(res.status, 200); assert.equal((await res.json()).returnValue.reply, '处理完成');

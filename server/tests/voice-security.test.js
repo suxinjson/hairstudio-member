@@ -120,6 +120,53 @@ for (const action of ['consume', 'recharge']) {
   });
 }
 
+for (const failure of [
+  { code: 'VOICE_ACTOR_UNAVAILABLE', status: 403, text: /记账账号已停用或无权限/,
+    prepare: () => pool.query('UPDATE users SET active=false WHERE id=$1', [identity.id]) },
+  { code: 'VOICE_LEDGER_INVALID', status: 503, text: /账本校验失败/,
+    prepare: () => pool.query('UPDATE accounts SET integrity=$1 WHERE store_id=$2', ['invalid-integrity', identity.store_id]) }
+]) {
+  test(`authenticated platform explains ${failure.code} while signed callers retain the rejection and accounting stays unchanged`, async t => {
+    const records = [], api = await platformApi(t, service, record => records.push(record));
+    await failure.prepare();
+    const readAccount = async () => (await pool.query('SELECT data,revision,integrity FROM accounts WHERE store_id=$1', [identity.store_id])).rows[0];
+    const before = await readAccount(), body = platformRequest();
+    const countRows = async () => (await pool.query('SELECT (SELECT count(*)::int FROM voice_dialogs) AS dialogs,(SELECT count(*)::int FROM voice_requests) AS requests,(SELECT count(*)::int FROM operations) AS operations')).rows[0];
+    const countsBefore = await countRows();
+    const reply = await api.post(body);
+    assert.equal(reply.returnValue.executeCode, 'SUCCESS');
+    assert.equal(reply.returnValue.resultType, 'RESULT');
+    assert.equal(reply.response.shouldEndSession, true);
+    assert.equal(reply.confirmationRequestId, undefined);
+    assert.match(reply.returnValue.reply, failure.text);
+    assert.equal(JSON.parse(reply.returnValue.msgInfo).code, failure.code);
+    assert.ok(records.some(record => record.event === 'aligenie.rejected' && record.code === failure.code && record.status === failure.status));
+    await assert.rejects(send(body), error => error.code === failure.code && error.status === failure.status);
+    assert.deepEqual(await readAccount(), before);
+    assert.deepEqual(await countRows(), countsBefore);
+  });
+}
+
+test('platform request conflicts are explained without replacing a preview or applying a different amount', async t => {
+  const api = await platformApi(t), preview = platformRequest();
+  assert.equal((await api.post(preview)).returnValue.resultType, 'CONFIRM');
+  const before = await service.account(identity);
+  const dialogs = (await pool.query('SELECT pending FROM voice_dialogs')).rows;
+  const changed = structuredClone(preview);
+  changed.utterance = '张三扣款50元';
+  changed.slotEntities[1].originalValue = changed.slotEntities[1].standardValue = changed.slotEntities[1].slotValue = '50元';
+  const reply = await api.post(changed);
+  assert.match(reply.returnValue.reply, /请求编号.*冲突/);
+  assert.equal(reply.returnValue.resultType, 'RESULT');
+  assert.equal(JSON.parse(reply.returnValue.msgInfo).code, 'VOICE_REQUEST_CONFLICT');
+  await assert.rejects(send(changed), error => error.status === 409 && error.code === 'VOICE_REQUEST_CONFLICT');
+  assert.deepEqual(await service.account(identity), before);
+  assert.deepEqual((await pool.query('SELECT pending FROM voice_dialogs')).rows, dialogs);
+  assert.match((await api.post(platformConfirm(preview))).returnValue.reply, /扣款成功.*38 元/);
+  assert.equal(await balance(), 6200);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='consume'")).rows[0].count, 1);
+});
+
 for (const action of ['consume', 'recharge']) {
   test(`platform sys.price JSON ${action} previews and confirms the original spoken amount exactly once`, async t => {
     const records = [], { post } = await platformApi(t, service, record => records.push(record));

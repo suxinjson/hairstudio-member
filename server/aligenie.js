@@ -425,13 +425,23 @@ function askAliGenieParameter(req, parameterName, text) {
       ? [{ parameterName, intentId }] : null });
 }
 
+const PLATFORM_BUSINESS_REPLIES = new Map([
+  ['VOICE_ACTOR_UNAVAILABLE', '当前语音记账账号已停用或无权限，请店主在语音设置中选择可用的记账账号。'],
+  ['VOICE_ACTOR_CHANGED', '语音记账账号已变化，请重新说完整的消费、充值或查询指令。'],
+  ['VOICE_LEDGER_INVALID', '门店账本校验失败，暂时无法查询或记账，请店主检查云端账本。'],
+  ['VOICE_REQUEST_CONFLICT', '本次语音请求编号与之前的内容冲突，请重新唤起技能后再试。']
+]);
+
 // Only the authenticated platform Header adapter should convert these rejections
 // to spoken skill replies. Internal signed API calls retain their HTTP errors.
 export function formatAliGeniePlatformError(error, body) {
-  if (!['VOICE_IDENTIFIERS_REQUIRED', 'VOICE_DEVICE_UNBOUND'].includes(error.code)) return null;
+  const businessReply = PLATFORM_BUSINESS_REPLIES.get(error.code);
+  if (!businessReply && !['VOICE_IDENTIFIERS_REQUIRED', 'VOICE_DEVICE_UNBOUND'].includes(error.code)) return null;
   const req = parseAliGenieRequest(body), detail = { code: error.code };
   let text;
-  if (error.code === 'VOICE_DEVICE_UNBOUND') {
+  if (businessReply) {
+    text = businessReply;
+  } else if (error.code === 'VOICE_DEVICE_UNBOUND') {
     text = '当前天猫精灵设备未绑定此门店，请在后台语音设置中绑定设备后重试。';
     detail.deviceOpenId = req.deviceOpenId;
   } else {
@@ -576,18 +586,18 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
   }
   const response = await transaction(pool, async client => {
     const { rows: [actor] } = await client.query('SELECT * FROM users WHERE store_id=$1 AND id=$2 FOR SHARE', [storeId, configured.actorId || null]);
-    if (!actor?.active || actor.role === 'viewer') throw new ApiError(403, '语音记账账号已停用或无权限');
+    if (!actor?.active || actor.role === 'viewer') throw new ApiError(403, '语音记账账号已停用或无权限', 'VOICE_ACTOR_UNAVAILABLE');
     const { rows: [settings] } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1 FOR SHARE', [storeId]);
     authenticate(settings?.voice_config?.aligenie);
-    if (settings.voice_config.aligenie.actorId !== actor.id) throw new ApiError(409, '语音记账账号已变化，请重试');
+    if (settings.voice_config.aligenie.actorId !== actor.id) throw new ApiError(409, '语音记账账号已变化，请重试', 'VOICE_ACTOR_CHANGED');
     trace?.state('account_authorized', { storeRef: digest(storeId).slice(0, 16), actorRef: digest(actor.id).slice(0, 16) });
     const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [storeId]);
-    if (!account || integrity(account.data) !== account.integrity) throw new ApiError(503, '账本完整性检查失败');
+    if (!account || integrity(account.data) !== account.integrity) throw new ApiError(503, '账本完整性检查失败', 'VOICE_LEDGER_INVALID');
     const scope = digest(canonicalJSON([storeId, actor.id, req.deviceOpenId, req.userOpenId, req.sessionId, integrity(settings.voice_config.aligenie)]));
     const receiptId = digest(scope + ':' + req.requestId), hash = integrity(body);
     const { rows: [receipt] } = await client.query('SELECT * FROM voice_requests WHERE store_id=$1 AND id=$2', [storeId, receiptId]);
     if (receipt) {
-      if (receipt.request_hash !== hash) throw new ApiError(409, '语音请求单号与原内容不一致');
+      if (receipt.request_hash !== hash) throw new ApiError(409, '语音请求单号与原内容不一致', 'VOICE_REQUEST_CONFLICT');
       trace?.state('receipt_replayed');
       return receipt.response;
     }
