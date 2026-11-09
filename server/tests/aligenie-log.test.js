@@ -61,6 +61,7 @@ test('sys.price JSON uses validated original CNY speech rather than arbitrary no
     [{ success: true, type: 'CNY', unit: '角' }, '一百元'],
     [{ success: true, type: 'CNY', unit: '元' }, '-100元'],
     [{ success: true, type: 'CNY', unit: '元' }, '100元垃圾'],
+    [{ success: true, type: 'CNY', unit: '元' }, '13800001234'],
     [{ success: true, type: 'CNY', unit: '元' }, ''],
   ]) {
     const request = { slotEntities: [{ intentParameterName: 'amount', originalValue: original, standardValue: JSON.stringify(price) }] };

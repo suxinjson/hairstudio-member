@@ -186,7 +186,11 @@ function matchesPlatformConfirmation(preview, current) {
 
 export function parseAmount(raw) {
   if (raw === undefined || raw === null) return null;
-  const str = String(raw).trim().replace(/(?:元|块钱|块)$/, '').trim();
+  const spoken = String(raw).trim();
+  // NLU can put an unrecognized member's mobile number into the amount slot.
+  // A bare mobile number is ambiguous identity input, not an explicit price.
+  if (/^1[3-9]\d{9}$/.test(spoken)) return null;
+  const str = spoken.replace(/(?:元|块钱|块)$/, '').trim();
   if (/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(str)) {
     try { const cents = moneyToCent(str); return cents > 0 && moneyToCent(cents / 100) === cents ? cents / 100 : null; } catch { return null; }
   }

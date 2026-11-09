@@ -301,8 +301,9 @@ test('platform member elicitation uses the current query intent and accepts a sp
 });
 
 test('strict amounts reject partial numbers and identity numbers, preserving supported Chinese amounts', () => {
-  for (const raw of ['-38', '+38', '1e3', '38.999', '38元垃圾', 'NaN', 'Infinity', '1234充值', '负三十八', '一百百', '一万五', '999999999999999999999']) assert.equal(parseAmount(raw), null, raw);
+  for (const raw of ['-38', '+38', '1e3', '38.999', '38元垃圾', 'NaN', 'Infinity', '1234充值', '13800001234', ' 13900005678 ', '负三十八', '一百百', '一万五', '999999999999999999999']) assert.equal(parseAmount(raw), null, raw);
   for (const [raw, amount] of [['一百五', 150], ['一百零五', 105], ['一万二千三百四十五', 12345], ['三十八点五', 38.5], ['两百元', 200]]) assert.equal(parseAmount(raw), amount, raw);
+  assert.equal(parseAmount('13800001234元'), 13800001234);
   assert.equal(extractAmountFromUtterance('尾号1234充值'), null);
   assert.equal(extractAmountFromUtterance('张三扣款-38元', '张三'), null);
   assert.equal(extractAmountFromUtterance('尾号1234充值200元'), 200);
@@ -311,6 +312,31 @@ test('strict amounts reject partial numbers and identity numbers, preserving sup
   assert.equal(membersFromUtterance(members, '尾号1234充值200').length, 2);
   assert.equal(membersFromUtterance([{ name: '张三' }, { name: '张三丰' }], '张三和张三丰充值200').length, 2);
 });
+
+for (const action of ['consume', 'recharge']) {
+  test(`platform ${action} cannot preview or confirm a mobile number misclassified as amount and accepts a corrected phone-based instruction`, async t => {
+    const api = await platformApi(t), bad = platformRequest(action), phone = '13800001234';
+    bad.utterance = `手机号${phone}${action === 'consume' ? '消费' : '充值'}100`;
+    for (const slot of bad.slotEntities) slot.originalValue = slot.standardValue = slot.slotValue = phone;
+    const before = await service.account(identity);
+    const reply = await api.post(bad);
+    assert.equal(reply.returnValue.resultType, 'ASK_INF');
+    assert.deepEqual(reply.returnValue.askedInfos, [{ parameterName: 'amount', intentId: bad.intentId }]);
+    assert.equal(reply.confirmationRequestId, undefined);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM voice_dialogs')).rows[0].count, 0);
+    assert.match((await api.post(platformConfirm(bad))).returnValue.reply, /没有待确认/);
+    assert.deepEqual(await service.account(identity), before);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM operations WHERE method=$1', [action])).rows[0].count, 0);
+    const good = structuredClone(bad);
+    good.requestId = randomUUID();
+    good.utterance = `手机号${phone}${action === 'consume' ? '消费' : '充值'}38元`;
+    good.slotEntities[1].originalValue = good.slotEntities[1].standardValue = good.slotEntities[1].slotValue = '38元';
+    good.slotEntities[1].createTimeStamp = ++slotTimestamp;
+    assert.equal((await api.post(good)).returnValue.resultType, 'CONFIRM');
+    assert.match((await api.post(platformConfirm(good))).returnValue.reply, action === 'consume' ? /扣款成功/ : /充值成功/);
+    assert.equal(await balance(), action === 'consume' ? 6200 : 14180);
+  });
+}
 
 test('pending confirmations and successful response receipts survive service restart and cannot be replayed with changed bodies', async () => {
   const preview = request('张三扣款38元');

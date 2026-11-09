@@ -6,3 +6,6 @@
 "消费@{amount}";"";"";""
 "@{memberQuery}消费";"";"";""
 "给@{memberQuery}记消费@{amount}";"";"";""
+"手机号@{memberQuery}消费@{amount}";"";"";""
+"电话@{memberQuery}消费@{amount}";"";"";""
+"尾号@{memberQuery}消费@{amount}";"";"";""
