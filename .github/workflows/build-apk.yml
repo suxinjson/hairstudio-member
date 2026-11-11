@@ -105,7 +105,7 @@ jobs:
         RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
       run: |
         cd android
-        ./gradlew validateReleaseSigning assembleRelease assembleDebugAndroidTest --no-daemon --stacktrace
+        ./gradlew validateReleaseSigning assembleRelease --no-daemon --stacktrace
 
     - name: 清理发布签名临时文件
       if: ${{ always() }}
