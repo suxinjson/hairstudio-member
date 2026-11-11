@@ -9,6 +9,11 @@
     handle /aligenie/* {
         reverse_proxy api:48927
     }
+    # 《钢了钢》情侣游戏专属子路径路由
+    redir /gang /gang/ 308
+    handle_path /gang/* {
+        reverse_proxy ganglegang:3000
+    }
     redir /admin /admin/ 308
     handle /admin/* {
         root * /srv
