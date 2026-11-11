@@ -63,6 +63,7 @@
 </template>
 
 <script setup>
+import { storeFilePrefix } from '../../../src/store-profile.js';
 import { ref, onMounted } from 'vue';
 import { adminApi } from '../api/client.js';
 import { exportAuditLogsToExcel } from '../utils/exporter.js';
@@ -92,7 +93,7 @@ async function exportLogs() {
   isExporting.value = true; exportCount.value = 0;
   try {
     const all = await adminApi.getAllActivity(count => { exportCount.value = count; });
-    exportAuditLogsToExcel(all, '梦飞空间安全审计日志');
+    exportAuditLogsToExcel(all, storeFilePrefix(adminApi.storeProfile.value) + '_安全审计日志');
   } catch (error) { alert('完整审计导出失败：' + error.message); }
   finally { isExporting.value = false; }
 }

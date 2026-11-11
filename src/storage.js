@@ -5,6 +5,7 @@ import { DATA_LIMITS, byteLength, assertJsonBudget, assertAccountLimits, validat
 import { mergeAccounts, normalizeRefunds, restoreArchivedMembers, validateAccountHistory, validateActiveMemberPhones, normalizeMemberPhone } from './accounting.js';
 import { assertLedgerAccess } from './ledger-access.js';
 import { validateMemberTags } from './member-tags.js';
+import { APP_NAME } from './store-profile.js';
 
 export const STORAGE_KEYS = {
   MEMBERS: 'hairstudio_members_v2',
@@ -18,16 +19,8 @@ export const STORAGE_KEYS = {
 const PENDING_WRITE_KEY = 'hairstudio_pending_write_v1';
 const activeStorageAccess = new WeakMap();
 
-// 默认理发店常用服务项目
-export const DEFAULT_SERVICES = [
-  { id: 's1', name: '精致洗剪吹', price: 38 },
-  { id: 's2', name: '快剪/寸头', price: 25 },
-  { id: 's3', name: '单人洗吹造型', price: 20 },
-  { id: 's4', name: '儿童理发', price: 25 },
-  { id: 's5', name: '时尚冷烫/卷发', price: 128 },
-  { id: 's6', name: '植物护发染发', price: 158 },
-  { id: 's7', name: '深层头皮/毛囊护理', price: 88 }
-];
+// Each new store configures its own services. Persisted services are retained.
+export const DEFAULT_SERVICES = [];
 
 // 默认充值套餐
 export const DEFAULT_RECHARGE_PLANS = [
@@ -410,7 +403,7 @@ const db = {
   },
 
   // --- 消费扣减：欠款须显式确认，余额与流水仍原子写入 ---
-  consume({ memberId, amount, itemsSummary = '洗剪吹理发', remark = '', allowDebt = false }) {
+  consume({ memberId, amount, itemsSummary = '消费', remark = '', allowDebt = false }) {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === memberId);
     if (!m || m.isArchived) throw new Error('会员不存在或已注销');
@@ -746,7 +739,7 @@ const db = {
     return {
       version: parsed.version || '2.0',
       exportedAt: parsed.exportedAt || null,
-      appName: parsed.appName || '梦飞空间会员管家',
+      appName: parsed.appName || APP_NAME,
       data: { members, ledgers, services, rechargePlans, ...(rechargeSettings === undefined ? {} : { rechargeSettings }) }
     };
   },
@@ -900,7 +893,7 @@ const db = {
       const now = nowISO();
       const datePart = now.split('T')[0];
       const timePart = now.substring(11, 16).replace(':', '');
-      const fileName = `梦飞空间会员账本备份_${datePart}_${timePart}.json`;
+      const fileName = `会员账本备份_${datePart}_${timePart}.json`;
 
       const totalBalance = members.reduce((sum, m) => sum + (m.balance || 0), 0);
 
@@ -916,7 +909,7 @@ const db = {
         content: JSON.stringify({
           version: '2.0',
           exportedAt: now,
-          appName: '梦飞空间会员管家',
+          appName: APP_NAME,
           data
         }, null, 2)
       };
@@ -960,7 +953,7 @@ const db = {
     const backup = {
       version: '2.0',
       exportedAt: now,
-      appName: '梦飞空间会员管家',
+      appName: APP_NAME,
       data
     };
     const content = JSON.stringify(backup, null, 2);

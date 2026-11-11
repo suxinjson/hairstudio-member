@@ -7,7 +7,7 @@
         <span>今日小店收银简报</span>
       </span>
       <span class="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full font-bold">
-        ✓ {{ isNativeApp && !cloudState?.binding ? '数据保存在本机' : '账本状态正常' }}
+        {{ cloudState.webOnly ? (cloudState.status === 'synced' ? '✓ 服务器账本已加载' : '服务器账本待确认') : '✓ ' + (isNativeApp && !cloudState?.binding ? '数据保存在本机' : '账本状态正常') }}
       </span>
     </div>
 

@@ -63,11 +63,11 @@
           </div>
         </div>
 
-        <!-- 发型偏好说明（理发店重点业务信息，大字醒目暖金色卡片） -->
+        <!-- 会员备注与服务偏好 -->
         <div v-if="member.notes" class="bg-amber-50/90 p-3.5 rounded-2xl border-2 border-amber-300 text-amber-950 shadow-xs">
           <div class="flex items-center space-x-1.5 text-xs font-black text-amber-900 tracking-wide uppercase mb-1">
             <span class="text-base" aria-hidden="true">💇</span>
-            <span>熟客发型与剪发习惯（重点注意）</span>
+            <span>{{ notesLabel }}</span>
           </div>
           <div class="text-base font-black text-amber-950 leading-relaxed pl-5 break-words">
             {{ member.notes }}
@@ -146,7 +146,7 @@
           :disabled="!canWrite('consume')"
           class="h-13 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white rounded-2xl font-black text-base shadow-md shadow-rose-500/20 flex items-center justify-center space-x-1.5 btn-press"
         >
-          <span class="detail-action-icon" aria-hidden="true">✂️</span><span>剪发扣款</span>
+          <span class="detail-action-icon" aria-hidden="true">💳</span><span>消费扣款</span>
         </button>
       </div>
     </div>
@@ -155,6 +155,7 @@
 
 <script setup>
 defineProps({
+  notesLabel: { type: String, default: '会员偏好与备注' },
   member: { type: Object, default: null },
   ledgers: { type: Array, default: () => [] },
   canWrite: { type: Function, default: () => true },

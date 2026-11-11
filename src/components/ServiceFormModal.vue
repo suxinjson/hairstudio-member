@@ -18,7 +18,7 @@
           <input 
             v-model="form.name" 
             type="text" 
-            placeholder="如：洗剪吹 / 精油护理" 
+            placeholder="如：商品购买 / 服务项目"
             class="w-full h-14 px-4 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-black text-base"
           />
         </div>

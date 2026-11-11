@@ -5,13 +5,14 @@
       <!-- 标题行与新建按钮 -->
       <div class="header-row">
         <div class="header-brand">
-          <span class="brand-icon" aria-hidden="true">💈</span>
+          <span class="brand-icon" aria-hidden="true">💳</span>
           <div class="brand-copy">
-            <h1 class="brand-title font-black text-white" aria-label="梦飞空间会员管家" title="梦飞空间会员管家">
-              <span class="brand-full">梦飞空间会员管家</span>
-              <span class="brand-medium">梦飞会员管家</span>
-              <span class="brand-short">梦飞会员</span>
+            <h1 class="brand-title font-black text-white" aria-label="会员管家" title="会员管家">
+              <span class="brand-full">会员管家</span>
+              <span class="brand-medium">会员管家</span>
+              <span class="brand-short">会员管家</span>
             </h1>
+            <p class="text-xs text-slate-300 truncate max-w-44" :title="storeName">{{ storeName }}</p>
             <div class="header-meta text-indigo-300 font-semibold" :title="currentDateText + ' · ' + connectionLabel">
               <span class="header-meta-full">{{ currentDateText }} · {{ connectionLabel }}</span>
               <span class="header-meta-compact">{{ compactDateText }} · {{ compactConnectionLabel }}</span>
@@ -67,6 +68,7 @@ const props = defineProps({
   activeTab: { type: String, required: true },
   ledgerView: { type: String, default: 'transactions' },
   cloudLocked: Boolean,
+  storeName: { type: String, default: '我的门店' },
   cloudBinding: Boolean,
   cloudOnline: Boolean,
   outboxLength: { type: Number, default: 0 },

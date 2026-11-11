@@ -14,7 +14,7 @@ export function useConsume({
 }) {
   const consumingMember = ref(null);
   const consumeAmountStr = ref('');
-  const consumeSummary = ref('精致洗剪吹');
+  const consumeSummary = ref('消费');
   const isSubmittingConsume = ref(false);
   const showConsumeKeypad = ref(true);
   const consumeConfirmation = ref(null);
@@ -26,8 +26,8 @@ export function useConsume({
     isSubmittingConsume.value = false;
     const first = hairServices.value[0];
     consumeAmountStr.value = first ? first.price.toString() : '';
-    consumeSummary.value = first ? first.name : '精致洗剪吹';
-    showConsumeKeypad.value = false;
+    consumeSummary.value = first ? first.name : '消费';
+    showConsumeKeypad.value = !first;
     debtAcknowledged.value = false;
   }
 
@@ -125,11 +125,11 @@ export function useConsume({
       amountCent,
       balanceAfter: consumingMember.value.balance - amountCent,
       debtAdded: consumeDebtAdded.value,
-      itemsSummary: consumeSummary.value.trim() || '精致洗剪吹'
+      itemsSummary: consumeSummary.value.trim() || '消费'
     };
   }
 
-  function confirmConsume() {
+  async function confirmConsume() {
     const conf = consumeConfirmation.value;
     if (!conf || isSubmittingConsume.value) return;
     if (conf.balanceAfter < 0 && !debtAcknowledged.value) return;
@@ -151,12 +151,13 @@ export function useConsume({
     }
     isSubmittingConsume.value = true;
     try {
-      const result = localDb.consume({
+      let result = localDb.consume({
         memberId: conf.memberId,
         amount: conf.amount,
         itemsSummary: conf.itemsSummary,
         allowDebt: conf.balanceAfter < 0 && debtAcknowledged.value
       });
+      if (result?.then) result = await result;
 
       const memberName = conf.memberName;
       const deductedCent = result.deductedAmount;

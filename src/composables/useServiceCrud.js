@@ -19,11 +19,12 @@ export function useServiceCrud({ localDb, hairServices, showToast, showFeedback,
     showServiceModal.value = true;
   }
 
-  function submitServiceForm() {
+  async function submitServiceForm() {
     if (isSavingService.value) return;
     isSavingService.value = true;
     try {
-      localDb.saveService(serviceForm.value);
+      const result = localDb.saveService(serviceForm.value);
+      if (result?.then) await result;
       showServiceModal.value = false;
       showToast('服务项目已更新');
       hairServices.value = localDb.getServices();
@@ -43,8 +44,12 @@ export function useServiceCrud({ localDb, hairServices, showToast, showFeedback,
       danger: true
     });
     if (!confirmed) return;
-    hairServices.value = localDb.deleteService(id);
-    showToast('服务项目已删除');
+    try {
+      let services = localDb.deleteService(id);
+      if (services?.then) services = await services;
+      hairServices.value = services;
+      showToast('服务项目已删除');
+    } catch (err) { showFeedback(err.message); }
   }
 
   return {

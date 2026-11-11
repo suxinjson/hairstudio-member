@@ -112,15 +112,15 @@ jobs:
         RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
       run: |
         mkdir -p output_apk
-        cp android/app/build/outputs/apk/release/app-release.apk "output_apk/hairstudio-member-v${VERSION_NAME}.apk"
+        cp android/app/build/outputs/apk/release/app-release.apk "output_apk/member-manager-v${VERSION_NAME}.apk"
         export APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
-        node tools/update-manifest.js "output_apk/hairstudio-member-v${VERSION_NAME}.apk" output_apk/update-manifest.json
+        node tools/update-manifest.js "output_apk/member-manager-v${VERSION_NAME}.apk" output_apk/update-manifest.json
 
     - name: 11. 打包生成服务器更新包
       run: |
         mkdir -p deploy_bundle/releases
         cp -r admin server src deploy Dockerfile compose.yaml package.json package-lock.json capacitor.config.json index.html vite.config.js .dockerignore vendor deploy_bundle/
-        cp "output_apk/hairstudio-member-v${VERSION_NAME}.apk" deploy_bundle/releases/
+        cp "output_apk/member-manager-v${VERSION_NAME}.apk" deploy_bundle/releases/
         cp output_apk/update-manifest.json deploy_bundle/releases/
         printf '%s\n' "$VERSION_CODE" > deploy_bundle/release-version.txt
         chmod +x deploy_bundle/deploy/deploy-update.sh
@@ -129,7 +129,7 @@ jobs:
     - name: 12. 上传安装包与服务端更新产物供备用下载
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
-        name: hairstudio-member-${{ env.VERSION_NAME }}
+        name: member-manager-${{ env.VERSION_NAME }}
         path: output_apk/*
         retention-days: 30
 

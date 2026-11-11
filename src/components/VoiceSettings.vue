@@ -417,7 +417,7 @@
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <label class="block text-sm">平台域名校验文件名
-          <input type="text" v-model="ali.verificationFile" maxlength="100" placeholder="例如 b3e0f13ccb082b486a3c85c834b6598a.txt" class="block w-full border rounded-lg p-2 mt-1 text-xs">
+          <input type="text" v-model="ali.verificationFile" maxlength="100" placeholder="平台提供的校验文件名.txt" class="block w-full border rounded-lg p-2 mt-1 text-xs">
         </label>
         <label class="block text-sm">平台域名校验文件内容
           <input type="text" v-model="ali.verificationContent" maxlength="200" placeholder="校验文本内容（直接保存在数据库中）" class="block w-full border rounded-lg p-2 mt-1 text-xs">
@@ -544,7 +544,7 @@ const serverXfyunAppId = ref('');
 const hasCurrentProviderKey = computed(() => (hasSavedKey.value && savedKeyProvider.value === form.provider) || (form.provider === 'xfyun' && serverXfyunConfigured.value));
 const providerName = computed(() => ({ fish_audio: 'Fish Audio', heygen: 'HeyGen', xfyun: '讯飞' }[form.provider]));
 const showKey = ref(false);
-const testText = ref('欢迎光临梦飞空间，张三消费 50 元，卡内余额 200 元');
+const testText = ref('欢迎光临，张三消费 50 元，卡内余额 200 元');
 const testStatus = ref('idle');
 const testMessage = ref('');
 const testMessageType = ref('success');
@@ -613,6 +613,7 @@ async function loadConfig() {
     const [data, users] = await Promise.all([props.api.getVoiceConfig(), isOwner.value ? props.api.getUsers() : []]);
     if (!alive || sequence !== loadSequence) return;
     if (!Object.hasOwn(DEFAULTS, data.provider || 'fish_audio')) throw new Error('语音服务商配置无效');
+    testText.value = `欢迎光临${data.storeName || '我的门店'}，张三消费 50 元，卡内余额 200 元`;
     form.enabled = Boolean(data.enabled);
     form.provider = data.provider || 'fish_audio';
     form.apiUrl = data.apiUrl || '';

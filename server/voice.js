@@ -23,8 +23,8 @@ export const DEFAULT_VOICE_CONFIG = {
     token: '',
     actorId: '',
     authVersion: 0,
-    verificationFile: 'b3e0f13ccb082b486a3c85c834b6598a.txt',
-    verificationContent: 'Jfc4Z4Ur15JwUBuvUQD5wg7Nu8+l+HscqYlfofbyJdYR8lB80Mn4L/FdxiMj1Eyz',
+    verificationFile: '',
+    verificationContent: '',
     allowedDevices: []
   }
 };

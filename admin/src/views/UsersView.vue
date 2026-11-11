@@ -48,7 +48,7 @@
                     'bg-slate-100 text-slate-700': u.role === 'viewer'
                   }"
                 >
-                  {{ u.role === 'owner' ? '👑 店主 (完全权限)' : u.role === 'clerk' ? '✂️ 收银 / 发型师' : '👀 外部审计员 (只读)' }}
+                  {{ u.role === 'owner' ? '👑 店主 (完全权限)' : u.role === 'clerk' ? '💳 收银 / 店员' : '👀 外部审计员 (只读)' }}
                 </span>
               </td>
               <td class="py-3.5 px-4">
@@ -86,7 +86,7 @@
             <input
               v-model="newUserForm.displayName"
               type="text"
-              placeholder="如：李发型师、王收银"
+              placeholder="如：李店员、王收银"
               class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-bold focus:outline-none focus:border-emerald-600"
             />
           </div>
@@ -114,7 +114,7 @@
               v-model="newUserForm.role"
               class="w-full h-10 px-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold focus:outline-none focus:border-emerald-600"
             >
-              <option value="clerk">收银 / 发型师 (日常开单、扣款、充值)</option>
+              <option value="clerk">收银 / 店员 (日常开单、扣款、充值)</option>
               <option value="viewer">外部审计员 (只读查看流水与报表)</option>
               <option value="owner">店主 (全权管理、批量导入、员工管理)</option>
             </select>

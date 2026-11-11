@@ -15,7 +15,7 @@ fi
 flock 9
 
 echo "=========================================================="
-echo "  梦飞空间会员管家 - 服务器自动部署与 APK 发布更新"
+echo "  会员管家 - 服务器自动部署与 APK 发布更新"
 echo "=========================================================="
 
 if [ ! -f .env ]; then
@@ -88,7 +88,7 @@ APK_FILE=''
 if [ -f "$MANIFEST_FILE" ]; then
   VERSION_NAME=$(sed -nE 's/^[[:space:]]*"versionName"[[:space:]]*:[[:space:]]*"([a-zA-Z0-9._-]+)",?[[:space:]]*$/\1/p' "$MANIFEST_FILE")
   if [ -z "$VERSION_NAME" ]; then echo '❌ 更新清单缺少有效版本名称，停止发布。'; exit 1; fi
-  APK_FILE="releases/hairstudio-member-v${VERSION_NAME}.apk"
+  APK_FILE="releases/member-manager-v${VERSION_NAME}.apk"
   if [ ! -f "$APK_FILE" ]; then echo '❌ 更新清单对应的 APK 不存在，停止发布。'; exit 1; fi
 fi
 

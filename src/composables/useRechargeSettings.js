@@ -5,6 +5,7 @@ export function useRechargeSettings({ localDb, showToast, showFeedback, formatCe
   const rechargeSettings = ref({ ...DEFAULT_RECHARGE_SETTINGS });
   const rechargeSettingsForm = ref({ ...DEFAULT_RECHARGE_SETTINGS });
   const rechargeSettingsDirty = ref(false);
+  const saving = ref(false);
 
   function changeRechargeGiftSwitch() {
     rechargeSettingsDirty.value = true;
@@ -34,15 +35,20 @@ export function useRechargeSettings({ localDb, showToast, showFeedback, formatCe
     }
   });
 
-  function saveRechargeSettingsForm() {
+  async function saveRechargeSettingsForm() {
+    if (saving.value) return;
+    saving.value = true;
     try {
-      const saved = localDb.saveRechargeSettings(rechargeSettingsForm.value);
+      let saved = localDb.saveRechargeSettings(rechargeSettingsForm.value);
+      if (saved?.then) saved = await saved;
       rechargeSettings.value = saved;
       rechargeSettingsForm.value = { ...saved };
       rechargeSettingsDirty.value = false;
       showToast('充值赠送设置已保存');
     } catch (err) {
       showFeedback(err.message, 'error', { title: '保存设置失败' });
+    } finally {
+      saving.value = false;
     }
   }
 

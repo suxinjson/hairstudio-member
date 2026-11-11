@@ -1,6 +1,7 @@
 import { ref, computed, watch } from 'vue';
 import { isValidMoney, moneyToCent } from '../money.js';
 import { rechargeGiftCent } from '../recharge-settings.js';
+import { normalizeStoreProfile } from '../store-profile.js';
 
 export function useRecharge({
   localDb,
@@ -11,7 +12,8 @@ export function useRecharge({
   showToast,
   showFeedback,
   formatCent,
-  broadcast = () => {}
+  broadcast = () => {},
+  getStoreProfile = () => ({})
 }) {
   const rechargingMember = ref(null);
   const rechargeForm = ref({
@@ -111,7 +113,7 @@ export function useRecharge({
     };
   }
 
-  function confirmRecharge() {
+  async function confirmRecharge() {
     const confirmation = rechargeConfirmation.value;
     if (!confirmation || isSubmittingRecharge.value) return;
     const current = localDb.getMemberById(confirmation.memberId);
@@ -141,19 +143,22 @@ export function useRecharge({
     isSubmittingRecharge.value = true;
 
     try {
-      const res = localDb.recharge({
+      const profile = normalizeStoreProfile(getStoreProfile());
+      let res = localDb.recharge({
         memberId: confirmation.memberId,
         actualPay: confirmation.actualPay,
         giftAmount: confirmation.giftAmount,
         payMethod: confirmation.payMethod,
         remark: confirmation.remark
       });
+      if (res?.then) res = await res;
 
       const memberName = confirmation.memberName;
       const totalCredit = res.totalCredit / 100;
       const balanceAfter = (Math.abs(res.balanceAfter) / 100).toFixed(2);
       const balanceText = res.balanceAfter < 0 ? `当前仍欠款：¥${balanceAfter} 元，请后续结清。` : `当前可用余额：¥${balanceAfter} 元。`;
       const repaymentText = confirmation.debtRepaid > 0 ? `\n本次抵扣欠款：¥${formatCent(confirmation.debtRepaid)} 元` : '';
+      const contactText = [profile.phone && `联系电话：${profile.phone}`, profile.address && `门店地址：${profile.address}`].filter(Boolean).join('\n');
 
       rechargingMember.value = null;
       rechargeConfirmation.value = null;
@@ -161,7 +166,7 @@ export function useRecharge({
 
       receiptModal.value = {
         name: memberName,
-        messageText: `【梦飞空间会员充值通知】\n尊敬的 ${memberName}，您好！\n本次充值已成功入账：¥${totalCredit.toFixed(2)} 元${repaymentText}\n${balanceText}\n感谢您的支持与惠顾，祝您生活愉快！`
+        messageText: `【${profile.name}会员充值通知】\n尊敬的 ${memberName}，您好！\n本次充值已成功入账：¥${totalCredit.toFixed(2)} 元${repaymentText}\n${balanceText}${profile.rechargeThanks ? '\n' + profile.rechargeThanks : ''}${contactText ? '\n' + contactText : ''}`
       };
 
       refreshAll();

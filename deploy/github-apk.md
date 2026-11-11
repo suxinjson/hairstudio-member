@@ -80,7 +80,7 @@ Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路�
 
 正常流程为测试、前端构建、签名配置、Gradle release 构建、实际 APK 签名校验以及上传安装包。缺少配置时会列出所有缺项；密码、别名或指纹不匹配时仍会停止发布。
 
-成功后在该次运行页面 **Artifacts** 下载 `hairstudio-member-版本号`，解压获得 APK 和 `update-manifest.json`。安装包覆盖升级要求保持同一包名、签名密钥，并使用更高的 `versionCode`。
+成功后在该次运行页面 **Artifacts** 下载 `member-manager-版本号`，解压获得 APK 和 `update-manifest.json`。安装包覆盖升级要求保持同一包名、签名密钥，并使用更高的 `versionCode`。
 
 仅使用网页版不需要 APK 签名；配置缺失不会影响已部署网站的账号登录和记账。需要向云服务器发布 APK 更新时，再按 [部署维护说明](README.md#发布-apk-更新)填写服务器 `.env` 中同一个 Android 签名指纹并发布安装包。
 

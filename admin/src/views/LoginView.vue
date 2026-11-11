@@ -4,9 +4,9 @@
       <!-- 品牌标识与标题 -->
       <div class="text-center mb-8">
         <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-50 text-3xl mb-3 shadow-inner border border-emerald-100">
-          💈
+          💳
         </div>
-        <h1 class="text-2xl font-black text-slate-900 tracking-tight">梦飞空间会员管家</h1>
+        <h1 class="text-2xl font-black text-slate-900 tracking-tight">会员管家</h1>
         <p class="text-sm text-slate-500 font-medium mt-1">PC 端后台管理中心 · 安全登录</p>
       </div>
 

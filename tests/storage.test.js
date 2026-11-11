@@ -40,6 +40,7 @@ function resetStorage() {
 
 test('invalid service IDs reject backup preview and restore before any storage writes', () => {
   resetStorage(); localDb.init();
+  localDb.saveService({ name: '测试项目', price: 38 });
   localDb.createMember({ name: '账本保留', phone: '13800001111', initialBalance: 100 });
   const original = localDb.readBackupState(), stored = new Map(localStorage.values);
   for (const services of [[{ ...original.services[0], id: '' }], [{ ...original.services[0], id: '   ' }],
@@ -396,5 +397,5 @@ test('exporting backup records snapshot in local snapshot archive', () => {
   const snapshots = localDb.getLocalSnapshots();
   assert.equal(snapshots.length, 1);
   assert.equal(snapshots[0].memberCount, 1);
-  assert.ok(snapshots[0].fileName.includes('梦飞空间会员账本备份'));
+  assert.ok(snapshots[0].fileName.includes('会员账本备份'));
 });

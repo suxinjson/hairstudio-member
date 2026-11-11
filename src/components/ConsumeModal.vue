@@ -14,12 +14,12 @@
       >
         <header class="consume-header">
           <div class="consume-header-copy">
-            <h2 id="consume-sheet-title" class="modal-title">剪发扣款 <span>{{ member.name }}</span></h2>
+            <h2 id="consume-sheet-title" class="modal-title">消费扣款 <span>{{ member.name }}</span></h2>
             <p>{{ member.balance < 0 ? '当前欠款' : '可用余额' }}
               <strong :class="{ 'balance-debt': member.balance < 0 }">¥{{ formatCent(Math.abs(member.balance)) }}</strong>
             </p>
           </div>
-          <button type="button" @click="emit('close')" class="consume-close" aria-label="关闭剪发扣款">✕</button>
+          <button type="button" @click="emit('close')" class="consume-close" aria-label="关闭消费扣款">✕</button>
         </header>
 
         <div class="consume-amount-panel" :class="{ 'consume-amount-debt': isConsumeOverBalance, 'consume-amount-active': showKeypad }">
@@ -39,7 +39,7 @@
         </div>
 
         <div class="consume-content">
-          <p v-if="member.notes" class="consume-preference"><strong>发型偏好</strong><span>{{ member.notes }}</span></p>
+          <p v-if="member.notes" class="consume-preference"><strong>{{ notesLabel }}</strong><span>{{ member.notes }}</span></p>
           <div class="consume-section-heading"><h3>常用项目</h3><span>选项目自动带入金额</span></div>
           <div class="consume-presets">
             <button v-for="item in services" :key="item.id" @click="emit('set-preset', item)" type="button"
@@ -96,7 +96,7 @@
       >
         <div class="feedback-icon mx-auto text-3xl font-black bg-rose-100 text-rose-600">
           <CircleAlert v-if="confirmation.balanceAfter < 0" :size="30" aria-hidden="true" />
-          <span v-else aria-hidden="true">✂️</span>
+          <span v-else aria-hidden="true">💳</span>
         </div>
         <h2 id="consume-confirm-title" class="mt-4 text-2xl font-black text-slate-900" :class="{ 'balance-debt': confirmation.balanceAfter < 0 }">
           {{ confirmation.balanceAfter < 0 ? '注意：本次扣款将产生欠款' : '请核对扣款金额' }}
@@ -148,6 +148,7 @@ import { CircleAlert } from 'lucide-vue-next';
 import Keypad from './Keypad.vue';
 
 defineProps({
+  notesLabel: { type: String, default: '会员偏好与备注' },
   member: { type: Object, default: null },
   services: { type: Array, default: () => [] },
   amountStr: { type: String, default: '' },

@@ -1,6 +1,6 @@
 {
   "appId": "com.hairstudio.memberapp",
-  "appName": "梦飞空间会员管家",
+  "appName": "会员管家",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"

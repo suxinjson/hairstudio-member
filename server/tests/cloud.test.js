@@ -15,6 +15,7 @@ import { digest, integrity } from '../security.js';
 import { createLocalDb, localDb, STORAGE_KEYS, configureCloudWrites } from '../../src/storage.js';
 import { canonicalJSON, mutationPrecondition, CLOUD_STATE_KEY } from '../../src/sync-protocol.js';
 import { createCloudClient } from '../../src/cloud-client.js';
+import { createDeviceAccess } from '../../src/device-access.js';
 import { getCloudState, saveCloudState } from '../../src/cloud-storage.js';
 import { DATA_LIMITS } from '../../src/data-limits.js';
 
@@ -71,6 +72,58 @@ async function login(username, deviceId = randomUUID()) {
   const session = await service.login({ username, password, deviceId }, '127.0.0.1');
   return { ...session, identity: await service.authenticate(session.accessToken), deviceId };
 }
+
+test('store profile is owner controlled, isolated between stores and versioned separately from accounting', async () => {
+  const baseline = await initialAccount();
+  const pending = operation(baseline.data, owner, 'recharge', [{ memberId: baseline.member.id, actualPay: 10 }]).operation;
+  const profile = { ...owner.storeProfile, name: '安心生活馆', phone: '020-12345678', address: '幸福路1号', memberNotesLabel: '客户需求', welcomeText: '欢迎来到{store}，请说', rechargeThanks: '谢谢光临！' };
+  const savedResponse = await api('/store/profile', { profile, expectedVersion: 0 }, owner.accessToken, 'PATCH');
+  assert.equal(savedResponse.status, 200); const saved = await savedResponse.json();
+  assert.equal(saved.version, 1);
+  const after = await service.account(owner.identity);
+  assert.deepEqual(after.data, baseline.data); assert.equal(after.revision, baseline.revision); assert.equal(after.integrity, baseline.integrity);
+  assert.deepEqual(after.storeProfile, saved);
+  assert.equal((await login('owner')).storeProfile.name, profile.name);
+  assert.deepEqual((await service.refresh(owner.refreshToken)).storeProfile, saved);
+  await assert.rejects(service.saveStoreProfile(owner.identity, { profile, expectedVersion: 0 }), { status: 409, code: 'STORE_PROFILE_CHANGED' });
+  await assert.rejects(service.saveStoreProfile(owner.identity, { expectedVersion: 1 }), { status: 400 });
+  await service.createUser(owner.identity, { username: 'clerk', displayName: '店员', role: 'clerk', password });
+  const clerk = await login('clerk');
+  assert.deepEqual(await service.storeProfile(clerk.identity), saved);
+  await assert.rejects(service.saveStoreProfile(clerk.identity, { profile, expectedVersion: 1 }), { status: 403 });
+  await service.createOwner({ username: 'other-store', password, storeName: '另一家门店' });
+  const other = await login('other-store');
+  assert.equal(other.storeProfile.name, '另一家门店'); assert.equal(other.storeProfile.version, 0);
+  await service.saveStoreProfile(other.identity, { profile: { name: '独立名称' }, expectedVersion: 0, storeId: owner.identity.store_id });
+  assert.deepEqual(await service.storeProfile(owner.identity), saved);
+  const committed = await service.sync(owner.identity, [pending]);
+  assert.equal(committed.data.members.find(member => member.id === baseline.member.id).balance, 11000);
+});
+
+test('mobile store settings update without changing its outbox or financial synchronization state', async () => {
+  await initialAccount(); let online = false;
+  const mobile = await connectedClient({ online: () => online }); await mobile.useCloudLedger();
+  const member = localDb.getMembers()[0]; localDb.consume({ memberId: member.id, amount: 10 });
+  const before = structuredClone(getCloudState()), data = localDb.readBackupState();
+  const saved = await mobile.saveStoreProfile({ name: '自定义商店' }, 0);
+  assert.equal(saved.name, '自定义商店'); assert.deepEqual(mobile.getStoreProfile(), saved);
+  assert.deepEqual(getCloudState().outbox, before.outbox); assert.equal(getCloudState().status, before.status);
+  assert.equal(getCloudState().revision, before.revision); assert.deepEqual(localDb.readBackupState(), data);
+  online = true; await mobile.sync();
+  assert.equal(getCloudState().outbox.length, 0); assert.equal(mobile.getStoreProfile().name, '自定义商店');
+});
+test('desktop login and logout preserve independent phone and admin sessions', async () => {
+  const phone = owner;
+  const cashier = await login('owner', 'browser-cashier-' + randomUUID());
+  const admin = await login('owner', 'browser-admin-' + randomUUID());
+  assert.equal((await service.authenticate(phone.accessToken)).sessionId, phone.identity.sessionId);
+  assert.equal((await service.authenticate(cashier.accessToken)).sessionId, cashier.identity.sessionId);
+  assert.equal((await service.authenticate(admin.accessToken)).sessionId, admin.identity.sessionId);
+  await service.logout(cashier.identity);
+  await assert.rejects(service.authenticate(cashier.accessToken), error => error.status === 401);
+  assert.equal((await service.authenticate(phone.accessToken)).sessionId, phone.identity.sessionId);
+  assert.equal((await service.authenticate(admin.accessToken)).sessionId, admin.identity.sessionId);
+});
 function localDatabase(data) {
   const storage = new MemoryStorage();
   for (const [field, key] of [['members', STORAGE_KEYS.MEMBERS], ['ledgers', STORAGE_KEYS.LEDGERS], ['services', STORAGE_KEYS.SERVICES], ['rechargePlans', STORAGE_KEYS.RECHARGE_PLANS]]) storage.setItem(key, JSON.stringify(data[field]));
@@ -90,6 +143,7 @@ function operation(data, session, method, args) {
 }
 async function initialAccount() {
   const storage = new MemoryStorage(), ledger = createLocalDb(storage); ledger.init();
+  storage.setItem(STORAGE_KEYS.SERVICES, JSON.stringify([{ id: 's1', name: '已有服务', price: 38 }]));
   const member = ledger.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   const account = await service.bootstrap(owner.identity, { id: randomUUID(), data: ledger.readBackupState() });
   return { ...account, member };
@@ -409,7 +463,7 @@ test('oversized fields, nested preconditions and wrong argument types cannot cha
     const invalidText = structuredClone(valid); invalidText.args[0].name = name;
     assert.equal((await api('/sync', { operations: [invalidText] })).status, 400);
   }
-  assert.deepEqual(await service.account(owner.identity), { data: account.data, revision: account.revision, integrity: account.integrity });
+  assert.deepEqual(await service.account(owner.identity), { data: account.data, revision: account.revision, integrity: account.integrity, storeProfile: await service.storeProfile(owner.identity) });
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='createMember'")).rows[0].count, 0);
 });
 test('final account growth is rejected atomically instead of truncating saved records', async () => {
@@ -419,7 +473,7 @@ test('final account growth is rejected atomically instead of truncating saved re
   // Build a valid request without running the local writer that also enforces this limit.
   const op = { id: randomUUID(), actorId: owner.identity.id, deviceId: owner.deviceId, method: 'saveService', args: [{ name: '超额项目', price: 1 }], generated: { ids: ['new-service'], times: [new Date().toISOString()] }, precondition: { services: data.services } };
   await assert.rejects(service.sync(owner.identity, [op]), { status: 413 });
-  assert.deepEqual(await service.account(owner.identity), { data: account.data, revision: account.revision, integrity: account.integrity });
+  assert.deepEqual(await service.account(owner.identity), { data: account.data, revision: account.revision, integrity: account.integrity, storeProfile: await service.storeProfile(owner.identity) });
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='saveService'")).rows[0].count, 0);
 });
 test('concurrent account creation cannot exceed the per-store account limit', async () => {
@@ -452,12 +506,127 @@ test('large valid service preconditions synchronize in size-limited batches with
   assert.equal(getCloudState().outbox.length, 0);
   assert.equal((await service.account(owner.identity)).data.services[0].price, 21);
 });
-test('refresh tokens rotate and replay revokes the associated session', async () => {
+test('refresh credentials survive retries and concurrent pages until explicit logout', async () => {
   const refreshed = await service.refresh(owner.refreshToken);
-  assert.notEqual(refreshed.refreshToken, owner.refreshToken);
+  assert.equal(refreshed.refreshToken, owner.refreshToken);
   await service.authenticate(refreshed.accessToken);
+  const retries = await Promise.all([service.refresh(owner.refreshToken), service.refresh(owner.refreshToken)]);
+  for (const retry of retries) {
+    assert.equal(retry.accessToken, refreshed.accessToken);
+    assert.equal((await service.authenticate(retry.accessToken)).id, owner.identity.id);
+  }
+  await service.logout(owner.identity);
   await assert.rejects(service.refresh(owner.refreshToken), { status: 401 });
   await assert.rejects(service.authenticate(refreshed.accessToken), { status: 401 });
+});
+
+test('a legacy rotated credential and its replacement both recover without revoking the phone', async () => {
+  const replacement = 'legacy-replacement-' + randomUUID();
+  await pool.query('UPDATE sessions SET previous_refresh_hash=refresh_hash,refresh_hash=$1 WHERE id=$2', [digest(replacement), owner.identity.sessionId]);
+  const [old, current] = await Promise.all([service.refresh(owner.refreshToken, 'native'), service.refresh(replacement, 'native')]);
+  assert.equal((await service.authenticate(old.accessToken)).id, owner.identity.id);
+  assert.equal((await service.authenticate(current.accessToken)).id, owner.identity.id);
+});
+
+test('native sessions stay signed in beyond 30 days and more than 20 logins preserve old devices', async () => {
+  const phone = await service.login({ username: 'owner', password, deviceId: randomUUID(), clientKind: 'native' }, 'local');
+  const phoneIdentity = await service.authenticate(phone.accessToken);
+  await pool.query("UPDATE sessions SET expires_at=now()-interval '1 day',access_expires_at=now()-interval '1 day' WHERE id=$1", [phoneIdentity.sessionId]);
+  const restored = await service.refresh(phone.refreshToken);
+  assert.equal((await service.authenticate(restored.accessToken)).id, owner.identity.id);
+  // Avoid the password hashing loop while exercising the actual login eviction boundary.
+  for (let i = 0; i < 21; i++) await pool.query(`INSERT INTO sessions(id,user_id,device_id,access_hash,refresh_hash,access_expires_at,expires_at)
+    VALUES($1,$2,$3,$4,$5,now()+interval '15 minutes',now()+interval '30 days')`, [randomUUID(), owner.identity.id, randomUUID(), digest(randomUUID()), digest(randomUUID())]);
+  await login('owner');
+  assert.equal((await service.authenticate(restored.accessToken)).id, owner.identity.id);
+});
+
+test('refresh cannot turn a web session into a perpetual native session or revive an expired web credential', async () => {
+  const before = (await pool.query('SELECT client_kind,expires_at FROM sessions WHERE id=$1', [owner.identity.sessionId])).rows[0];
+  const response = await api('/auth/refresh', { refreshToken: owner.refreshToken, clientKind: 'native' }, null);
+  assert.equal(response.status, 200);
+  const after = (await pool.query('SELECT client_kind,expires_at FROM sessions WHERE id=$1', [owner.identity.sessionId])).rows[0];
+  assert.equal(after.client_kind, 'web');
+  assert.deepEqual(after.expires_at, before.expires_at);
+  await pool.query("UPDATE sessions SET expires_at=now()-interval '1 day',access_expires_at=now()-interval '1 day' WHERE id=$1", [owner.identity.sessionId]);
+  for (const clientKind of [undefined, 'web', 'native']) {
+    const rejected = await api('/auth/refresh', { refreshToken: owner.refreshToken, clientKind, deviceFingerprint: 'a'.repeat(64) }, null);
+    assert.equal(rejected.status, 401);
+  }
+  assert.equal((await pool.query('SELECT client_kind FROM sessions WHERE id=$1', [owner.identity.sessionId])).rows[0].client_kind, 'web');
+});
+
+for (const survivingLedger of [false, true]) {
+  test(`secure identity recovery loads the server ledger before accounting (surviving local ledger: ${survivingLedger})`, async () => {
+    const account = await initialAccount();
+    if (survivingLedger) localDb.createMember({ name: '未核对的本机会员', phone: '13900002222', initialBalance: 20 });
+    const local = localDb.readBackupState();
+    const phone = await service.login({ username: 'owner', password, deviceId: randomUUID(), clientKind: 'native' }, 'local');
+    let secure = { ...phone, deviceId: phone.authorization.deviceId, serverUrl: url, userId: phone.user.id, storeId: phone.user.storeId };
+    let accessSaved = null, online = false, failAccount = true;
+    const create = () => createCloudClient({ allowOffline: true, isOnline: () => online,
+      fetch: (input, options) => {
+        if (failAccount && input.endsWith('/account')) throw new Error('Account temporarily unavailable');
+        return fetch(input, options);
+      },
+      deviceAccess: createDeviceAccess({ vault: { load: async () => accessSaved, save: async value => { accessSaved = structuredClone(value); } } }),
+      vault: { load: async () => secure, save: async value => { secure = value; }, clear: async () => { secure = null; } } });
+    let client = create(); stopClient = await client.start();
+    assert.equal(client.snapshot().user.id, owner.identity.id);
+    assert.equal(getCloudState().bindingRecovery, true);
+    assert.equal(getCloudState().status, 'needs-choice');
+    assert.throws(() => localDb.createMember({ name: '不可丢失的操作', phone: '13700003333', initialBalance: 100 }), /核对并加载云端账本/);
+    stopClient(); client = create(); stopClient = await client.start();
+    assert.equal(getCloudState().bindingRecovery, true);
+    online = true;
+    await assert.rejects(client.sync(), /暂时无法连接服务器/);
+    assert.equal(getCloudState().bindingRecovery, true);
+    assert.deepEqual(localDb.readBackupState(), local);
+    assert.throws(() => localDb.createMember({ name: '连接失败后也不能记账', phone: '13700003333' }), /核对并加载云端账本/);
+    failAccount = false; await client.sync();
+    if (survivingLedger) {
+      assert.deepEqual(localDb.readBackupState(), local);
+      assert.equal(getCloudState().bindingRecovery, true);
+      assert.throws(() => localDb.recharge({ memberId: local.members[0].id, actualPay: 10 }), /核对并加载云端账本/);
+      await client.useCloudLedger();
+      assert.deepEqual(JSON.parse(localStorage.getItem('hairstudio_cloud_pre_replace_v1')).data, local);
+    }
+    assert.equal(getCloudState().bindingRecovery, false);
+    assert.equal(getCloudState().binding.storeId, owner.identity.store_id);
+    assert.deepEqual(localDb.readBackupState(), account.data);
+    online = false;
+    localDb.consume({ memberId: account.member.id, amount: 10 });
+    assert.equal(getCloudState().outbox.length, 1);
+    online = true; await client.sync();
+    assert.equal(getCloudState().outbox.length, 0);
+    assert.equal((await service.account(owner.identity)).data.members[0].balance, 9000);
+  });
+}
+
+test('device restrictions are tenant-scoped, enforced inside writes, and reversible without relogin', async () => {
+  await initialAccount();
+  const phone = await service.login({ username: 'owner', password, deviceId: randomUUID(), clientKind: 'native', deviceFingerprint: 'b'.repeat(64) }, 'local');
+  const phoneUser = await service.authenticate(phone.accessToken);
+  const devices = await service.devices(owner.identity), device = devices.find(d => d.deviceId === phoneUser.device_id);
+  assert.equal(device.offlineHours, 168);
+  const policy = { active: false, offlineHours: 0, authorizedUntil: null, label: '店内手机' };
+  await service.updateDevice(owner.identity, device.deviceId, policy);
+  await assert.rejects(service.authenticate(phone.accessToken), { code: 'DEVICE_DISABLED' });
+  await assert.rejects(service.account(phoneUser), { code: 'DEVICE_DISABLED' });
+  await assert.rejects(service.refresh(phone.refreshToken, 'native'), { code: 'DEVICE_DISABLED' });
+  await assert.rejects(service.login({ username: 'owner', password, deviceId: randomUUID(), clientKind: 'native', deviceFingerprint: 'b'.repeat(64) }, 'local'), { code: 'DEVICE_DISABLED' });
+  await service.updateDevice(owner.identity, device.deviceId, { ...policy, active: true, offlineHours: 48 });
+  assert.equal((await service.refresh(phone.refreshToken, 'native')).authorization.offlineHours, 48);
+  await service.updateDevice(owner.identity, device.deviceId, { ...policy, active: true, authorizedUntil: '2020-01-01T00:00:00Z' });
+  await assert.rejects(service.account(phoneUser), { code: 'DEVICE_EXPIRED' });
+  const other = await service.createOwner({ username: 'other-store', password });
+  const outsider = await login('other-store');
+  assert.deepEqual(await service.devices(outsider.identity), (await service.devices(outsider.identity)).filter(d => d.deviceId !== device.deviceId));
+  await assert.rejects(service.updateDevice(outsider.identity, device.deviceId, policy), { status: 404 });
+  const clerk = await service.createUser(owner.identity, { username: 'device-clerk', password, displayName: '店员', role: 'clerk' });
+  const clerkSession = await login('device-clerk');
+  await assert.rejects(service.devices(clerkSession.identity), { status: 403 });
+  await assert.rejects(service.updateDevice(clerkSession.identity, device.deviceId, policy), { status: 403 });
 });
 test('initial migration is owner-only, idempotent and cannot replace an existing cloud account', async () => {
   const account = await initialAccount();
@@ -475,7 +644,7 @@ for (const field of ['services', 'rechargePlans']) {
   for (const initialized of [false, true]) {
     test(`first login preserves customized ${field} until explicitly choosing a ledger (cloud initialized: ${initialized})`, async () => {
       if (initialized) await initialAccount();
-      if (field === 'services') localDb.saveService({ id: 's1', name: '自定义剪发', price: 66 });
+      if (field === 'services') localDb.saveService({ name: '自定义服务', price: 66 });
       else localStorage.setItem(STORAGE_KEYS.RECHARGE_PLANS, JSON.stringify([{ pay: 100, gift: 15 }]));
       const local = localDb.readBackupState();
       const client = await connectedClient({ online: () => false });

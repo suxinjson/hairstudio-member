@@ -1,7 +1,7 @@
 {
   "name": "hairstudio-member-app",
   "version": "1.0.0",
-  "description": "梦飞空间会员管家 - 独立安卓原生App",
+  "description": "会员管家 - 独立安卓原生App",
   "type": "module",
   "workspaces": [
     "server",

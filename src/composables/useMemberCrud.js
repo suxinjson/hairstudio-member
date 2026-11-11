@@ -36,20 +36,22 @@ export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, sh
     showMemberModal.value = true;
   }
 
-  function submitMemberForm() {
+  async function submitMemberForm() {
     if (isSavingMember.value) return;
     isSavingMember.value = true;
     try {
       if (editingMemberId.value) {
         const current = mutationPrecondition({ members: localDb.getMembers() }, 'updateMember', [editingMemberId.value]);
         if (canonicalJSON(current) !== canonicalJSON(editBaseline)) throw new Error('会员档案已变化，请重新打开编辑窗口核对后保存');
-        const updated = localDb.updateMember(editingMemberId.value, memberForm.value);
+        let updated = localDb.updateMember(editingMemberId.value, memberForm.value);
+        if (updated?.then) updated = await updated;
         showMemberModal.value = false;
         showToast('会员档案修改成功！');
         refreshAll();
         selectMember(updated);
       } else {
-        const created = localDb.createMember(memberForm.value);
+        let created = localDb.createMember(memberForm.value);
+        if (created?.then) created = await created;
         showMemberModal.value = false;
         showToast(`会员 ${created.name} 建档成功！`);
         refreshAll();
@@ -76,7 +78,8 @@ export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, sh
     });
     if (!confirmed) return;
     try {
-      localDb.deleteMember(m.id);
+      const result = localDb.deleteMember(m.id);
+      if (result?.then) await result;
       selectedMember.value = null;
       showToast('会员档案已注销');
       refreshAll();

@@ -1,6 +1,7 @@
 import { ref, getCurrentScope, onScopeDispose } from 'vue';
 import { DATA_LIMITS } from '../data-limits.js';
 import { exportFile, isExportCancelled } from '../file-export.js';
+import { storeFilePrefix } from '../store-profile.js';
 
 export function useBackupOperations({
   localDb,
@@ -41,8 +42,8 @@ export function useBackupOperations({
       const recovery = localDb.readRecoveryState();
       if (recovery.dataError) {
         const result = await exportFile({
-          content: JSON.stringify({ version: '2.0', exportedAt: new Date().toISOString(), appName: '梦飞空间会员管家', ...recovery }, null, 2),
-          fileName: `梦飞空间账本原始数据_${new Date().toISOString().slice(0, 10)}.json`,
+          content: JSON.stringify({ version: '2.0', exportedAt: new Date().toISOString(), appName: '会员管家', ...recovery }, null, 2),
+          fileName: `${storeFilePrefix(cloudClient.getStoreProfile())}_账本原始数据_${new Date().toISOString().slice(0, 10)}.json`,
           mimeType: 'application/json',
           title: '账本原始数据备份'
         });
@@ -60,9 +61,9 @@ export function useBackupOperations({
       const dateStr = new Date().toISOString().split('T')[0];
       const result = await exportFile({
         content,
-        fileName: `梦飞空间会员账本备份_${dateStr}.json`,
+        fileName: `${storeFilePrefix(cloudClient.getStoreProfile())}_会员账本备份_${dateStr}.json`,
         mimeType: 'application/json',
-        title: '梦飞空间会员账本备份'
+        title: '会员账本备份'
       });
       showExportResult(result, snapshotWarning);
     } catch (err) {
@@ -82,9 +83,9 @@ export function useBackupOperations({
       const dateStr = new Date().toISOString().split('T')[0];
       const result = await exportFile({
         content: csv,
-        fileName: `梦飞空间对账明细_${dateStr}.csv`,
+        fileName: `${storeFilePrefix(cloudClient.getStoreProfile())}_对账明细_${dateStr}.csv`,
         mimeType: 'text/csv;charset=utf-8',
-        title: '梦飞空间对账明细'
+        title: '对账明细'
       });
       showExportResult(result);
     } catch (err) {
@@ -133,7 +134,7 @@ export function useBackupOperations({
         content: s.content,
         fileName: s.fileName,
         mimeType: 'application/json',
-        title: '梦飞空间会员账本备份'
+        title: '会员账本备份'
       });
       showExportResult(result);
     } catch (err) {

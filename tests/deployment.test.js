@@ -33,7 +33,7 @@ async function deployment(t, { domain = 'member.example.com', validationFails = 
   await Promise.all([
     writeFile(join(directory, '.env'), `PUBLIC_DOMAIN=${domain}\n`),
     writeFile(join(directory, 'compose.yaml'), 'services: {}\n'),
-    writeFile(join(directory, 'releases/hairstudio-member-v1.0.1.apk'), 'test-apk'),
+    writeFile(join(directory, 'releases/member-manager-v1.0.1.apk'), 'test-apk'),
     writeFile(join(directory, 'releases/update-manifest.json'), JSON.stringify({ versionName: '1.0.1' }, null, 2)),
     writeFile(join(directory, 'deploy/deploy-update.sh'), (await readFile(new URL('../deploy/deploy-update.sh', import.meta.url), 'utf8')).replaceAll('\r\n', '\n')),
     writeFile(join(bin, 'docker'), `#!/usr/bin/env bash
@@ -249,7 +249,7 @@ test('the workflow deployment archive builds its Docker frontend without an Andr
     await cp(join(root, name), join(directory, name), { recursive: true });
   }
   await mkdir(join(directory, 'output_apk'));
-  await writeFile(join(directory, 'output_apk/hairstudio-member-v1.0.1.apk'), 'test-apk');
+  await writeFile(join(directory, 'output_apk/member-manager-v1.0.1.apk'), 'test-apk');
   await writeFile(join(directory, 'output_apk/update-manifest.json'), '{}');
   await writeFile(join(directory, '.env'), 'PRIVATE_TEST_VALUE=must-not-enter-the-archive\n');
   const lines = (await readFile(new URL('../.github/workflows/build-apk.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n').split('\n');

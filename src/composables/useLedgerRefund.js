@@ -38,7 +38,8 @@ export function useLedgerRefund({
           showToast('会员余额或档案状态已变化，请重新核对撤销后的余额和欠款。');
           continue;
         }
-        localDb.refundLedger(item.id, '店主手工撤销', balanceAfter < 0);
+        const result = localDb.refundLedger(item.id, '店主手工撤销', balanceAfter < 0);
+        if (result?.then) await result;
         refreshAll();
         if (selectedMember.value && selectedMember.value.id === item.memberId) {
           selectedMember.value = localDb.getMemberById(item.memberId);

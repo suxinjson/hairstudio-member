@@ -9,9 +9,9 @@
       <div>
         <!-- 品牌标识 -->
         <div class="h-16 px-5 flex items-center gap-3 border-b border-slate-800">
-          <span class="text-2xl">💈</span>
+          <span class="text-2xl">💳</span>
           <div>
-            <h1 class="font-black text-sm tracking-tight text-white">梦飞空间会员管家</h1>
+            <h1 class="font-black text-sm tracking-tight text-white">会员管家</h1>
             <span class="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800">PC 后台管理系统</span>
           </div>
         </div>
@@ -47,7 +47,7 @@
             <div class="text-xs font-black text-white truncate">{{ currentUser.displayName }}</div>
             <div class="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
               <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              <span>{{ currentUser.role === 'owner' ? '店主 (主管理员)' : currentUser.role === 'clerk' ? '收银员/发型师' : '外部审计员' }}</span>
+              <span>{{ currentUser.role === 'owner' ? '店主 (主管理员)' : currentUser.role === 'clerk' ? '收银员/店员' : '外部审计员' }}</span>
             </div>
           </div>
           <button
@@ -70,7 +70,7 @@
           <h2 class="text-lg font-black text-slate-900">
             {{ currentNavLabel }}
           </h2>
-          <span class="text-xs text-slate-400">· 梦飞空间美容美发沙龙</span>
+          <span class="text-xs text-slate-400">· {{ adminApi.storeProfile.value.name }}</span>
         </div>
 
         <!-- 右侧连接状态与快捷功能 -->
@@ -161,6 +161,8 @@
         <UsersView
           v-else-if="activeTab === 'users'"
         />
+        <DevicesView v-else-if="activeTab === 'devices' && currentUser.role === 'owner'" />
+        <StoreSettingsView v-else-if="activeTab === 'store'" />
 
         <AuditLogView
           v-else-if="activeTab === 'audit'"
@@ -225,6 +227,8 @@ import ImportExportView from './views/ImportExportView.vue';
 import ServicesView from './views/ServicesView.vue';
 import VoiceSettingsView from './views/VoiceSettingsView.vue';
 import UsersView from './views/UsersView.vue';
+import DevicesView from './views/DevicesView.vue';
+import StoreSettingsView from './views/StoreSettingsView.vue';
 import AuditLogView from './views/AuditLogView.vue';
 
 const currentUser = computed(() => adminApi.user.value);
@@ -244,7 +248,7 @@ const rechargePlans = computed(() => accountData.value?.rechargePlans || []);
 const accountRevision = adminApi.accountRevision;
 const isSubmittingOperations = ref(false);
 const syncLabel = computed(() => ({ idle: '账本尚未加载', loading: '正在加载账本', saving: '正在确认操作',
-  synced: '云端账本已同步', pending: '有待确认操作', error: '账本确认失败，请重试' }[accountStatus.value]));
+  synced: '云端账本已加载', pending: '有待确认操作', error: '账本加载或提交失败，请重试' }[accountStatus.value]));
 
 const isLocked = adminApi.isLocked;
 const unlockPassword = ref('');
@@ -255,19 +259,21 @@ watch(() => currentUser.value?.storeId + ':' + currentUser.value?.id, () => {
   if (currentUser.value && !isLocked.value) loadAccountData();
 }, { flush: 'post' });
 
-const navItems = [
+const navItems = computed(() => [
   { key: 'dashboard', label: '经营大盘', icon: '📊' },
   { key: 'members', label: '会员档案', icon: '👥' },
   { key: 'ledgers', label: '财务流水', icon: '📑' },
   { key: 'import-export', label: '批量导入导出', icon: '📥', badge: '核心' },
   { key: 'services', label: '服务与卡项', icon: '💇' },
+  { key: 'store', label: '门店设置', icon: '🏪' },
   { key: 'voice', label: '语音播报', icon: '📢' },
   { key: 'users', label: '员工权限', icon: '🛡️' },
+  ...(currentUser.value?.role === 'owner' ? [{ key: 'devices', label: '设备授权', icon: '📱' }] : []),
   { key: 'audit', label: '安全审计', icon: '🔍' }
-];
+]);
 
 const currentNavLabel = computed(() => {
-  return navItems.find(i => i.key === activeTab.value)?.label || '工作台';
+  return navItems.value.find(i => i.key === activeTab.value)?.label || '工作台';
 });
 
 // 注册 15 分钟无操作自动锁屏

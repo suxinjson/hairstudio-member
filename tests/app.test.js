@@ -68,9 +68,17 @@ await compileVueFile(new URL('../src/App.vue', import.meta.url), appPath);
 const { default: App } = await import(pathToFileURL(appPath).href);
 const { default: CloudSettings } = await import(pathToFileURL(cloudSettingsPath).href);
 const { createApp, nextTick } = await import(vueUrl);
-const { localDb } = await import('../src/storage.js');
+const { localDb, STORAGE_KEYS } = await import('../src/storage.js');
+const { LEGACY_SERVICES } = await import('./fixtures/legacy-services.js');
 const { saveCloudState, getCloudState } = await import('../src/cloud-storage.js');
 const { cloudClient } = await import('../src/cloud-device.js');
+const { createCloudClient } = await import('../src/cloud-client.js');
+const { createDeviceAccess } = await import('../src/device-access.js');
+const { createWebClient } = await import('../src/web-client.js');
+const { AdminApiClient } = await import('../admin/src/api/client.js');
+const { integrity } = await import('../server/security.js');
+const { replayOperation } = await import('../src/cloud-storage.js');
+const { CLOUD_STATE_KEY } = await import('../src/sync-protocol.js');
 const { appVoicePlayer, appVoicePreviewPlayer } = await import('../src/app-voice.js');
 
 class MemoryStorage {
@@ -85,12 +93,22 @@ class MemoryStorage {
 }
 
 let app;
-beforeEach(() => {
+beforeEach(async t => {
   Capacitor.isNativePlatform = () => true;
   globalThis.localStorage = new MemoryStorage();
   document.body.innerHTML = '<div id="app"></div>';
   window.scrollTo = () => {};
   localDb.init();
+  localStorage.setItem(STORAGE_KEYS.SERVICES, JSON.stringify(LEGACY_SERVICES));
+  // Native persistence is supplied explicitly; these UI tests run without Android's bridge.
+  let authorization = null;
+  const deviceAccess = createDeviceAccess({ vault: { load: async () => authorization, save: async value => { authorization = value; } } });
+  await deviceAccess.initialize();
+  const native = createCloudClient({ allowOffline: true, deviceAccess });
+  for (const method of ['snapshot', 'subscribe', 'start', 'restoreSession', 'sync', 'recordConnection', 'getStoreProfile', 'loadStoreProfile', 'saveStoreProfile']) {
+    const original = cloudClient[method];
+    t.mock.method(cloudClient, method, (...args) => Capacitor.isNativePlatform() ? native[method].apply(cloudClient, args) : original(...args));
+  }
 });
 afterEach(() => app?.unmount());
 after(async () => {
@@ -103,7 +121,131 @@ async function mount() {
   app = createApp(App);
   app.mount('#app');
   await nextTick();
+  for (let i = 0; i < 12; i++) await nextTick();
 }
+
+function webFixture(t, data = localDb.readBackupState()) {
+  Capacitor.isNativePlatform = () => false;
+  const owner = { id: 'owner-A', storeId: 'store-A', role: 'owner', displayName: '在线店主', username: 'owner' };
+  const requests = [];
+  let revision = 1, failAccount = false, writeGate = null;
+  const account = () => ({ data, revision, integrity: integrity(data) });
+  const api = new AdminApiClient({ storage: localStorage, eventTarget: window, fetch: async (path, options) => {
+    requests.push({ path, body: options.body && JSON.parse(options.body) });
+    if (path === '/api/v1/auth/login') return Response.json({ accessToken: 'access', refreshToken: 'refresh', user: owner });
+    if (path === '/api/v1/account') { if (failAccount) throw new Error('服务器无法连接'); return Response.json(account()); }
+    if (path === '/api/v1/account/head') return Response.json({ revision, integrity: integrity(data) });
+    if (path === '/api/v1/sync') {
+      const { operations } = JSON.parse(options.body);
+      if (writeGate) await writeGate;
+      for (const op of operations) { data = replayOperation(data, op).data; revision++; }
+      return Response.json({ ...account(), acknowledged: operations.map(op => op.id) });
+    }
+    throw new Error('Unexpected request: ' + path);
+  } });
+  api.lock = async (_name, callback) => callback();
+  const web = createWebClient({ api, onData: () => window.dispatchEvent(new window.Event('cloud-data-updated')) });
+  for (const method of Object.keys(web).filter(key => typeof cloudClient[key] === 'function')) t.mock.method(cloudClient, method, (...args) => web[method](...args));
+  t.after(() => web.dispose());
+  return { api, web, requests, failAccount: () => { failAccount = true; }, blockWrite: gate => { writeGate = gate; } };
+}
+async function flushWeb() { for (let i = 0; i < 4; i++) { await new Promise(resolve => setImmediate(resolve)); await nextTick(); } }
+async function loginWeb() {
+  for (const [selector, value] of [['input[autocomplete="username"]', 'owner'], ['input[type="password"]', 'test-password']]) {
+    const input = document.querySelector(selector); input.value = value; input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  }
+  document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await flushWeb();
+}
+
+test('browser root keeps the cashier page, ignores damaged local data and loads the server account', async t => {
+  localDb.createMember({ name: '服务器会员', phone: '13800007002', initialBalance: 100 });
+  const fixture = webFixture(t);
+  const legacy = new Map([['hairstudio_members_v2', '{broken'], ['hairstudio_pending_write_v1', '{broken-journal'],
+    [CLOUD_STATE_KEY, JSON.stringify({ status: 'needs-choice', outbox: [{ id: 'old-charge' }] })]]);
+  for (const [key, value] of legacy) localStorage.setItem(key, value);
+  const reads = [], getItem = localStorage.getItem.bind(localStorage);
+  t.mock.method(localStorage, 'getItem', key => { if (legacy.has(key)) reads.push(key); return getItem(key); });
+  let source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  for (const match of [...source.matchAll(/from (['"])([^'"]+)\1/g)]) source = source.replace(match[0], 'from ' + match[1] + pathToFileURL(require.resolve(match[2])).href + match[1]);
+  source = source.replace("import('./App.vue')", 'import(' + JSON.stringify(pathToFileURL(appPath).href) + ')').replace(/import\('[^']+\.css'\)/g, 'Promise.resolve()');
+  source = source.replace('Promise.all(', 'export const ready = Promise.all(').replace("createApp(App).mount('#app')", 'globalThis.mountWebEntry(App)');
+  globalThis.mountWebEntry = component => { app = createApp(component); return app.mount('#app'); };
+  try { const entry = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64')); await entry.ready; await flushWeb(); }
+  finally { delete globalThis.mountWebEntry; }
+  assert.equal(fixture.requests.length, 0);
+  assert.match(document.body.textContent, /安全登录/);
+  await loginWeb();
+  assert.match(document.body.textContent, /服务器会员/);
+  assert.ok(document.querySelector('.customer-open'));
+  assert.equal(document.querySelectorAll('nav button').length, 3);
+  assert.doesNotMatch(document.body.textContent, /采用云端账本|待同步|同步设置|多设备|本机账本|当前账本无法读取/);
+  assert.deepEqual(reads, []);
+  for (const [key, value] of legacy) assert.equal(getItem(key), value);
+  assert.equal(document.documentElement.classList.contains('native-system-insets'), false);
+});
+
+test('browser cashier waits for server confirmation and blocks new writes after a load failure', async t => {
+  localDb.createMember({ name: '在线消费会员', phone: '13800007003', initialBalance: 100 });
+  const fixture = webFixture(t);
+  t.mock.method(appVoicePlayer, 'broadcast', async () => {});
+  await mount(); await loginWeb();
+  let release;
+  fixture.blockWrite(new Promise(resolve => { release = resolve; }));
+  t.after(() => release());
+  button('扣款').click(); await nextTick();
+  document.querySelector('[aria-label="精致洗剪吹 (¥38)"]').click(); await nextTick();
+  button('确认扣除').click(); await nextTick();
+  button('确认扣款').click(); await flushWeb();
+  assert.equal(fixture.web.getDb().getMembers()[0].balance, 10000);
+  assert.doesNotMatch(document.body.textContent, /消费成功/);
+  assert.ok(document.querySelector('.consume-confirm-dialog'));
+  assert.equal(fixture.requests.filter(req => req.path === '/api/v1/sync').length, 1);
+  release();
+  for (let i = 0; fixture.web.snapshot().busy && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  await flushWeb();
+  assert.equal(fixture.web.getDb().getMembers()[0].balance, 6200);
+  assert.match(document.body.textContent, /消费成功/);
+  button('知道了').click(); await nextTick();
+  fixture.failAccount(); await assert.rejects(fixture.web.sync(), /服务器无法连接/); await nextTick();
+  assert.equal(button('扣款').disabled, true);
+  assert.match(document.body.textContent, /暂停记账/);
+  assert.doesNotMatch(document.body.textContent, /当前离线.*本机|待同步/);
+});
+
+test('a failed browser login account load never shows an old local ledger', async t => {
+  localDb.createMember({ name: '旧本地私密会员', phone: '13800007004', initialBalance: 100 });
+  const fixture = webFixture(t); fixture.failAccount();
+  await mount(); await loginWeb();
+  assert.match(document.body.textContent, /服务器无法连接/);
+  assert.doesNotMatch(document.body.textContent, /旧本地私密会员|服务器账本已加载|采用云端账本/);
+  assert.equal(fixture.api.accountData.value, null);
+  [...document.querySelectorAll('nav button')].find(element => element.textContent.includes('会员')).click(); await nextTick();
+  assert.equal(button('登记会员').disabled, true);
+});
+
+test('the native entry still opens the offline cashier and keeps its existing ledger', async t => {
+  const member = localDb.createMember({ name: '原生入口客户', phone: '13800007001', initialBalance: 100 });
+  t.mock.method(cloudClient, 'start', async () => () => {});
+  let source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+  for (const match of [...source.matchAll(/from (['"])([^'"]+)\1/g)]) {
+    source = source.replace(match[0], 'from ' + match[1] + pathToFileURL(require.resolve(match[2])).href + match[1]);
+  }
+  source = source.replace("import('./App.vue')", 'import(' + JSON.stringify(pathToFileURL(appPath).href) + ')');
+  source = source.replace("import('../admin/src/App.vue')", 'Promise.reject(new Error("Native entry opened the browser backend"))');
+  source = source.replace(/import\('[^']+\.css'\)/g, 'Promise.resolve()');
+  source = source.replace('Promise.all(', 'export const ready = Promise.all(');
+  source = source.replace("createApp(App).mount('#app')", 'globalThis.mountNativeEntry(App)');
+  globalThis.mountNativeEntry = component => { app = createApp(component); return app.mount('#app'); };
+  try {
+    const entry = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+    await entry.ready; await nextTick();
+    assert.ok(document.querySelector('.customer-open'));
+    assert.match(document.body.textContent, /原生入口客户/);
+    assert.equal(localDb.getMemberById(member.id).balance, 10000);
+    assert.equal(document.documentElement.classList.contains('native-system-insets'), true);
+  } finally { delete globalThis.mountNativeEntry; }
+});
 function button(text) {
   const match = [...document.querySelectorAll('button')].find(element => element.textContent.includes(text));
   assert.ok(match, `Missing button: ${text}`);
@@ -116,6 +258,52 @@ async function settings(page = 'overview') {
   if (['backup-files', 'snapshots'].includes(page)) { button('数据备份').click(); await nextTick(); }
   if (page !== 'overview') { button(titles[page] || page).click(); await nextTick(); }
 }
+
+test('generic store settings save locally and appear in the title, member notes and recharge receipt', async () => {
+  await mount(); await settings('门店设置');
+  const fields = [...document.querySelectorAll('form input, form textarea')];
+  const values = ['安心生活馆', '020-12345678', '幸福路1号', '客户需求', '{store}欢迎光临', '谢谢光临！'];
+  for (let i = 0; i < fields.length; i++) { fields[i].value = values[i]; fields[i].dispatchEvent(new window.Event('input', { bubbles: true })); }
+  await nextTick(); button('保存门店设置').click();
+  for (let i = 0; i < 12; i++) await nextTick();
+  assert.ok(document.body.textContent.includes('门店设置已保存')); assert.ok(document.querySelector('header').textContent.includes('安心生活馆'));
+  assert.ok(document.querySelector('h1').textContent.includes('会员管家'));
+  assert.equal(cloudClient.getStoreProfile().memberNotesLabel, '客户需求');
+  const member = localDb.createMember({ name: '王阿姨', phone: '13800001111' });
+  const { ref } = await import('vue');
+  const { useRecharge } = await import('../src/composables/useRecharge.js');
+  const receiptModal = ref(null);
+  const recharge = useRecharge({ localDb, rechargeSettings: ref(localDb.getRechargeSettings()), selectedMember: ref(null), receiptModal,
+    refreshAll() {}, showToast() {}, showFeedback(message) { throw new Error(message); }, formatCent: cents => (cents / 100).toFixed(2), getStoreProfile: () => cloudClient.getStoreProfile() });
+  recharge.openRechargeModal(member); recharge.rechargeForm.value.actualPay = '100'; recharge.updateRechargeGift();
+  recharge.requestRechargeConfirmation(); await recharge.confirmRecharge();
+  for (const text of ['【安心生活馆会员充值通知】', '谢谢光临！', '联系电话：020-12345678', '门店地址：幸福路1号']) assert.ok(receiptModal.value.messageText.includes(text));
+});
+
+test('store settings retain edits after failure and never report an ignored save as success', async t => {
+  t.mock.method(cloudClient, 'saveStoreProfile', async () => { throw new Error('正在同步，请稍后保存'); });
+  await mount(); await settings('门店设置');
+  const name = document.querySelector('form input'); name.value = '待保存名称'; name.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await nextTick(); button('保存门店设置').click(); for (let i = 0; i < 8; i++) await nextTick();
+  assert.equal(name.value, '待保存名称'); assert.ok(document.body.textContent.includes('正在同步，请稍后保存')); assert.ok(!document.body.textContent.includes('门店设置已保存'));
+  t.mock.method(cloudClient, 'saveStoreProfile', async () => undefined);
+  button('保存门店设置').click(); for (let i = 0; i < 8; i++) await nextTick();
+  assert.equal(name.value, '待保存名称'); assert.ok(document.body.textContent.includes('门店设置未保存')); assert.ok(!document.body.textContent.includes('门店设置已保存'));
+});
+
+test('a new generic shop can consume without preconfigured services', async () => {
+  localStorage.removeItem(STORAGE_KEYS.SERVICES); localDb.init();
+  assert.deepEqual(localDb.getServices(), []);
+  localDb.createMember({ name: '新客户', phone: '13800001111', initialBalance: 100 });
+  await mount(); button('扣款').click(); await nextTick();
+  assert.ok(!document.body.textContent.includes('洗剪吹'));
+  const key = value => [...document.querySelectorAll('.consume-keypad .keypad-key')].find(element => element.textContent.trim() === value);
+  key('2').click(); await nextTick(); key('0').click(); await nextTick();
+  assert.ok(document.querySelector('.consume-amount-edit').textContent.includes('20'));
+  button('确认扣除').click(); await nextTick(); button('确认扣款').click();
+  for (let i = 0; i < 8; i++) await nextTick();
+  assert.equal(localDb.getMembers()[0].balance, 8000); assert.equal(localDb.getLedgers()[0].remark, '消费');
+});
 async function selectBackup(content) {
   if (!document.querySelector('input[type="file"]')) await settings('backup-files');
   const input = document.querySelector('input[type="file"]');
@@ -520,10 +708,36 @@ test('conflicting backup disables merge but still permits canceling the preview'
   assert.equal(localDb.getMemberById(member.id).balance, 15000);
 });
 
+test('native offline prompts once per entry, allows postponing, and expiry removes accounting access', async t => {
+  localDb.createMember({ name: '老客户', phone: '13800001111', initialBalance: 100 });
+  let state = { ...getCloudState(), user: { id: 'owner-1', storeId: 'store-1', role: 'owner', username: 'owner' },
+    binding: { storeId: 'store-1' }, online: true, busy: false, syncLoginRequired: false,
+    deviceAccess: { ready: true, allowed: true, offlineUntil: Date.now() + 86400000 } };
+  let publish;
+  t.mock.method(cloudClient, 'snapshot', () => state);
+  t.mock.method(cloudClient, 'subscribe', listener => { publish = listener; listener(state); return () => {}; });
+  t.mock.method(cloudClient, 'start', async () => () => {});
+  t.mock.method(cloudClient, 'sync', async () => {});
+  await mount(); assert.equal(document.querySelector('#device-prompt-title'), null);
+  state = { ...state, online: false }; publish(state); await nextTick();
+  assert.ok(document.querySelector('#device-prompt-title'));
+  button('暂不登录').click(); await nextTick();
+  assert.equal(document.querySelector('#device-prompt-title'), null);
+  publish({ ...state }); await nextTick(); assert.equal(document.querySelector('#device-prompt-title'), null);
+  window.dispatchEvent(new dom.window.Event('focus')); for (let i = 0; i < 8; i++) await nextTick();
+  assert.ok(document.querySelector('#device-prompt-title'));
+  button('暂不登录').click(); await nextTick();
+  state = { ...state, deviceAccess: { ...state.deviceAccess, allowed: false, reason: '离线使用期限已到，请联网登录' } };
+  publish(state); await nextTick();
+  assert.equal(document.querySelector('.customer-row'), null);
+  assert.ok(document.body.textContent.includes('离线使用期限已到'));
+  assert.equal(document.querySelector('nav[aria-label="主导航"]'), null);
+});
+
 test('whitespace-only phone edits cannot be saved through the member form', async () => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
-  const previous = new Map(localStorage.values);
   await mount();
+  const previous = new Map(localStorage.values);
   document.querySelector('.customer-open').click();
   await nextTick();
   button('修改档案').click();
@@ -548,8 +762,8 @@ test('a numeric ledger phone is rejected by the import screen and the current le
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   const invalid = JSON.parse(localDb.exportBackupData({ archiveSnapshot: false }));
   invalid.data.ledgers[0].memberPhone = 13800001111;
-  const previous = new Map(localStorage.values);
   await mount();
+  const previous = new Map(localStorage.values);
   await settings();
   await selectBackup(JSON.stringify(invalid));
   assert.ok(document.body.textContent.includes('备份校验失败'));
@@ -662,23 +876,24 @@ test('browser use requires login even before a device is cloud-bound', async () 
   Capacitor.isNativePlatform = () => false;
   localDb.createMember({ name: '网页端隐藏会员', phone: '13800001111', initialBalance: 100 });
   await mount();
-  assert.ok(document.body.textContent.includes('网页版需要登录后使用'));
+  assert.ok(document.body.textContent.includes('收银网页直接使用服务器账本'));
   assert.ok(document.body.textContent.includes('安全登录'));
   assert.equal(document.body.textContent.includes('服务器地址'), false);
   assert.equal(document.body.textContent.includes('网页端隐藏会员'), false);
   assert.equal(document.querySelector('nav'), null);
 });
 
-test('browser login identity without a bound ledger keeps customers and business navigation hidden', async t => {
+test('browser ignores cached native identity and an unbound local ledger', async t => {
   Capacitor.isNativePlatform = () => false;
   localDb.createMember({ name: '未加载账本私密会员', phone: '13800001111', initialBalance: 100 });
-  cloudProfile('viewer', t);
+  cloudProfile('viewer');
   saveCloudState({ ...getCloudState(), binding: null, status: 'needs-choice' });
   await mount();
   assert.equal(document.querySelector('.customer-row'), null);
   assert.equal(document.querySelector('nav'), null);
-  assert.ok(document.body.textContent.includes('采用云端账本'));
-  assert.throws(() => localDb.recharge({ memberId: localDb.getMembers()[0].id, actualPay: 50 }), /权限|绑定/);
+  assert.ok(document.body.textContent.includes('安全登录'));
+  assert.doesNotMatch(document.body.textContent, /采用云端账本|待同步|未加载账本私密会员/);
+  await assert.rejects(cloudClient.getDb().recharge({ memberId: localDb.getMembers()[0].id, actualPay: 50 }), /登录|服务器/);
 });
 
 test('an unbound native viewer can read the local ledger but cannot change it', async t => {
@@ -690,6 +905,18 @@ test('an unbound native viewer can read the local ledger but cannot change it', 
   assert.equal(button('扣款').disabled, true);
   assert.throws(() => localDb.recharge({ memberId: member.id, actualPay: 50 }), /权限/);
   assert.equal(localDb.getMemberById(member.id).balance, 10000);
+});
+
+test('native identity recovery shows the ledger check and disables accounting until binding completes', async t => {
+  const member = localDb.createMember({ name: '待核对的会员', phone: '13800001111', initialBalance: 100 });
+  cloudProfile('owner', t);
+  saveCloudState({ ...getCloudState(), binding: null, bindingRecovery: true, status: 'needs-choice' });
+  await mount();
+  assert.match(document.querySelector('.sync-banner').textContent, /核对并加载云端账本.*暂停记账/);
+  assert.equal(button('扣款').disabled, true);
+  assert.throws(() => localDb.recharge({ memberId: member.id, actualPay: 50 }), /核对并加载云端账本/);
+  button('同步设置').click(); await nextTick();
+  assert.ok(button('采用云端账本，放弃本机待同步变更'));
 });
 
 test('cashier starts with quick actions and the daily summary has a separate ledger tab', async () => {
@@ -760,10 +987,15 @@ test('Chinese composition searches after committing the completed input', async 
 });
 
 function cloudProfile(role, t) {
-  // 权限与收银 UI 测试模拟已登录的离线原生设备；浏览器重启测试使用真实恢复流程。
+  // File sharing tests use browser APIs with a native ledger fixture.
   if (role && t) {
     t.mock.method(cloudClient, 'restoreSession', async () => {});
     t.mock.method(cloudClient, 'sync', async () => {});
+    if (!Capacitor.isNativePlatform()) {
+      const fixture = createCloudClient({ allowOffline: true });
+      t.mock.method(cloudClient, 'getDb', () => localDb);
+      for (const method of ['snapshot', 'subscribe', 'start', 'recordConnection']) t.mock.method(cloudClient, method, (...args) => fixture[method].apply(cloudClient, args));
+    }
   }
   saveCloudState({ serverUrl: 'https://member.example.com', binding: { storeId: 'test-store' }, deviceId: crypto.randomUUID(),
     user: role ? { id: 'test-user', storeId: 'test-store', role, displayName: '店主', username: 'owner' } : null,
@@ -907,8 +1139,8 @@ test('a browser restart exposes login and hides the stale signed-in ledger while
   saveCloudState({ ...getCloudState(), status: 'conflict', conflictReason: 'data', outbox: pending });
   await mount();
   await new Promise(resolve => setTimeout(resolve, 20)); await nextTick();
-  assert.equal(getCloudState().user, null);
-  assert.equal(getCloudState().status, 'login-required');
+  assert.equal(getCloudState().user.id, 'test-user');
+  assert.equal(getCloudState().status, 'conflict');
   assert.deepEqual(getCloudState().outbox, pending);
   assert.ok(document.body.textContent.includes('安全登录'));
   assert.equal(document.body.textContent.includes('私密会员'), false);

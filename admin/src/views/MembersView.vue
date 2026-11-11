@@ -306,11 +306,11 @@
             />
           </div>
           <div>
-            <label class="block text-xs font-bold text-slate-600 mb-1">备注偏好 (选填)</label>
+            <label class="block text-xs font-bold text-slate-600 mb-1">{{ adminApi.storeProfile.value.memberNotesLabel }} (选填)</label>
             <textarea
               v-model="editForm.remark"
               rows="2"
-              placeholder="如：喜好修剪发梢，偏好某位发型师"
+              placeholder="如：服务偏好、客户需求、注意事项"
               class="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium focus:outline-none focus:border-emerald-600"
             ></textarea>
           </div>
@@ -341,6 +341,8 @@
 </template>
 
 <script setup>
+import { storeFilePrefix } from '../../../src/store-profile.js';
+import { adminApi } from '../api/client.js';
 import { ref, computed, watch } from 'vue';
 import { formatYuan, maskPhone } from '../utils/security.js';
 import { exportMembersToExcel } from '../utils/exporter.js';
@@ -426,7 +428,7 @@ function handleExport() {
   const target = selectedIds.value.length > 0
     ? props.members.filter(m => selectedIds.value.includes(m.id))
     : filteredMembers.value;
-  exportMembersToExcel(target, '梦飞空间会员明细表');
+  exportMembersToExcel(target, storeFilePrefix(adminApi.storeProfile.value) + '_会员明细表');
 }
 
 function formatDate(isoStr) {

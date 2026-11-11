@@ -62,7 +62,7 @@ export class VoicePlayer {
       if (!template) return;
 
       const text = this.formatTemplate(template, {
-        store: '梦飞空间',
+        store: config.storeName || '我的门店',
         ...params
       });
 

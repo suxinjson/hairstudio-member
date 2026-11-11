@@ -10,6 +10,8 @@ import { moneyToCent } from '../src/money.js';
 import { normalizeVoiceText } from '../src/voice-text.js';
 import { assertJsonBudget } from '../src/data-limits.js';
 import { rechargeGiftCent } from '../src/recharge-settings.js';
+import { readStoreProfile } from './store-profile.js';
+import { storeWelcome } from '../src/store-profile.js';
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
 
@@ -21,19 +23,19 @@ function isWelcomeRequest(req) {
       /(consume|recharge|query|balance|confirm|deny|cancel)/.test(intent) ||
       /(消费|扣款|扣除|结账|买单|充值|充|存|查一下|查询|查|看看|看|余额|流水)/.test(utterance)) return false;
   return (!req.intentName && !utterance) || intent.includes('welcome') || intent.includes('default') ||
-    utterance === '梦飞管家' || utterance === '打开梦飞管家';
+    /^(?:打开)?(?:会员管家|梦飞管家)$/.test(utterance);
 }
 
 function getDialogReply(utterance) {
-  const clean = (utterance || '').replace(/^(天猫精灵|梦飞管家|打开梦飞管家|请|帮我)/g, '').trim();
+  const clean = (utterance || '').replace(/^(天猫精灵|打开会员管家|会员管家|打开梦飞管家|梦飞管家|请|帮我)/g, '').trim();
   if (/^(取消|不要|算了|不对|别记|别扣|不充|否认|不用|不用了|不要了|按错了)$/.test(clean)) return 'deny';
   if (/^(确认|确定|是的|好的|对的|没错|没问题|要的|同意|成|确认扣款|确认充值|可以|行)$/.test(clean)) return 'confirm';
   return '';
 }
 
-function welcomeResponse() {
+function welcomeResponse(profile) {
   return formatAliGenieResponse({
-    text: '梦飞空间欢迎您，请说',
+    text: storeWelcome(profile),
     shouldEndSession: false,
     expectSpeech: true
   });
@@ -574,7 +576,7 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
     if (!hasAccountingIdentity || !Array.isArray(configured.allowedDevices) || !configured.allowedDevices.includes(req.deviceOpenId)) {
       trace?.state('welcome_without_bound_identity');
       if (hasAccountingIdentity) await rememberAliGenieDevice(pool, storeId, req, configured);
-      return welcomeResponse();
+      return welcomeResponse(await readStoreProfile(pool, storeId));
     }
   }
   if (!hasAccountingIdentity) {
@@ -723,7 +725,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     // 4. Intent Dispatch
     const normalizedIntent = req.intentName.toLowerCase();
     const utterance = req.utterance || '';
-    if (isWelcomeRequest(req)) return welcomeResponse();
+    if (isWelcomeRequest(req)) return welcomeResponse(await readStoreProfile(client, targetStoreId));
 
     // B. Query Member / Balance Intent
     if (normalizedIntent.includes('query') || normalizedIntent.includes('balance') || /(查一下|查询|查|看看|看|余额|流水)/.test(utterance)) {
@@ -789,7 +791,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
 
       const m = matched[0];
       let amount = req.slots.amount !== undefined ? parseAmount(req.slots.amount) : extractAmountFromUtterance(utterance, m.name);
-      let itemsSummary = req.slots.service || '洗剪吹理发';
+      let itemsSummary = req.slots.service || '消费';
 
       // If amount is not explicitly provided, try to look up service price
       if (!amount && req.slots.amount === undefined && !/(?:消费|扣款|扣除|结账|买单)\s*[-+\d零一二两三四五六七八九十百千万]/.test(utterance.replaceAll(m.name, ''))) {
@@ -813,7 +815,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
       if (allowDebt) {
         confirmPrompt = `会员${m.name}当前卡内余额仅为 ${(balanceBefore / 100).toFixed(2)} 元，本次扣款 ${(amountCent / 100).toFixed(2)} 元后将产生欠款 ${Math.abs(balanceAfter / 100).toFixed(2)} 元，请问确认扣款并记入欠款吗？`;
       } else {
-        confirmPrompt = `会员${m.name}本次${itemsSummary}消费 ${(amountCent / 100).toFixed(2)} 元，扣款后卡内剩余 ${(balanceAfter / 100).toFixed(2)} 元，请问确认扣款吗？`;
+        confirmPrompt = `会员${m.name}本次${itemsSummary === '消费' ? '' : itemsSummary}消费 ${(amountCent / 100).toFixed(2)} 元，扣款后卡内剩余 ${(balanceAfter / 100).toFixed(2)} 元，请问确认扣款吗？`;
       }
 
       // Save pending action in session cache
@@ -827,7 +829,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
         remark: '天猫精灵语音扣款',
         expiresAt: now + SESSION_TTL_MS
       });
-      if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新唤起梦飞管家并说完整的消费指令。' });
+      if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新打开语音技能并说完整的消费指令。' });
 
       return formatAliGenieResponse({
         text: confirmPrompt,
@@ -890,7 +892,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
         giftCent,
         expiresAt: now + SESSION_TTL_MS
       });
-      if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新唤起梦飞管家并说完整的充值指令。' });
+      if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新打开语音技能并说完整的充值指令。' });
 
       return formatAliGenieResponse({
         text: confirmPrompt,
@@ -902,7 +904,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
 
     // E. Fallback
     return formatAliGenieResponse({
-      text: '抱歉，梦飞管家暂未理解该指令。您可以说：张三洗剪吹扣款38元、李四充值200元、或查询尾号1234余额。',
+      text: '抱歉，暂未理解该指令。您可以说：张三消费38元、李四充值200元、或查询尾号1234余额。',
       shouldEndSession: true
     });
 }

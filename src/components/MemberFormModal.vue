@@ -46,11 +46,11 @@
         </div>
 
         <div>
-          <label class="font-black text-slate-800 block mb-1.5">发型与习惯偏好备注</label>
+          <label class="font-black text-slate-800 block mb-1.5">{{ notesLabel }}</label>
           <textarea 
             v-model="form.notes" 
             rows="2" 
-            placeholder="如：短发圆寸、染发板栗色、不喜欢推子太贴皮等" 
+            placeholder="如：服务偏好、客户需求、需要注意的事项"
             class="w-full p-3.5 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 resize-none font-bold text-sm"
           ></textarea>
         </div>
@@ -77,6 +77,7 @@
 
 <script setup>
 defineProps({
+  notesLabel: { type: String, default: '会员偏好与备注' },
   modelValue: Boolean,
   editingId: { type: String, default: '' },
   form: { type: Object, required: true },

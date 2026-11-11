@@ -7,6 +7,9 @@ import { canWrite, canonicalJSON, validateOperation } from '../src/sync-protocol
 import { DATA_LIMITS, assertAccountLimits, assertJsonBudget, boundedText } from '../src/data-limits.js';
 import { sanitizeVoiceConfig, readVoiceConfig, publicVoiceConfig, synthesizeTTS } from './voice.js';
 import { handleAliGenieWebhook, getAliGenieVerificationContent, aliGenieDeviceScope } from './aligenie.js';
+import { ensureDevice, checkDevice, deviceGrant } from './device-access.js';
+import { readStoreProfile } from './store-profile.js';
+import { normalizeStoreProfile } from '../src/store-profile.js';
 
 export function validateSnapshot(data, options) {
   assertAccountLimits(data && { ...data, ledgers: data.ledgers ?? [], services: data.services ?? DEFAULT_SERVICES, rechargePlans: data.rechargePlans ?? DEFAULT_RECHARGE_PLANS });
@@ -51,6 +54,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
   async function lockedUser(client, identity) {
     const { rows: [user] } = await client.query('SELECT u.*,s.device_id FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id=$1 AND s.revoked=false AND s.expires_at>now() FOR SHARE OF u,s', [identity.sessionId]);
     if (!user?.active || user.id !== identity.id) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
+    await checkDevice(client, user.store_id, user.device_id);
     return user;
   }
   async function authorize(identity, permission) {
@@ -79,7 +83,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
   }
   return {
     authorize,
-    async createOwner({ username, password, displayName = '店主', storeName = '梦飞空间' }) {
+    async createOwner({ username, password, displayName = '店主', storeName = '我的门店' }) {
       username = normalizeUsername(username);
       boundedText(displayName, 128, '显示名', true); boundedText(storeName, 128, '门店名', true);
       const passwordHash = await hashPassword(password);
@@ -92,7 +96,8 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         return { userId, storeId };
       });
     },
-    async login({ username, password, deviceId }, ip) {
+    async login({ username, password, deviceId, clientKind = 'web', deviceFingerprint = null, deviceName = '' }, ip) {
+      if (!['native', 'web'].includes(clientKind)) throw new ApiError(400, '客户端类型无效');
       if (typeof deviceId !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(deviceId)) throw new ApiError(400, '设备标识无效');
       try { username = normalizeUsername(username); } catch { throw new ApiError(401, '账号或密码错误'); }
       const reserved = await reserveLogin(username, ip);
@@ -105,26 +110,29 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
       }
       const accessToken = token(), refreshToken = token(), sessionId = randomUUID();
       const [accessExpires, expires] = sessionTimes();
+      let authorization, storeProfile;
       const currentUser = await transaction(pool, async client => {
         const { rows: [current] } = await client.query('SELECT * FROM users WHERE id=$1 FOR UPDATE', [user.id]);
         if (!current?.active || current.password_hash !== user.password_hash) throw new ApiError(401, '账号或密码错误');
         await client.query("DELETE FROM sessions WHERE user_id=$1 AND expires_at<now()", [user.id]);
-        await client.query('UPDATE sessions SET revoked=true WHERE id IN (SELECT id FROM sessions WHERE user_id=$1 AND revoked=false ORDER BY created_at DESC OFFSET 19)', [user.id]);
-        await client.query('INSERT INTO sessions(id,user_id,device_id,access_hash,refresh_hash,access_expires_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7)',
-          [sessionId, user.id, deviceId, digest(accessToken), digest(refreshToken), accessExpires, expires]);
+        authorization = deviceGrant(await ensureDevice(client, current, deviceId, clientKind, deviceFingerprint, deviceName));
+        storeProfile = await readStoreProfile(client, current.store_id);
+        await client.query('INSERT INTO sessions(id,user_id,device_id,access_hash,refresh_hash,access_expires_at,expires_at,client_kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+          [sessionId, user.id, deviceId, digest(accessToken), digest(refreshToken), accessExpires, clientKind === 'native' ? 'infinity' : expires, clientKind]);
         await audit(client, { ...current, device_id: deviceId }, 'login');
         return current;
       });
       await releaseLogin(reserved);
-      return { accessToken, refreshToken, user: publicUser(currentUser), expiresAt: accessExpires.toISOString() };
+      return { accessToken, refreshToken, user: publicUser(currentUser), expiresAt: accessExpires.toISOString(), authorization, storeProfile };
     },
     async authenticate(accessToken) {
       if (typeof accessToken !== 'string' || accessToken.length > 128) throw new ApiError(401, '请登录', 'AUTH_REQUIRED');
-      const { rows: [row] } = await pool.query('SELECT u.*,s.id AS session_id,s.device_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.access_hash=$1 AND s.revoked=false AND s.access_expires_at>now() AND s.expires_at>now() AND u.active=true', [digest(accessToken)]);
+      const { rows: [row] } = await pool.query('SELECT u.*,s.id AS session_id,s.device_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE ((s.access_hash=$1 AND s.access_expires_at>now()) OR (s.previous_access_hash=$1 AND s.previous_access_expires_at>now())) AND s.revoked=false AND s.expires_at>now() AND u.active=true', [digest(accessToken)]);
       if (!row) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
+      await transaction(pool, client => checkDevice(client, row.store_id, row.device_id));
       return { ...row, sessionId: row.session_id };
     },
-    async refresh(refreshToken) {
+    async refresh(refreshToken, clientKind, deviceFingerprint = null, deviceName = '') {
       if (typeof refreshToken !== 'string' || refreshToken.length > 128) throw new ApiError(401, '请重新登录', 'AUTH_REQUIRED');
       const next = await transaction(pool, async client => {
         const refreshHash = digest(refreshToken);
@@ -134,26 +142,86 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         const { rows: [user] } = await client.query('SELECT * FROM users WHERE id=$1 FOR SHARE', [candidate.user_id]);
         if (!user?.active) return null;
         const { rows: [session] } = await client.query('SELECT * FROM sessions WHERE refresh_hash=$1 OR previous_refresh_hash=$1 FOR UPDATE', [refreshHash]);
-        if (!session || session.revoked || new Date(session.expires_at) <= new Date()) return null;
-        if (session.refresh_hash !== digest(refreshToken)) {
-          await client.query('UPDATE sessions SET revoked=true WHERE id=$1', [session.id]);
-          return null;
-        }
-        const accessToken = token(), replacement = token(), [accessExpires] = sessionTimes();
-        await client.query('UPDATE sessions SET access_hash=$1,previous_refresh_hash=refresh_hash,refresh_hash=$2,access_expires_at=$3 WHERE id=$4',
-          [digest(accessToken), digest(replacement), accessExpires, session.id]);
-        return { accessToken, refreshToken: replacement, user: publicUser(user), expiresAt: accessExpires.toISOString() };
+        if (!session || session.revoked) return null;
+        // The request cannot upgrade a stored web credential to a perpetual session.
+        const kind = session.client_kind === 'native' ? 'native' : 'web';
+        if (kind !== 'native' && new Date(session.expires_at) <= new Date()) return null;
+        const authorization = deviceGrant(await ensureDevice(client, user, session.device_id, kind, deviceFingerprint, deviceName));
+        // Keep the refresh credential stable. Accept the last rotated legacy credential,
+        // including a refresh whose response was lost, without revoking other requests.
+        const accessToken = digest('access:' + refreshToken), [accessExpires] = sessionTimes();
+        await client.query('UPDATE sessions SET previous_access_hash=CASE WHEN access_hash<>$1 THEN access_hash ELSE previous_access_hash END,previous_access_expires_at=CASE WHEN access_hash<>$1 THEN access_expires_at ELSE previous_access_expires_at END,access_hash=$1,access_expires_at=$2,client_kind=$3,expires_at=CASE WHEN $3=\'native\' THEN \'infinity\'::timestamptz ELSE expires_at END WHERE id=$4',
+          [digest(accessToken), accessExpires, kind, session.id]);
+        return { accessToken, refreshToken, user: publicUser(user), expiresAt: accessExpires.toISOString(), authorization, storeProfile: await readStoreProfile(client, user.store_id) };
       });
       if (!next) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
       return next;
     },
     async logout(user) { await pool.query('UPDATE sessions SET revoked=true WHERE id=$1', [user.sessionId]); },
+    async deviceAuthorization(identity) {
+      // Update the heartbeat before shared authorization locks are acquired. Multiple
+      // sessions on the same phone must not both upgrade a shared device lock.
+      await pool.query('UPDATE app_devices SET last_seen_at=now() WHERE store_id=$1 AND device_id=$2', [identity.store_id, identity.device_id]);
+      return transaction(pool, async client => {
+        const user = await lockedUser(client, identity);
+        const device = await checkDevice(client, user.store_id, user.device_id) || await ensureDevice(client, user, user.device_id);
+        return { authorization: deviceGrant(device), user: publicUser(user), storeProfile: await readStoreProfile(client, user.store_id) };
+      });
+    },
+    async devices(identity) {
+      return transaction(pool, async client => {
+        const user = await lockedUser(client, identity);
+        if (user.role !== 'owner') throw new ApiError(403, '仅店主可以管理设备');
+        return (await client.query(`SELECT d.*,u.display_name FROM app_devices d LEFT JOIN users u ON u.id=d.last_user_id
+          WHERE d.store_id=$1 ORDER BY d.last_seen_at DESC`, [user.store_id])).rows.map(d => ({
+          deviceId: d.device_id, deviceName: d.device_name, kind: d.kind, label: d.label, displayName: d.display_name,
+          active: d.active, offlineHours: d.offline_hours, authorizedUntil: d.authorized_until,
+          lastSeenAt: d.last_seen_at, createdAt: d.created_at
+        }));
+      });
+    },
+    async updateDevice(identity, deviceId, input) {
+      if (typeof input.active !== 'boolean' || !Number.isInteger(input.offlineHours) || input.offlineHours < 0 || input.offlineHours > 8760 ||
+          typeof input.label !== 'string' || input.label.length > 128 ||
+          input.authorizedUntil !== null && (typeof input.authorizedUntil !== 'string' || !Number.isFinite(Date.parse(input.authorizedUntil)))) {
+        throw new ApiError(400, '设备授权资料无效');
+      }
+      return transaction(pool, async client => {
+        await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
+        const user = await lockedUser(client, identity);
+        if (user.role !== 'owner') throw new ApiError(403, '仅店主可以管理设备');
+        const { rowCount } = await client.query(`UPDATE app_devices SET active=$1,offline_hours=$2,authorized_until=$3,label=$4
+          WHERE store_id=$5 AND (device_id=$6 OR hardware_fingerprint=(SELECT hardware_fingerprint FROM app_devices WHERE store_id=$5 AND device_id=$6))`, [input.active, input.offlineHours, input.authorizedUntil, input.label.trim(), user.store_id, deviceId]);
+        if (!rowCount) throw new ApiError(404, '设备不存在');
+        await audit(client, user, 'device_authorization_changed', { targetDeviceId: deviceId, ...input });
+        return { success: true };
+      });
+    },
+    async storeProfile(identity) {
+      return transaction(pool, async client => { const user = await lockedUser(client, identity); return readStoreProfile(client, user.store_id); });
+    },
+    async saveStoreProfile(identity, input) {
+      if (!input?.profile || typeof input.profile !== 'object' || Array.isArray(input.profile)) throw new ApiError(400, '请提交完整的门店设置');
+      let profile;
+      try { profile = normalizeStoreProfile(input.profile); } catch (error) { throw new ApiError(400, error.message); }
+      if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) throw new ApiError(400, '门店设置版本无效');
+      return transaction(pool, async client => {
+        await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
+        const user = await lockedUser(client, identity);
+        if (user.role !== 'owner') throw new ApiError(403, '仅店主可以修改门店设置');
+        const { rows: [updated] } = await client.query('UPDATE stores SET name=$1,profile=$2,profile_version=profile_version+1 WHERE id=$3 AND profile_version=$4 RETURNING profile_version',
+          [profile.name, profile, user.store_id, input.expectedVersion]);
+        if (!updated) throw new ApiError(409, '门店设置已被其他页面修改，请重新加载后核对', 'STORE_PROFILE_CHANGED');
+        await audit(client, user, 'store_profile_changed', { name: profile.name, version: updated.profile_version });
+        return { ...profile, version: updated.profile_version };
+      });
+    },
     async account(identity) {
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
         const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1', [user.store_id]);
         if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败，请联系管理员', 'INTEGRITY_FAILED');
-        return { data: account.data, revision: account.revision, integrity: account.integrity };
+        return { data: account.data, revision: account.revision, integrity: account.integrity, storeProfile: await readStoreProfile(client, user.store_id) };
       });
     },
     async reconcileAccount(identity, expectedHead) {
@@ -393,7 +461,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
         const saved = rows[0]?.voice_config || {};
         const config = readVoiceConfig(saved);
-        return publicVoiceConfig(config, user.role);
+        return { ...publicVoiceConfig(config, user.role), storeName: (await readStoreProfile(client, user.store_id)).name };
       });
     },
     async saveVoiceConfig(identity, input) {
@@ -414,7 +482,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
           [user.store_id, JSON.stringify(next)]
         );
         await audit(client, user, 'voice_config_updated', { provider: next.provider, enabled: next.enabled });
-        return publicVoiceConfig(next, user.role);
+        return { ...publicVoiceConfig(next, user.role), storeName: (await readStoreProfile(client, user.store_id)).name };
       });
     },
     async synthesizeVoice(identity, options = {}) {

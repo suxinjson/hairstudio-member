@@ -29,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,40 +42,100 @@ import javax.net.ssl.HttpsURLConnection;
 @CapacitorPlugin(name = "CloudDevice")
 public class CloudDevicePlugin extends Plugin {
     private static final String KEY_ALIAS = "member-cloud-session-v1";
+    private String cachedSession;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private SharedPreferences preferences() { return getContext().getSharedPreferences("member_cloud_vault", 0); }
-    private SecretKey key() throws Exception {
+    private SecretKey key(String alias) throws Exception {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore"); store.load(null);
-        if (!store.containsAlias(KEY_ALIAS)) {
+        if (!store.containsAlias(alias)) {
             KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
-            generator.init(new KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+            generator.init(new KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setKeySize(256).build());
             generator.generateKey();
         }
-        return (SecretKey) store.getKey(KEY_ALIAS, null);
+        return (SecretKey) store.getKey(alias, null);
+    }
+    private VaultCopies.Encrypted encrypt(String prefix, String value) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key(prefix.isEmpty() ? KEY_ALIAS : KEY_ALIAS + "-" + prefix));
+        String data = Base64.encodeToString(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP);
+        String iv = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP);
+        return new VaultCopies.Encrypted(data, iv);
+    }
+    private String readEncrypted(String prefix) throws Exception {
+        String data = preferences().getString(prefix + "data", null);
+        if (data == null) return null;
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, key(prefix.isEmpty() ? KEY_ALIAS : KEY_ALIAS + "-" + prefix),
+            new GCMParameterSpec(128, Base64.decode(preferences().getString(prefix + "iv", ""), Base64.NO_WRAP)));
+        return new String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), StandardCharsets.UTF_8);
+    }
+    private final VaultCopies vaultCopies = new VaultCopies(new VaultCopies.Backend() {
+        @Override public VaultCopies.Encrypted encrypt(String prefix, String value) throws Exception {
+            return CloudDevicePlugin.this.encrypt(prefix, value);
+        }
+        @Override public String read(String prefix) throws Exception { return readEncrypted(prefix); }
+        @Override public void commit(Map<String, VaultCopies.Encrypted> entries) throws Exception {
+            SharedPreferences.Editor editor = preferences().edit();
+            for (Map.Entry<String, VaultCopies.Encrypted> entry : entries.entrySet()) {
+                String prefix = entry.getKey(); VaultCopies.Encrypted value = entry.getValue();
+                if (value == null) editor.remove(prefix + "data").remove(prefix + "iv");
+                else editor.putString(prefix + "data", value.data).putString(prefix + "iv", value.iv);
+            }
+            if (!editor.commit()) throw new Exception("Unable to commit vault copies");
+        }
+    });
+    private void writeCopies(String primary, String backup, String value) throws Exception { vaultCopies.write(primary, backup, value); }
+    private String readCopies(String primary, String backup) throws Exception {
+        return vaultCopies.read(primary, backup);
+    }
+    @PluginMethod public void getDeviceId(PluginCall call) {
+        String fingerprint;
+        try {
+            String androidId = Settings.Secure.getString(getContext().getContentResolver(), Settings.Secure.ANDROID_ID);
+            if (androidId == null || androidId.isEmpty()) throw new Exception();
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest((getContext().getPackageName() + ":" + androidId).getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(); for (byte b : hash) hex.append(String.format("%02x", b & 255));
+            fingerprint = hex.toString();
+        } catch (Exception error) { call.reject("暂时无法读取设备标识，请重试"); return; }
+        String id = preferences().getString("deviceId", null);
+        if (id == null) {
+            String legacy = call.getString("legacyId");
+            id = legacy != null && legacy.matches("[a-zA-Z0-9-]{16,80}") ? legacy : "android-" + fingerprint;
+            if (!preferences().edit().putString("deviceId", id).commit()) { call.reject("无法保存设备标识，请重试"); return; }
+        }
+        call.resolve(new JSObject().put("deviceId", id).put("deviceFingerprint", fingerprint)
+            .put("deviceName", (Build.MANUFACTURER + " " + Build.MODEL).trim()));
+    }
+    @PluginMethod public void loadAccess(PluginCall call) {
+        try { call.resolve(new JSObject().put("access", readCopies("access-", "access-backup-"))); }
+        catch (Exception error) { call.reject("暂时无法读取设备授权，请联网确认"); }
+    }
+    @PluginMethod public void saveAccess(PluginCall call) {
+        try {
+            String value = call.getString("access");
+            if (value == null || value.length() > 8192) throw new Exception();
+            writeCopies("access-", "access-backup-", value); call.resolve();
+        } catch (Exception error) { call.reject("无法保存设备授权，请联网重试"); }
     }
     @PluginMethod public void saveSession(PluginCall call) {
         try {
             String session = call.getString("session");
             if (session == null || session.length() > 4096) throw new Exception();
-            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key());
-            String data = Base64.encodeToString(cipher.doFinal(session.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP);
-            String iv = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP);
-            if (!preferences().edit().putString("data", data).putString("iv", iv).commit()) throw new Exception();
+            writeCopies("", "session-backup-", session);
+            cachedSession = session;
             call.resolve();
         } catch (Exception error) { call.reject("安全会话保存失败，请重试登录"); }
     }
     @PluginMethod public void loadSession(PluginCall call) {
         try {
-            String data = preferences().getString("data", null);
-            if (data == null) { call.resolve(new JSObject().put("session", null)); return; }
-            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(preferences().getString("iv", ""), Base64.NO_WRAP)));
-            String session = new String(cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)), StandardCharsets.UTF_8);
+            String session = readCopies("", "session-backup-");
+            cachedSession = session;
             call.resolve(new JSObject().put("session", session));
         } catch (Exception error) {
             // Keystore 暂时不可用时保留密文，前端继续离线使用，后续可以重试。
-            call.reject("暂时无法读取安全会话，可继续离线使用");
+            if (cachedSession != null) call.resolve(new JSObject().put("session", cachedSession));
+            else call.reject("暂时无法读取安全会话，可继续离线使用");
         }
     }
     @PluginMethod public void copyText(PluginCall call) {
@@ -89,7 +150,8 @@ public class CloudDevicePlugin extends Plugin {
         });
     }
     @PluginMethod public void clearSession(PluginCall call) {
-        if (preferences().edit().clear().commit()) call.resolve();
+        cachedSession = null;
+        if (preferences().edit().remove("data").remove("iv").remove("session-backup-data").remove("session-backup-iv").commit()) call.resolve();
         else call.reject("清除安全会话失败，请重试");
     }
     private String hash(byte[] bytes) throws Exception { return hex(MessageDigest.getInstance("SHA-256").digest(bytes)); }

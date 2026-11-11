@@ -1,6 +1,8 @@
 CREATE TABLE IF NOT EXISTS stores (
   id uuid PRIMARY KEY, name text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS profile jsonb NOT NULL DEFAULT '{}';
+ALTER TABLE stores ADD COLUMN IF NOT EXISTS profile_version integer NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY, store_id uuid NOT NULL REFERENCES stores(id),
   username text NOT NULL UNIQUE, display_name text NOT NULL, password_hash text NOT NULL,
@@ -18,6 +20,20 @@ CREATE TABLE IF NOT EXISTS sessions (
   revoked boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS sessions_previous_refresh ON sessions(previous_refresh_hash);
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS client_kind text NOT NULL DEFAULT 'web';
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS previous_access_hash text;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS previous_access_expires_at timestamptz NOT NULL DEFAULT 'epoch';
+CREATE TABLE IF NOT EXISTS app_devices (
+  store_id uuid NOT NULL REFERENCES stores(id), device_id text NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('native','web')), label text NOT NULL DEFAULT '',
+  last_user_id uuid REFERENCES users(id), active boolean NOT NULL DEFAULT true,
+  offline_hours integer NOT NULL DEFAULT 168 CHECK (offline_hours BETWEEN 0 AND 8760),
+  authorized_until timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(store_id,device_id)
+);
+ALTER TABLE app_devices ADD COLUMN IF NOT EXISTS hardware_fingerprint text;
+ALTER TABLE app_devices ADD COLUMN IF NOT EXISTS device_name text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS app_device_fingerprint ON app_devices(store_id,hardware_fingerprint);
 CREATE TABLE IF NOT EXISTS login_limits (
   bucket text PRIMARY KEY, failures integer NOT NULL, window_start timestamptz NOT NULL DEFAULT now()
 );

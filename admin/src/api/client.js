@@ -4,6 +4,7 @@ import { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS, localDb } from '../../../src/
 import { sha256 } from '../../../src/cloud-client.js';
 import { withBrowserLock } from '../utils/browser-lock.js';
 import { normalizeMemberPhone, validateActiveMemberPhones } from '../../../src/accounting.js';
+import { latestStoreProfile, DEFAULT_STORE_PROFILE } from '../../../src/store-profile.js';
 
 const STORAGE_KEY = 'hairstudio_admin_auth';
 export const ADMIN_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -23,6 +24,7 @@ export class AdminApiClient {
     this.serverOrigin = serverOrigin; this.headConflict = ref(false);
     this.storage = storage; this.requestFetch = requestFetch; this.lockOptions = { locks, indexedDB };
     this.accessToken = ref(''); this.refreshToken = ref(''); this.user = ref(null);
+    this.storeProfile = ref({ ...DEFAULT_STORE_PROFILE });
     this.idleExpiresAt = ref(null);
     this.accountData = ref(null); this.accountRevision = ref(0);
     this.accountStatus = ref('idle'); this.accountError = ref('');
@@ -74,6 +76,7 @@ export class AdminApiClient {
   }
 
   applySession(data) {
+    const sameIdentity = identityKey(data?.user) === identityKey(this.user.value);
     if (identityKey(data?.user) !== identityKey(this.user.value)) {
       this.generation++; this.loadSequence++;
       this.accountData.value = null; this.accountRevision.value = 0;
@@ -81,6 +84,7 @@ export class AdminApiClient {
     }
     this.accessToken.value = data?.accessToken || ''; this.refreshToken.value = data?.refreshToken || '';
     this.user.value = data?.user || null;
+    this.storeProfile.value = data?.user ? (data.storeProfile ? latestStoreProfile(sameIdentity ? this.storeProfile.value : null, data.storeProfile) : sameIdentity ? this.storeProfile.value : { ...DEFAULT_STORE_PROFILE }) : { ...DEFAULT_STORE_PROFILE };
     this.idleExpiresAt.value = data?.idleExpiresAt ?? null;
     this.applyingSession = true;
     try { this.isLocked.value = Boolean(data?.isLocked); } finally { this.applyingSession = false; }
@@ -104,7 +108,9 @@ export class AdminApiClient {
     const saved = this.readSavedSession();
     const idleExpiresAt = resetIdle || identityKey(saved?.user) !== identityKey(data.user)
       ? Date.now() + ADMIN_IDLE_TIMEOUT_MS : saved?.idleExpiresAt;
-    this.storage.setItem(STORAGE_KEY, JSON.stringify({ ...data, isLocked, idleExpiresAt }));
+    const currentProfile = identityKey(saved?.user) === identityKey(data.user) ? saved?.storeProfile : null;
+    const storeProfile = data.storeProfile ? latestStoreProfile(currentProfile, data.storeProfile) : currentProfile || { ...DEFAULT_STORE_PROFILE };
+    this.storage.setItem(STORAGE_KEY, JSON.stringify({ ...data, storeProfile, isLocked, idleExpiresAt }));
     this.restoreSession();
   }
 
@@ -265,6 +271,7 @@ export class AdminApiClient {
       const head = this.checkHead(response);
       this.storage.setItem(this.headKey(), JSON.stringify(head));
       this.accountData.value = data; this.accountRevision.value = response.revision;
+      if (response.storeProfile) this.keepStoreProfile(response.storeProfile);
     });
   }
 
@@ -337,6 +344,7 @@ export class AdminApiClient {
       this.storage.setItem(key, JSON.stringify(pending));
       this.readPending(); this.loadSequence++;
       this.accountStatus.value = 'saving'; this.accountError.value = '';
+      let writeAcknowledged = false;
       try {
         const remoteHead = await this.request('/api/v1/account/head');
         await this.lock('head:' + this.serverOrigin + ':' + this.user.value.storeId, () => {
@@ -347,6 +355,7 @@ export class AdminApiClient {
           this.storage.setItem(key, JSON.stringify(pending));
         });
         const response = await this.request('/api/v1/sync', { method: 'POST', body: JSON.stringify({ operations: pending.operations, observedHead: pending.observedHead, ...(pending.importBatch ? { importBatch: pending.importBatch } : {}) }) });
+        writeAcknowledged = true;
         if (canonicalJSON(response.acknowledged) !== canonicalJSON(pending.operations.map(operation => operation.id))) throw new Error('云端确认单号不匹配，请重试原操作');
         if (pending.importBatch && (response.importReceipt?.signature !== pending.importBatch.signature ||
             !['pending', 'complete'].includes(response.importReceipt.status) || !Number.isInteger(response.importReceipt.count) ||
@@ -358,7 +367,7 @@ export class AdminApiClient {
       } catch (error) {
         if (error.code === 'CLOUD_INTEGRITY_CONFLICT' || error.code === 'INTEGRITY_FAILED') this.flagHeadConflict(error.message);
         // A definitive first-attempt rejection committed nothing. Uncertain retries retain their IDs.
-        if (!retrying && error.code !== 'CLOUD_INTEGRITY_CONFLICT' && error.code !== 'INTEGRITY_FAILED' && [400, 403, 409, 413, 415, 429].includes(error.status)) this.storage.removeItem(key);
+        if (!retrying && !writeAcknowledged && error.code !== 'CLOUD_INTEGRITY_CONFLICT' && error.code !== 'INTEGRITY_FAILED' && [400, 403, 409, 413, 415, 429].includes(error.status)) this.storage.removeItem(key);
         else this.storage.setItem(key, JSON.stringify({ ...pending, uncertain: true }));
         if (generation === this.generation) {
           this.readPending(); this.accountStatus.value = 'error'; this.accountError.value = error.message;
@@ -416,6 +425,21 @@ export class AdminApiClient {
   }
 
   getUsers() { return this.request('/api/v1/users'); }
+  keepStoreProfile(profile) {
+    this.storeProfile.value = latestStoreProfile(this.storeProfile.value, profile);
+    const saved = this.readSavedSession();
+    if (saved && identityKey(saved.user) === identityKey(this.user.value)) this.storage.setItem(STORAGE_KEY, JSON.stringify({ ...saved, storeProfile: this.storeProfile.value }));
+  }
+  async loadStoreProfile() {
+    const profile = await this.request('/api/v1/store/profile');
+    this.keepStoreProfile(profile); return this.storeProfile.value;
+  }
+  async saveStoreProfile(profile, expectedVersion) {
+    const saved = await this.request('/api/v1/store/profile', { method: 'PATCH', body: JSON.stringify({ profile, expectedVersion }) });
+    this.keepStoreProfile(saved); return this.storeProfile.value;
+  }
+  getDevices() { return this.request('/api/v1/devices'); }
+  updateDevice(id, payload) { return this.request('/api/v1/devices/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(payload) }); }
   createUser(payload) { return this.request('/api/v1/users', { method: 'POST', body: JSON.stringify(payload) }); }
   updateUser(id, payload) { return this.request('/api/v1/users/' + id, { method: 'PATCH', body: JSON.stringify(payload) }); }
   getActivity({ before, limit = 100 } = {}) {

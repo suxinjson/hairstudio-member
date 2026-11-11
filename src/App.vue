@@ -4,6 +4,7 @@
     <!-- 顶部状态栏与大搜索框 (独立组件) -->
     <AppHeader
       :active-tab="activeTab"
+      :store-name="storeProfile.name"
       :ledger-view="ledgerView"
       :cloud-locked="cloudLocked"
       :cloud-binding="Boolean(cloudState.binding)"
@@ -26,9 +27,14 @@
     <!-- 主视图容器 -->
     <main class="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-4 sm:py-4 space-y-3.5">
       <!-- 异常提示条 -->
-      <div v-if="cloudState.binding && !cloudLocked && (cloudState.outbox.length || cloudState.status === 'conflict' || !cloudState.online)" class="sync-banner rounded-2xl p-3 border bg-white text-sm flex items-center justify-between gap-2">
-        <span>{{ cloudState.online ? '☁️ 已联网' : '📴 当前离线' }}<span v-if="cloudState.outbox.length"> · 待同步 {{ cloudState.outbox.length }} 笔</span><span v-if="cloudState.status === 'conflict'"> · 请核对冲突</span></span>
+      <div v-if="!isWeb && !cloudLocked && (cloudState.bindingRecovery || cloudState.binding && (cloudState.outbox.length || cloudState.status === 'conflict' || !cloudState.online))" class="sync-banner rounded-2xl p-3 border bg-white text-sm flex items-center justify-between gap-2">
+        <span v-if="cloudState.bindingRecovery">登录已恢复，请先核对并加载云端账本 · 暂停记账</span>
+        <span v-else>{{ cloudState.online ? '☁️ 已联网' : '📴 当前离线' }}<span v-if="cloudState.outbox.length"> · 待同步 {{ cloudState.outbox.length }} 笔</span><span v-if="cloudState.status === 'conflict'"> · 请核对冲突</span></span>
         <button @click="openSettings('account')" class="font-bold text-indigo-700">同步设置</button>
+      </div>
+      <div v-if="isWeb && !cloudLocked && (cloudState.error || cloudState.pending)" class="rounded-2xl p-3 border bg-amber-50 text-sm" role="status">
+        <p>{{ cloudState.error || '上一笔操作的服务器结果尚未确认' }} · 暂停记账</p>
+        <button @click="openSettings('account')" class="font-bold text-indigo-700">账号与连接</button>
       </div>
       <div v-if="storageError" class="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-900">
         <p class="font-black">当前账本无法读取，请从有效备份恢复。</p>
@@ -82,7 +88,8 @@
           <button @click="backInSettings" class="settings-back" aria-label="返回上一级设置">‹ {{ settingsPath.length > 1 ? '返回数据备份' : '返回设置' }}</button>
           <h2 class="font-black text-xl">{{ settingsTitles[settingsPage] }}</h2>
         </div>
-        <CloudSettings v-if="cloudLocked || ['account', 'users', 'activity', 'update'].includes(settingsPage)"
+        <WebAccountSettings v-if="isWeb && (cloudLocked || settingsPage === 'account')" :ask-confirm="askConfirm" @logged-in="activeTab = 'customers'; settingsPath = []" />
+        <CloudSettings v-else-if="cloudLocked || ['account', 'users', 'activity', 'update'].includes(settingsPage)"
           :section="cloudLocked ? 'account' : settingsPage" :show-title="cloudLocked" :recovery-required="Boolean(storageError)" @navigate="openSettings" />
         <template v-if="!cloudLocked">
         <SettingsOverview
@@ -95,8 +102,11 @@
           @navigate-page="openSettingsPage"
         />
         <AppVoiceSettings v-if="settingsPage === 'voice'" @navigate="openSettings" />
+        <StoreSettings v-if="settingsPage === 'store'" :profile="storeProfile"
+          :can-edit="!cloudState.user || cloudState.user.role === 'owner'"
+          :save-profile="saveStoreProfile" :load-profile="loadStoreProfile" />
         
-        <!-- 理发项目与定价管理 (独立组件) -->
+        <!-- 服务项目与定价管理 (独立组件) -->
         <ServiceSettings
           v-if="settingsPage === 'services'"
           :services="hairServices"
@@ -119,8 +129,9 @@
         />
 
         <!-- 微信安全备份中心 (独立组件) -->
+        <WebBackupSettings v-if="isWeb && settingsPage === 'backup-files'" />
         <BackupSettings
-          v-if="settingsPage === 'backup-files'"
+          v-else-if="settingsPage === 'backup-files'"
           :is-exporting="isExporting"
           :storage-error="storageError"
           :is-native-app="isNativeApp"
@@ -132,7 +143,7 @@
 
         <!-- 本地历史快照管理 (独立组件) -->
         <SnapshotSettings
-          v-if="settingsPage === 'snapshots'"
+          v-if="!isWeb && settingsPage === 'snapshots'"
           :snapshots="localSnapshots"
           :has-storage-error="Boolean(storageError)"
           :can-write="canCloudWrite"
@@ -145,7 +156,7 @@
           @delete="handleDeleteSnapshot"
         />
 
-        <!-- 理发店省心锦囊 (独立组件) -->
+        <!-- 经营提示 (独立组件) -->
         <SettingsHelp v-if="settingsPage === 'help'" />
         </template>
       </div>
@@ -169,8 +180,9 @@
 
     <!-- ==================== 弹窗与抽屉层 ==================== -->
 
-    <!-- 1. 剪发扣款抽屉与确认框 (独立组件) -->
+    <!-- 1. 消费扣款抽屉与确认框 (独立组件) -->
     <ConsumeModal
+      :notes-label="storeProfile.memberNotesLabel"
       :member="consumingMember"
       :services="hairServices"
       v-model:amount-str="consumeAmountStr"
@@ -234,6 +246,7 @@
 
     <!-- 3. 会员详情卡片抽屉 (独立组件) -->
     <MemberDetailDrawer
+      :notes-label="storeProfile.memberNotesLabel"
       :member="selectedMember"
       :ledgers="currentMemberLedgers"
       :can-write="canCloudWrite"
@@ -252,6 +265,7 @@
 
     <!-- 4. 新增/编辑会员档案弹窗 (独立组件) -->
     <MemberFormModal
+      :notes-label="storeProfile.memberNotesLabel"
       v-model="showMemberModal"
       :editing-id="editingMemberId"
       :form="memberForm"
@@ -297,6 +311,8 @@
       :modal="feedbackModal"
       @close="feedbackModal = null"
     />
+    <DeviceAccessPrompt v-if="showDevicePrompt" :access="cloudState.deviceAccess"
+      @login="goToDeviceLogin" @later="showDevicePrompt = false" />
   </div>
 </template>
 
@@ -304,7 +320,6 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
-import { localDb } from './storage.js';
 import AppHeader from './components/AppHeader.vue';
 import ServiceFormModal from './components/ServiceFormModal.vue';
 import MemberFormModal from './components/MemberFormModal.vue';
@@ -323,13 +338,18 @@ import SettingsOverview from './components/SettingsOverview.vue';
 import SettingsHelp from './components/SettingsHelp.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
 import FeedbackModal from './components/FeedbackModal.vue';
+import DeviceAccessPrompt from './components/DeviceAccessPrompt.vue';
+import StoreSettings from './components/StoreSettings.vue';
 import CloudSettings from './components/CloudSettings.vue';
+import WebAccountSettings from './components/WebAccountSettings.vue';
+import WebBackupSettings from './components/WebBackupSettings.vue';
 import AppVoiceSettings from './components/AppVoiceSettings.vue';
 import Customers from './components/Customers.vue';
 import { UsersRound, ReceiptText, Settings } from 'lucide-vue-next';
 import { cloudClient, copyToClipboard } from './cloud-device.js';
 import { appVoicePlayer, appVoiceContext } from './app-voice.js';
 import { canWrite } from './sync-protocol.js';
+import { normalizeStoreProfile } from './store-profile.js';
 
 import { useFeedback } from './composables/useFeedback.js';
 import { useFormatters } from './composables/useFormatters.js';
@@ -345,6 +365,8 @@ import { useLedgerRefund } from './composables/useLedgerRefund.js';
 import { useAppBackHandler } from './composables/useAppBackHandler.js';
 
 const isNativeApp = Capacitor.isNativePlatform();
+const localDb = cloudClient.getDb();
+const isWeb = localDb.webOnly === true;
 
 // 导航与页面状态
 const activeTab = ref('customers');
@@ -363,7 +385,22 @@ const storageError = ref('');
 const selectedMember = ref(null);
 const receiptModal = ref(null);
 const cloudState = ref(cloudClient.snapshot());
-const cloudLocked = computed(() => !isNativeApp && (!cloudState.value.user || !cloudState.value.binding));
+const storeProfile = computed(() => normalizeStoreProfile(
+  cloudState.value.binding || cloudState.value.user ? cloudState.value.storeProfile || {} : cloudClient.getStoreProfile()));
+const saveStoreProfile = (profile, version) => cloudClient.saveStoreProfile(profile, version);
+const loadStoreProfile = () => cloudClient.loadStoreProfile();
+const cloudLocked = computed(() => isNativeApp ? cloudState.value.deviceAccess?.allowed === false : (!cloudState.value.user || !cloudState.value.binding));
+const showDevicePrompt = ref(false);
+let devicePromptHandled = false;
+let returningFromDeviceLock = false;
+let deviceEntryChecking = true;
+function promptForDevice(state = cloudState.value) {
+  if (!isNativeApp || devicePromptHandled || state.deviceAccess && !state.deviceAccess.ready) return;
+  if (state.deviceAccess?.allowed === false || (state.user || state.binding) && (!state.online || state.syncLoginRequired)) {
+    devicePromptHandled = true; showDevicePrompt.value = true;
+  }
+}
+function goToDeviceLogin() { showDevicePrompt.value = false; openSettings('account'); }
 
 const rechargeChannels = [
   { value: '微信支付', label: '微信支付' },
@@ -413,7 +450,7 @@ const {
   openSettings,
   openSettingsPage,
   backInSettings
-} = useSettingsNav({ activeTab, cloudState, isNativeApp });
+} = useSettingsNav({ activeTab, cloudState, isNativeApp, isWeb });
 
 // 充值赠送规则
 const {
@@ -546,6 +583,7 @@ const {
   confirmRecharge
 } = useRecharge({
   localDb,
+  getStoreProfile: () => storeProfile.value,
   rechargeSettings,
   refreshAll,
   selectedMember,
@@ -620,6 +658,14 @@ const {
 
 // 云端与权限
 const connectionLabel = computed(() => {
+  if (isNativeApp && cloudState.value.deviceAccess?.allowed === false) return cloudState.value.deviceAccess.reason;
+  if (isWeb) {
+    if (cloudState.value.locked) return '已锁屏 · 请重新登录';
+    if (!cloudState.value.user) return '请登录服务器账号';
+    if (cloudState.value.pending) return '原操作结果待确认';
+    if (cloudState.value.error) return '服务器连接或提交失败';
+    return cloudState.value.online ? '服务器账本已加载' : '正在加载服务器账本';
+  }
   if (!cloudState.value.user) return isNativeApp && !cloudState.value.binding ? '本机运行' : '未登录云端';
   if (!cloudState.value.online) return '当前离线（已保存在本机）';
   if (cloudState.value.syncLoginRequired) return '登录失效 · 待重新登录';
@@ -630,6 +676,7 @@ const connectionLabel = computed(() => {
   return cloudState.value.syncStatus === 'confirmed' ? '在线同步' : '账本待确认';
 });
 const compactConnectionLabel = computed(() => {
+  if (isWeb) return cloudState.value.locked ? '已锁屏' : !cloudState.value.user ? '未登录' : cloudState.value.pending ? '待确认' : cloudState.value.error ? '请求失败' : cloudState.value.online ? '在线' : '加载中';
   if (!cloudState.value.user) return isNativeApp && !cloudState.value.binding ? '本机' : '未登录';
   if (!cloudState.value.online) return '离线';
   if (cloudState.value.syncLoginRequired) return '待登录';
@@ -641,8 +688,20 @@ const compactConnectionLabel = computed(() => {
 const stopCloudSubscription = cloudClient.subscribe((state) => {
   if (appVoiceContext(state) !== appVoiceContext(cloudState.value)) appVoicePlayer.stop();
   cloudState.value = state;
+  if (isNativeApp && state.deviceAccess?.allowed === false) {
+    returningFromDeviceLock = true;
+    activeTab.value = 'settings'; settingsPath.value = ['account'];
+    consumingMember.value = null; rechargingMember.value = null; selectedMember.value = null;
+    showMemberModal.value = false; showServiceModal.value = false; backupRestoreRequest.value = null;
+  } else if (isNativeApp && returningFromDeviceLock && state.deviceAccess?.allowed === true) {
+    returningFromDeviceLock = false;
+    activeTab.value = 'customers'; settingsPath.value = [];
+    showDevicePrompt.value = false;
+  }
+  if (isNativeApp && !state.busy && !deviceEntryChecking) promptForDevice(state);
   if (!isNativeApp && (!state.user || !state.binding)) {
     activeTab.value = 'settings';
+    if (isWeb) settingsPath.value = ['account'];
     selectedMember.value = null;
     consumingMember.value = null;
     rechargingMember.value = null;
@@ -654,7 +713,9 @@ const stopCloudSubscription = cloudClient.subscribe((state) => {
 });
 function canCloudWrite(method) {
   const state = cloudState.value;
-  if (state.cloudAdoption) return false;
+  if (isNativeApp && state.deviceAccess?.allowed === false) return false;
+  if (isWeb) return Boolean(state.user && state.status === 'synced' && !state.pending && !state.busy && canWrite(state.user.role, method));
+  if (state.cloudAdoption || state.bindingRecovery) return false;
   if (!state.binding) return isNativeApp && (!state.user || canWrite(state.user.role, method));
   return canWrite(state.user?.role, method);
 }
@@ -748,7 +809,9 @@ function refreshOnResume() {
   if (isUnmounted) return;
   refreshAll();
   scheduleDailyRefresh();
-  cloudClient.sync().catch(() => {});
+  devicePromptHandled = false;
+  deviceEntryChecking = true;
+  cloudClient.sync().catch(() => {}).finally(() => { deviceEntryChecking = false; promptForDevice(); });
 }
 
 function handleVisibilityChange() {
@@ -765,9 +828,10 @@ onMounted(async () => {
 
   cloudClient
     .start()
-    .then((stop) => {
+    .then(async (stop) => {
       if (isUnmounted) stop();
       else stopCloud = stop;
+      if (!isUnmounted) { await cloudClient.sync().catch(() => {}); deviceEntryChecking = false; promptForDevice(); }
     })
     .catch((error) => showFeedback(error.message, 'error', { title: '云端连接未启动' }));
 

@@ -7,6 +7,14 @@ export default defineConfig({
     vue(),
     tailwindcss()
   ],
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:48927',
+        changeOrigin: true
+      }
+    }
+  },
   build: {
     outDir: 'dist'
   }

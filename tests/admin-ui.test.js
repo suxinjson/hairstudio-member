@@ -32,6 +32,7 @@ const { default: Members } = await import(await compile(new URL('../admin/src/vi
 const { default: Ledgers } = await import(await compile(new URL('../admin/src/views/LedgersView.vue', import.meta.url)));
 const { default: Services } = await import(await compile(new URL('../admin/src/views/ServicesView.vue', import.meta.url)));
 const { default: ImportExport } = await import(await compile(new URL('../admin/src/views/ImportExportView.vue', import.meta.url)));
+const { default: Devices } = await import(await compile(new URL('../admin/src/views/DevicesView.vue', import.meta.url)));
 const { createApp, nextTick, ref, h } = await import('vue');
 const { adminApi } = await import('../admin/src/api/client.js');
 const { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } = await import('../src/storage.js');
@@ -89,7 +90,7 @@ test('account invalidation removes every old customer and a failed other-store l
   button('登录').click(); await flush();
   assert.equal(adminApi.user.value.storeId, 'store-B');
   assert.equal(document.body.textContent.includes('PRIVATE_STORE_A_CUSTOMER'), false);
-  assert.equal(document.body.textContent.includes('云端账本已同步'), false);
+  assert.equal(document.body.textContent.includes('云端账本已加载'), false);
   assert.ok(document.body.textContent.includes('网络不可用'));
 });
 
@@ -414,6 +415,26 @@ test('Xfyun settings preview uses the server password without exposing it to the
   button('保存播报配置').click(); await flush();
   assert.equal(save.mock.calls[0].arguments[0].appId, 'serverappid');
   assert.equal(save.mock.calls[0].arguments[0].apiKey, '');
+});
+
+test('device management saves offline prohibition, expiry and disabling while keeping failed edits for retry', async t => {
+  const device = { deviceId: 'phone-device-00001', kind: 'native', displayName: '店内手机', label: '', active: true,
+    offlineHours: 168, authorizedUntil: null, lastSeenAt: '2026-11-11T00:00:00Z' };
+  t.mock.method(adminApi, 'getDevices', async () => [{ ...device }]);
+  const payloads = []; let rejectSave = true;
+  t.mock.method(adminApi, 'updateDevice', async (id, payload) => { payloads.push({ id, payload }); if (rejectSave) throw new Error('保存失败，请重试'); });
+  t.mock.method(window, 'confirm', () => true);
+  await mount(Devices);
+  const mode = document.querySelector('select'); mode.value = 'deny'; mode.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  await input('input[type="datetime-local"]', '2026-12-01T12:00');
+  button('保存授权').click(); await flush();
+  assert.ok(document.body.textContent.includes('保存失败'));
+  assert.equal(mode.value, 'deny'); assert.equal(document.body.textContent.includes('设备授权已保存'), false);
+  rejectSave = false; button('禁用设备').click(); await flush();
+  assert.equal(payloads.at(-1).id, device.deviceId);
+  assert.equal(payloads.at(-1).payload.active, false); assert.equal(payloads.at(-1).payload.offlineHours, 0);
+  assert.equal(payloads.at(-1).payload.authorizedUntil, new Date('2026-12-01T12:00').toISOString());
+  assert.ok(document.body.textContent.includes('设备授权已保存'));
 });
 
 test('PC lock, account changes and unmount stop speech immediately', async t => {

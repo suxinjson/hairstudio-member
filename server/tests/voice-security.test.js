@@ -402,7 +402,7 @@ for (const changed of ['balance', 'archive', 'rechargeSettings', 'services']) {
     if (changed === 'balance') data.members[0].balance = 2000;
     if (changed === 'archive') data.members[0].isArchived = true;
     if (changed === 'rechargeSettings') data.rechargeSettings = { giftEnabled: true, giftRate: 50 };
-    if (changed === 'services') data.services[0].price += 1;
+    if (changed === 'services') data.services.push({ id: 'new-service', name: '新增服务', price: 39 });
     await pool.query('UPDATE accounts SET data=$1,integrity=$2,revision=revision+1 WHERE store_id=$3', [data, integrity(data), identity.store_id]);
     const reply = await send(request('确认', { confirmationRequestId: preview.requestId }));
     assert.match(reply.returnValue.reply, /已变化/);

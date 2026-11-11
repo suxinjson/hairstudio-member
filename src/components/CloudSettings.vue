@@ -6,8 +6,12 @@
     </div>
     <p v-if="message || state.error || state.syncError" class="rounded-xl bg-amber-50 text-amber-900 p-3" role="status">{{ message || state.error || state.syncError }}</p>
     <template v-if="props.section === 'account'">
-    <p v-if="state.user && state.syncLoginRequired" class="rounded-xl bg-emerald-50 text-emerald-900 p-3 text-sm">已保留本机账号与账本，可继续离线使用。联网后登录原账号即可同步待办。</p>
-    <form v-if="!state.user || state.syncLoginRequired" @submit.prevent="login" class="space-y-3">
+    <p v-if="state.deviceAccess?.allowed === false" class="rounded-xl bg-rose-50 text-rose-900 p-4 text-lg font-bold" role="alert">{{ state.deviceAccess.reason }}。账本与待同步记录仍保留。</p>
+    <p v-else-if="state.user && state.syncLoginRequired" class="rounded-xl bg-emerald-50 text-emerald-900 p-3 text-sm">已保留本机账号与账本，授权期限内可继续离线使用。联网后登录原账号即可同步待办。</p>
+    <button v-if="state.user" @click="perform(() => cloudClient.sync())" :disabled="state.busy"
+      class="w-full rounded-xl p-4 bg-indigo-700 text-white text-xl font-bold">{{ state.busy ? '正在连接…' : '重新连接并确认授权' }}</button>
+    <p v-if="state.deviceAccess?.offlineUntil && state.deviceAccess.allowed" class="text-sm text-slate-600">离线可用至 {{ new Date(state.deviceAccess.offlineUntil).toLocaleString('zh-CN') }}</p>
+    <form v-if="!state.user || state.syncLoginRequired || state.deviceAccess?.allowed === false || !state.online" @submit.prevent="login" class="space-y-3">
       <label class="block">账号
         <input v-model.trim="form.username" autocomplete="username" required class="w-full border rounded-xl p-3 mt-1" :disabled="state.busy" />
       </label>
@@ -43,8 +47,8 @@
     </template>
     <template v-else>
       <div v-if="!canRequest" class="rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
-        <p>{{ state.user && !state.syncLoginRequired ? '此页面需要联网，离线账本仍可继续使用。' : '请登录云端账号后使用此功能，本机账本不受影响。' }}</p>
-        <button v-if="!state.user || state.syncLoginRequired" @click="emit('navigate', 'account')" class="mt-2 font-bold text-indigo-700">前往账号与同步</button>
+        <p>{{ state.webOnly ? '请登录并重新连接服务器后使用此功能。' : state.user && !state.syncLoginRequired ? '此页面需要联网，离线账本仍可继续使用。' : '请登录云端账号后使用此功能，本机账本不受影响。' }}</p>
+        <button v-if="!state.user || state.syncLoginRequired" @click="emit('navigate', 'account')" class="mt-2 font-bold text-indigo-700">{{ state.webOnly ? '前往账号与连接' : '前往账号与同步' }}</button>
       </div>
       <div v-if="props.section === 'users' && state.user?.role === 'owner'" class="space-y-3">
         <button @click="loadUsers" :disabled="state.busy || !canRequest" class="border rounded-xl p-3 disabled:opacity-50">加载账号列表</button>
@@ -111,7 +115,7 @@ const loginServerUrl = computed(() => isNativeApp
   : browserOrigin || DEFAULT_CLOUD_SERVER_URL);
 const form = ref({ username: isNativeApp ? state.value.user?.username || '' : '', password: '' });
 const loginHint = computed(() => isNativeApp
-  ? 'App 可不登录离线记账；登录后会检测本机数据并安全同步到云端。'
+  ? '同一手机登录后会自动保持登录。首次未登录可试用 7 天；离线时按设备授权期限使用。'
   : '网页版需要登录后使用，服务器已自动配置。');
 const newUser = ref({ username: '', displayName: '', password: '', role: 'clerk' });
 const injectAskConfirm = inject('askConfirm', null);
@@ -153,7 +157,7 @@ async function bootstrap() {
 }
 async function exportPending() {
   await perform(async () => {
-    const content = { version: '2.0', exportedAt: new Date().toISOString(), appName: '梦飞空间会员管家', ...localDb.readRecoveryState() };
+    const content = { version: '2.0', exportedAt: new Date().toISOString(), appName: '会员管家', ...localDb.readRecoveryState() };
     content.cloud = { serverUrl: state.value.serverUrl, binding: state.value.binding, outbox: state.value.outbox, bootstrap: state.value.bootstrap };
     await exportFile({ content: JSON.stringify(content, null, 2), fileName: '本机账本与待同步记录_' + new Date().toISOString().slice(0, 10) + '.json', mimeType: 'application/json', title: '本机待同步账本备份' });
     message.value = '已发起备份导出，请确认接收端文件可打开，再采用云端账本。';

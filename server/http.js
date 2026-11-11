@@ -69,7 +69,8 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       }
       if (route === 'POST /api/v1/auth/refresh') {
         guard.take('auth:' + ip, 30);
-        return send(200, await service.refresh((await body(request)).refreshToken));
+        const input = await body(request);
+        return send(200, await service.refresh(input.refreshToken, input.clientKind, input.deviceFingerprint, input.deviceName));
       }
       if (request.method === 'GET' && /^\/aligenie\/[a-zA-Z0-9_-]+\.txt$/.test(path)) {
         const fileName = path.split('/').at(-1);
@@ -132,6 +133,13 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       guard.take('session:' + identity.sessionId, 120);
       if (request.method !== 'GET') guard.take('write:' + identity.id, 30);
       if (route === 'POST /api/v1/auth/logout') { await service.logout(identity); return send(200, { success: true }); }
+      if (route === 'GET /api/v1/device/authorization') return send(200, await service.deviceAuthorization(identity));
+      if (route === 'GET /api/v1/devices') return send(200, await service.devices(identity));
+      if (route === 'GET /api/v1/store/profile') return send(200, await service.storeProfile(identity));
+      if (route === 'PATCH /api/v1/store/profile') return send(200, await service.saveStoreProfile(identity, await body(request)));
+      if (request.method === 'PATCH' && /^\/api\/v1\/devices\/[a-zA-Z0-9-]{16,80}$/.test(path)) {
+        return send(200, await service.updateDevice(identity, path.split('/').at(-1), await body(request)));
+      }
       if (route === 'GET /api/v1/account') return send(200, await service.account(identity));
       if (route === 'POST /api/v1/account/reconcile') return send(200, await service.reconcileAccount(identity, (await body(request, 1024)).expectedHead));
       if (route === 'GET /api/v1/account/head') {

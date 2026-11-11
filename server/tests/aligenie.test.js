@@ -6,6 +6,7 @@ import { migrate } from '../database.js';
 import { createService } from '../service.js';
 import { createApi } from '../http.js';
 import { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS, createLocalDb } from '../../src/storage.js';
+import { LEGACY_SERVICES } from '../../tests/fixtures/legacy-services.js';
 import { integrity } from '../security.js';
 import {
   signAliGenieRequest,
@@ -91,7 +92,7 @@ test('platform Header welcomes and business validation replies use the skill pro
       const res = await post(body);
       const result = await res.json();
       assert.equal(res.status, 200, JSON.stringify(result));
-      assert.equal(result.returnValue.reply, '梦飞空间欢迎您，请说');
+      assert.equal(result.returnValue.reply, '我的门店欢迎您，请说');
       assert.equal(result.resultType, 'ASK_INF');
       assert.equal(result.response.shouldEndSession, false);
       assert.equal(result.response.expectSpeech, true);
@@ -380,7 +381,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
       { id: 'TX-INIT-3', memberId: 'M-3', memberName: '张三丰', memberPhone: '13700001234', type: 'RECHARGE', changeAmount: 5000, balanceBefore: 0, balanceAfter: 5000, remark: '充值50元', created_at: new Date(Date.now() - 86400000).toISOString() },
       { id: 'TX-INIT-4', memberId: 'M-4', memberName: '王五', memberPhone: '13600008888', type: 'CONSUME', changeAmount: -1500, balanceBefore: 0, balanceAfter: -1500, remark: '欠款消费15元', created_at: new Date(Date.now() - 86400000).toISOString() }
     ],
-    services: DEFAULT_SERVICES,
+    services: LEGACY_SERVICES,
     rechargePlans: DEFAULT_RECHARGE_PLANS,
     rechargeSettings: { giftEnabled: true, giftRate: 10 }
   };
@@ -420,7 +421,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.equal(welcomeRes.status, 200);
     const welcomeData = await welcomeRes.json();
     assert.equal(welcomeData.version, '2.0');
-    assert.equal(welcomeData.response.outputSpeechs[0].text, '梦飞空间欢迎您，请说');
+    assert.equal(welcomeData.response.outputSpeechs[0].text, '梦飞造型沙龙欢迎您，请说');
     assert.equal(welcomeData.response.shouldEndSession, false);
     assert.equal(welcomeData.response.expectSpeech, true);
 
@@ -537,7 +538,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
       })
     });
     const consumeData1 = await consumeRes1.json();
-    assert.match(consumeData1.response.outputSpeechs[0].text, /本次洗剪吹理发消费 38 元/);
+    assert.match(consumeData1.response.outputSpeechs[0].text, /本次消费 38 元/);
     assert.match(consumeData1.response.outputSpeechs[0].text, /扣款后卡内剩余 62 元/);
     assert.match(consumeData1.response.outputSpeechs[0].text, /请问确认扣款吗/);
     assert.equal(consumeData1.returnCode, '0');
@@ -556,7 +557,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     });
     const pureData = await pureRes.json();
     assert.equal(pureData.returnCode, '0');
-    assert.match(pureData.returnValue.reply, /会员张三本次洗剪吹理发消费 100 元/);
+    assert.match(pureData.returnValue.reply, /会员张三本次消费 100 元/);
     assert.match(pureData.returnValue.reply, /扣款后卡内剩余 0 元/);
     assert.match(pureData.returnValue.reply, /请问确认扣款吗/);
 

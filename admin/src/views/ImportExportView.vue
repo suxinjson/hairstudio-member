@@ -334,6 +334,7 @@
 </template>
 
 <script setup>
+import { storeFilePrefix } from '../../../src/store-profile.js';
 import { ref, computed, watch, onUnmounted } from 'vue';
 import { adminApi } from '../api/client.js';
 import {
@@ -511,17 +512,17 @@ async function executeImport() {
 
 // 导出中心方法
 function exportMembers() {
-  exportMembersToExcel(props.members, '梦飞空间全量会员档案');
+  exportMembersToExcel(props.members, storeFilePrefix(adminApi.storeProfile.value) + '_会员全量档案');
 }
 
 function exportLedgers() {
-  exportLedgersToExcel(props.ledgers, '梦飞空间全量财务流水');
+  exportLedgersToExcel(props.ledgers, storeFilePrefix(adminApi.storeProfile.value) + '_会员财务流水');
 }
 
 async function exportAudit() {
   try {
     const logs = await adminApi.getAllActivity();
-    exportAuditLogsToExcel(logs, '梦飞空间系统安全审计日志');
+    exportAuditLogsToExcel(logs, storeFilePrefix(adminApi.storeProfile.value) + '_安全审计日志');
   } catch (err) {
     alert('获取审计日志失败: ' + err.message);
   }

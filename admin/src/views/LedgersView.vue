@@ -204,6 +204,7 @@
 </template>
 
 <script setup>
+import { storeFilePrefix } from '../../../src/store-profile.js';
 import { ref, computed, watch } from 'vue';
 import { formatYuan, maskPhone } from '../utils/security.js';
 import { exportLedgersToExcel } from '../utils/exporter.js';
@@ -264,7 +265,7 @@ const paginatedLedgers = computed(() => {
 });
 
 function handleExport() {
-  exportLedgersToExcel(filteredLedgers.value, '梦飞空间财务对账流水明细');
+  exportLedgersToExcel(filteredLedgers.value, storeFilePrefix(adminApi.storeProfile.value) + '_财务对账流水明细');
 }
 
 function formatDateTime(isoStr) {

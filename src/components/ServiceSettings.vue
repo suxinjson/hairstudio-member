@@ -2,7 +2,7 @@
   <div class="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-[0_2px_10px_rgba(0,0,0,0.03)]">
     <div class="flex items-center justify-between pb-3.5 border-b border-slate-100">
       <div>
-        <h2 class="font-black text-slate-900 text-lg">💈 服务项目与定价设置</h2>
+        <h2 class="font-black text-slate-900 text-lg">🛍️ 服务项目与定价设置</h2>
         <p class="text-xs text-slate-400 font-medium mt-0.5">收银扣款时可一键带入常用项目与金额</p>
       </div>
       <button 
