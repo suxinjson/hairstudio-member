@@ -8,6 +8,7 @@
     "admin"
   ],
   "scripts": {
+    "clean": "node tools/clean.mjs",
     "dev": "vite",
     "build": "npm run build:web && npx cap sync android",
     "build:web": "vite build",

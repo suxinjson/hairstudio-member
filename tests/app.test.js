@@ -155,6 +155,18 @@ async function loginWeb() {
     const input = document.querySelector(selector); input.value = value; input.dispatchEvent(new window.Event('input', { bubbles: true }));
   }
   document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  // Account integrity verification uses asynchronous crypto; a fixed number of
+  // event-loop turns can finish before it does on a busy CI runner.
+  let unsubscribe, timer;
+  try {
+    await new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Browser login did not finish within 5 seconds')), 5000);
+      unsubscribe = cloudClient.subscribe(state => { if (!state.busy) resolve(); });
+    });
+  } finally {
+    clearTimeout(timer);
+    unsubscribe?.();
+  }
   await flushWeb();
 }
 

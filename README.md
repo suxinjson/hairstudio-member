@@ -171,4 +171,6 @@ keytool -list -v -keystore hairstudio-release.jks -alias hairstudio-release
 
 ### 依赖维护
 
+执行 `npm run clean` 可清理 `tmp/`、`output/`、前后端 `dist/`、Vite 与 Android 构建缓存。临时脚本和验证日志放在 `tmp/` 或 `output/`，两者均不进入 Git 和 Docker 构建上下文。此命令保留依赖、源码、配置、签名密钥及 `releases/`、`backups/`；清理后按需运行 `npm run build:web`、`npm run admin:build` 或 `npm run build` 重新构建。
+
 `package.json` 仅对 Capacitor CLI → rimraf → glob 设置 `^14.0.3` 覆盖，修复 glob/minimatch 的已知资源耗尽漏洞，保持 Capacitor 7 和 Node.js 22 构建兼容。测试用 `csv-parse` 已升级到修复原型替换漏洞的 7.0.3。更新依赖时运行 `npm ci`、`npm test`、`npm run build` 和 `npm audit --registry=https://registry.npmjs.org`；上游采用安全版本后可以移除此覆盖。
