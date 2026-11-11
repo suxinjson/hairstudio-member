@@ -171,8 +171,8 @@
     </div>
 
     <!-- 安全锁屏覆盖层 (空闲 15 分钟或手动锁屏触发) -->
-    <div v-if="isLocked" class="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-6 select-none">
-      <div class="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl text-center border border-slate-200">
+    <div v-if="isLocked" class="admin-modal-backdrop fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-6 select-none">
+      <div class="admin-modal-surface bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl text-center border border-slate-200">
         <div class="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center text-3xl mx-auto mb-3 shadow-inner">
           🔒
         </div>

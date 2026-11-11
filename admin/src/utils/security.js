@@ -40,8 +40,7 @@ export function useAutoLock(session) {
     schedule();
   };
   const resetTimer = () => {
-    session.recordActivity();
-    schedule();
+    if (session.recordActivity()) schedule();
   };
   const resume = () => {
     if (document.visibilityState !== 'hidden') checkExpiry();

@@ -1,8 +1,10 @@
 import { ref } from 'vue';
+import { canonicalJSON } from '../sync-protocol.js';
 
 export function useServiceCrud({ localDb, hairServices, showToast, showFeedback, askConfirm }) {
   const showServiceModal = ref(false);
   const isSavingService = ref(false);
+  let editBaseline = null;
   const serviceForm = ref({
     id: '',
     name: '',
@@ -10,11 +12,13 @@ export function useServiceCrud({ localDb, hairServices, showToast, showFeedback,
   });
 
   function openAddServiceModal() {
+    editBaseline = null;
     serviceForm.value = { id: '', name: '', price: 38 };
     showServiceModal.value = true;
   }
 
   function openEditServiceModal(s) {
+    editBaseline = canonicalJSON(hairServices.value);
     serviceForm.value = { id: s.id, name: s.name, price: s.price };
     showServiceModal.value = true;
   }
@@ -23,6 +27,9 @@ export function useServiceCrud({ localDb, hairServices, showToast, showFeedback,
     if (isSavingService.value) return;
     isSavingService.value = true;
     try {
+      if (serviceForm.value.id && canonicalJSON(localDb.getServices()) !== editBaseline) {
+        throw new Error('服务项目已变化，请重新打开编辑窗口核对名称和价格后保存');
+      }
       const result = localDb.saveService(serviceForm.value);
       if (result?.then) await result;
       showServiceModal.value = false;

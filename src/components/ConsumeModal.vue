@@ -2,11 +2,11 @@
   <div v-if="member">
     <!-- 消费抽屉 -->
     <div 
-      class="consume-backdrop fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
+      class="app-modal-backdrop consume-backdrop fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
       @click.self="emit('backdrop-back')"
     >
       <section 
-        class="consume-sheet bg-white animate-slide-up" 
+        class="app-modal-surface consume-sheet bg-white animate-slide-up"
         :class="{ 'consume-sheet-debt': isConsumeOverBalance }"
         role="dialog" 
         aria-modal="true" 
@@ -84,11 +84,11 @@
     <!-- 消费金额确认框 (二次防误触核对) -->
     <div
       v-if="confirmation"
-      class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-5 animate-fade-in backdrop-blur-xs"
+      class="app-modal-backdrop feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-5 animate-fade-in backdrop-blur-xs"
       @click.self="emit('cancel-confirm')"
     >
       <section 
-        class="feedback-dialog consume-confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl"
+        class="app-modal-surface feedback-dialog consume-confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl"
         :class="{ 'debt-confirm-dialog': confirmation.balanceAfter < 0 }"
         :role="confirmation.balanceAfter < 0 ? 'alertdialog' : 'dialog'"
         aria-modal="true" 

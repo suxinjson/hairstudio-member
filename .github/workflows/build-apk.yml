@@ -16,6 +16,20 @@ jobs:
   build:
     name: 编译安装包与自动发布
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: member_test
+          POSTGRES_PASSWORD: member_test
+          POSTGRES_DB: member_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U member_test -d member_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
     env:
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: 1.0.${{ github.run_number }}
@@ -41,10 +55,16 @@ jobs:
         cache: 'gradle'
 
     - name: 4. 安装锁定依赖并运行测试
+      env:
+        MEMBER_TEST_DATABASE_URL: postgresql://member_test:member_test@localhost:5432/member_test
+        MEMBER_TEST_ADMIN_DATABASE_URL: postgresql://member_test:member_test@localhost:5432/member_test
       run: npm ci && npm test
 
     - name: 5. 编译前端离线资产
-      run: npm run build
+      run: |
+        npm run build
+        npm run admin:build
+        node scripts/check-public-credentials.mjs
 
     - name: 6. 配置发布签名
       env:

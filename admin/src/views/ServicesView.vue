@@ -62,8 +62,8 @@
     </div>
 
     <!-- 编辑服务弹窗 -->
-    <div v-if="editingService" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
+    <div v-if="editingService" class="admin-modal-backdrop fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="admin-modal-surface bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
         <h3 class="text-lg font-black text-slate-900 mb-4">{{ editingService.id ? '编辑服务项目' : '添加服务项目' }}</h3>
 
         <div class="space-y-3">
@@ -111,6 +111,7 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { useOperationSubmission } from '../composables/useOperationSubmission.js';
+import { canonicalJSON } from '../../../src/sync-protocol.js';
 import { DEFAULT_RECHARGE_SETTINGS, normalizeRechargeSettings, rechargeGiftCent } from '../../../src/recharge-settings.js';
 
 const props = defineProps({
@@ -129,14 +130,17 @@ const submitOperation = useOperationSubmission(operations => props.submitOperati
 const isSubmitting = ref(false);
 
 const editingService = ref(null);
+let editBaseline = null;
 const serviceForm = ref({ name: '', priceStr: '' });
 
 function openAddService() {
+  editBaseline = null;
   editingService.value = {};
   serviceForm.value = { name: '', priceStr: '' };
 }
 
 function openEditService(s) {
+  editBaseline = { services: JSON.parse(JSON.stringify(props.services)) };
   editingService.value = s;
   serviceForm.value = {
     name: s.name,
@@ -157,7 +161,10 @@ async function saveService() {
 
   isSubmitting.value = true;
   try {
-    await submitOperation('saveService', [payload], { services: props.services });
+    if (payload.id && canonicalJSON({ services: props.services }) !== canonicalJSON(editBaseline)) {
+      throw new Error('服务项目已变化，请重新打开编辑窗口核对名称和价格后保存');
+    }
+    await submitOperation('saveService', [payload], editBaseline || { services: props.services });
     editingService.value = null;
   } catch (error) { alert('服务保存失败：' + error.message); }
   finally { isSubmitting.value = false; }

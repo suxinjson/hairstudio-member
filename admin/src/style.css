@@ -23,6 +23,54 @@ body {
   opacity: 0.92;
 }
 
+.admin-modal-backdrop {
+  background: rgb(17 30 34 / 66%);
+  backdrop-filter: blur(7px) saturate(82%);
+  -webkit-backdrop-filter: blur(7px) saturate(82%);
+  overscroll-behavior: contain;
+}
+
+.admin-modal-surface {
+  position: relative;
+  max-height: min(88dvh, 760px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #dce8e3;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgb(12 28 32 / 25%), 0 4px 14px rgb(12 28 32 / 10%);
+}
+
+.admin-modal-surface::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: #9dcfc0;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.admin-modal-surface :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
+  border-color: #cbd8d3;
+  border-radius: 9px;
+  background-color: #f7faf8;
+}
+
+.admin-modal-surface :is(input, textarea, select):focus {
+  outline: 2px solid rgb(22 124 104 / 18%);
+  outline-offset: 1px;
+  border-color: #167c68;
+}
+
+@media (max-width: 520px) {
+  .admin-modal-backdrop { align-items: flex-end; padding: 12px; }
+  .admin-modal-surface { width: 100%; max-height: min(86dvh, 760px); border-radius: 16px; }
+}
+
 /* 自定义细滚动条 */
 ::-webkit-scrollbar {
   width: 6px;

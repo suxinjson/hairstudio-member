@@ -2,10 +2,10 @@
   <!-- 3. 会员详情卡片抽屉 (点击会员查看全貌) -->
   <div 
     v-if="member" 
-    class="fixed inset-0 bg-black/60 z-40 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
+    class="app-modal-backdrop fixed inset-0 bg-black/60 z-40 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
     @click.self="emit('close')"
   >
-    <div class="member-detail-sheet bg-white rounded-t-[32px] max-h-[90vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
+    <div class="app-modal-surface member-detail-sheet bg-white rounded-t-[32px] max-h-[90vh] flex flex-col animate-slide-up shadow-2xl max-w-[500px] mx-auto w-full">
       <!-- 弹窗把手（微缩间隙，释放垂直屏幕空间） -->
       <div class="w-12 h-1 bg-slate-300 rounded-full mx-auto mt-2 mb-1 shrink-0"></div>
 

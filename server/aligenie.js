@@ -33,6 +33,22 @@ function getDialogReply(utterance) {
   return '';
 }
 
+function resolveBusinessIntent(req, members) {
+  const intent = req.intentName.toLowerCase();
+  // A recognized business intent takes precedence over words in names or services.
+  if (/(query|balance)/.test(intent)) return 'query';
+  if (intent.includes('consume')) return 'consume';
+  if (intent.includes('recharge')) return 'recharge';
+  // Older requests may have no recognized intent. Remove known member names
+  // before inferring the action so names such as 查女士 or 消费顾客 stay literal.
+  let command = req.utterance || '';
+  for (const member of membersFromUtterance(members, command)) command = command.replaceAll(member.name, '');
+  if (/(查一下|查询|查|看看|看|余额|流水)/.test(command)) return 'query';
+  if (/(消费|扣款|扣除|结账|买单)/.test(command)) return 'consume';
+  if (/(充值|充|存)/.test(command)) return 'recharge';
+  return '';
+}
+
 function welcomeResponse(profile) {
   return formatAliGenieResponse({
     text: storeWelcome(profile),
@@ -276,6 +292,9 @@ export function cleanMemberQuery(raw) {
 export function findMatchingMembers(members, rawQuery) {
   if (!rawQuery) return [];
   const active = members.filter(m => !m.isArchived);
+  // Match a complete real name before stripping query prefixes such as 查.
+  const literal = active.filter(m => m.name.trim() === String(rawQuery).trim());
+  if (literal.length) return literal;
   const query = cleanMemberQuery(rawQuery);
   if (!query) return [];
   // Preserve a real name made of numeral characters before phone normalization.
@@ -723,12 +742,12 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     }
 
     // 4. Intent Dispatch
-    const normalizedIntent = req.intentName.toLowerCase();
     const utterance = req.utterance || '';
     if (isWelcomeRequest(req)) return welcomeResponse(await readStoreProfile(client, targetStoreId));
+    const intent = resolveBusinessIntent(req, members);
 
     // B. Query Member / Balance Intent
-    if (normalizedIntent.includes('query') || normalizedIntent.includes('balance') || /(查一下|查询|查|看看|看|余额|流水)/.test(utterance)) {
+    if (intent === 'query') {
       const memberQuery = req.slots.member || utterance;
       if (!memberQuery || memberQuery.length < 1) {
         return askAliGenieParameter(req, 'memberQuery', '请问您想查询哪位会员，或者报手机尾号？');
@@ -771,7 +790,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     }
 
     // C. Consume Intent (扣款消费)
-    if (normalizedIntent.includes('consume') || /(消费|扣款|扣除|结账|买单)/.test(utterance)) {
+    if (intent === 'consume') {
       const memberQuery = req.slots.member || utterance;
       if (!memberQuery) {
         return askAliGenieParameter(req, 'memberQuery', '请问是哪位会员需要扣款？');
@@ -840,7 +859,7 @@ async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessio
     }
 
     // D. Recharge Intent (充值储值)
-    if (normalizedIntent.includes('recharge') || /(充值|充|存)/.test(utterance)) {
+    if (intent === 'recharge') {
       const memberQuery = req.slots.member || utterance;
       if (!memberQuery) {
         return askAliGenieParameter(req, 'memberQuery', '请问要为哪位会员充值？');

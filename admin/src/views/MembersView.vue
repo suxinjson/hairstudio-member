@@ -204,8 +204,8 @@
     </div>
 
     <!-- 快速充值弹窗 -->
-    <div v-if="rechargingMember" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
+    <div v-if="rechargingMember" class="admin-modal-backdrop fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="admin-modal-surface bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
         <h3 class="text-lg font-black text-slate-900 mb-1">为 {{ rechargingMember.name }} 充值</h3>
         <p class="text-xs text-slate-400 mb-4">当前可用余额：¥{{ formatYuan(rechargingMember.balance) }}</p>
 
@@ -260,8 +260,8 @@
     </div>
 
     <!-- 登记/修改会员弹窗 -->
-    <div v-if="editingMember" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-100">
+    <div v-if="editingMember" class="admin-modal-backdrop fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="admin-modal-surface bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-100">
         <h3 class="text-lg font-black text-slate-900 mb-4">{{ editingMember.id ? '修改会员档案' : '登记新会员' }}</h3>
         <p v-if="editingMember.id" class="mb-3 text-xs text-slate-500 break-all">会员单号：{{ editingMember.id }}</p>
 

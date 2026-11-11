@@ -53,13 +53,20 @@ export async function assertRuntimeRole(pool) {
 }
 export async function transaction(pool, callback) {
   const client = await pool.connect();
+  let discard = false;
   try {
     await client.query('BEGIN');
     const result = await callback(client);
     await client.query('COMMIT');
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); }
+    catch { discard = true; }
     throw error;
-  } finally { client.release(); }
+  } finally {
+    // A failed rollback leaves an unknown transaction state. Never hand that
+    // connection to another request, or replace the original business error.
+    if (discard) client.release(true);
+    else client.release();
+  }
 }

@@ -146,6 +146,36 @@ test('service save waits for confirmation and keeps the editor open while saving
   pending.resolve({ success: true }); await flush(); assert.equal(document.querySelector('input[type="text"]'), null);
 });
 
+for (const change of ['price', 'name', 'deleted']) {
+  test(`PC service edits reject a synchronized ${change} change and preserve the form`, async t => {
+    const original = { id: 'service-A', name: '原服务', price: 38 };
+    const services = ref([original]); let calls = 0, submitted;
+    const alert = t.mock.method(globalThis, 'alert', () => {});
+    await mount({ setup: () => () => h(Services, { services: services.value, submitOperations: async operations => {
+      calls++; submitted = operations[0]; return {};
+    } }) });
+    button('编辑').click(); await nextTick();
+    await input('input[type="text"]', '本机修改的名称');
+    services.value = change === 'deleted' ? [] : [{ ...original, [change]: change === 'price' ? 80 : '其他设备修改的名称' }];
+    await nextTick(); button('保存项目').click(); await flush();
+    assert.equal(calls, 0);
+    assert.match(alert.mock.calls[0].arguments[0], /服务项目已变化.*重新打开/);
+    assert.equal(document.querySelector('input[type="text"]').value, '本机修改的名称');
+    if (change !== 'deleted') {
+      button('取消').click(); await nextTick(); button('编辑').click(); await nextTick();
+      assert.equal(document.querySelector('input[type="number"]').value, String(services.value[0].price));
+      await input('input[type="text"]', '核对后的名称');
+      // A newer API cache must not replace the form's observed service snapshot.
+      adminApi.accountData.value = { ...data, services: [{ ...services.value[0], price: 99 }] };
+      button('保存项目').click(); await flush();
+      assert.equal(calls, 1);
+      assert.deepEqual(submitted.precondition.services, JSON.parse(JSON.stringify(services.value)));
+      assert.equal(submitted.args[0].price, services.value[0].price);
+      assert.equal(document.querySelector('input[type="text"]'), null);
+    }
+  });
+}
+
 test('admin recharge plans follow the current gift policy and update when it changes', async () => {
   await mount(); button('服务与卡项').click(); await nextTick();
   assert.ok(document.body.textContent.includes('送 ¥50.00'));

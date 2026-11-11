@@ -83,3 +83,17 @@ test('legacy saved credentials require password unlock instead of receiving a fr
   assert.equal(legacy.isLocked.value, true);
   assert.equal(legacy.idleExpiresAt.value, null);
 });
+
+test('frequent activity bounds shared session writes and still respects expiry and cross-tab locks', t => {
+  const { client, storage, create, advance } = fixture(t);
+  const writes = t.mock.method(storage, 'setItem');
+  for (let i = 0; i < 500; i++) { advance(1); client.recordActivity(); }
+  assert.equal(writes.mock.callCount(), 0);
+  advance(500); assert.equal(client.recordActivity(), true);
+  assert.equal(writes.mock.callCount(), 1);
+  const deadline = client.idleExpiresAt.value;
+  const other = create(); other.isLocked.value = true;
+  assert.equal(client.recordActivity(), false);
+  assert.equal(client.isLocked.value, true);
+  assert.equal(client.idleExpiresAt.value, deadline);
+});

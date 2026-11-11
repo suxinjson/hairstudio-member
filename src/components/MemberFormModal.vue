@@ -1,10 +1,10 @@
 <template>
   <div 
     v-if="modelValue" 
-    class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
+    class="app-modal-backdrop fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
     @click.self="emit('update:modelValue', false)"
   >
-    <div class="modal-dialog bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+    <div class="app-modal-surface modal-dialog bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between border-b pb-3">
         <h3 class="font-black text-xl text-slate-900">
           {{ editingId ? '修改会员档案' : '登记新会员档案' }}

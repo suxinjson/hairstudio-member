@@ -6,7 +6,8 @@ import { withBrowserLock } from '../utils/browser-lock.js';
 import { normalizeMemberPhone, validateActiveMemberPhones } from '../../../src/accounting.js';
 import { latestStoreProfile, DEFAULT_STORE_PROFILE } from '../../../src/store-profile.js';
 
-const STORAGE_KEY = 'hairstudio_admin_auth';
+export const ADMIN_SESSION_KEY = 'hairstudio_admin_auth';
+const STORAGE_KEY = ADMIN_SESSION_KEY;
 export const ADMIN_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const emptyData = () => ({ members: [], ledgers: [], services: DEFAULT_SERVICES, rechargePlans: DEFAULT_RECHARGE_PLANS });
 const identityKey = user => user ? user.storeId + ':' + user.id : '';
@@ -117,11 +118,16 @@ export class AdminApiClient {
   recordActivity() {
     // Check expiry before recording input so resuming an idle tab cannot unlock it.
     this.restoreSession();
-    if (!this.user.value || this.isLocked.value) return;
+    if (!this.user.value || this.isLocked.value) return false;
     const saved = this.readSavedSession();
-    const next = { ...saved, idleExpiresAt: Date.now() + ADMIN_IDLE_TIMEOUT_MS };
+    const deadline = Date.now() + ADMIN_IDLE_TIMEOUT_MS;
+    // Pointer movement can fire many times per frame. Share activity at most
+    // once a second; always check the persisted lock before extending it.
+    if (deadline - saved.idleExpiresAt < 1000) return false;
+    const next = { ...saved, idleExpiresAt: deadline };
     this.storage.setItem(STORAGE_KEY, JSON.stringify(next));
     this.applySession(next);
+    return true;
   }
 
   clearSession() { this.applySession(null); this.storage.removeItem(STORAGE_KEY); }

@@ -1,10 +1,10 @@
 <template>
   <div
     v-if="request"
-    class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4 animate-fade-in"
+    class="app-modal-backdrop feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4 animate-fade-in"
     @click.self="emit('close')"
   >
-    <section class="feedback-dialog modal-dialog w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl text-left" role="alertdialog" aria-modal="true" aria-labelledby="restore-confirm-title">
+    <section class="app-modal-surface feedback-dialog modal-dialog w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl text-left" role="alertdialog" aria-modal="true" aria-labelledby="restore-confirm-title">
       <div class="flex items-center space-x-3 pb-3 border-b border-slate-100">
         <span class="text-3xl">🛡️</span>
         <div>

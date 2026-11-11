@@ -2,10 +2,10 @@
   <div v-if="member">
     <!-- 充值抽屉 -->
     <div 
-      class="recharge-backdrop fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
+      class="app-modal-backdrop recharge-backdrop fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs"
       @click.self="emit('close')"
     >
-      <section class="recharge-sheet bg-white animate-slide-up" role="dialog" aria-modal="true" aria-labelledby="recharge-sheet-title">
+      <section class="app-modal-surface recharge-sheet bg-white animate-slide-up" role="dialog" aria-modal="true" aria-labelledby="recharge-sheet-title">
         <header class="recharge-header">
           <div class="recharge-header-copy">
             <h2 id="recharge-sheet-title" class="modal-title">会员充值 <span>{{ member.name }}</span></h2>
@@ -65,10 +65,10 @@
     <!-- 充值金额确认框 -->
     <div
       v-if="confirmation"
-      class="feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-5 animate-fade-in"
+      class="app-modal-backdrop feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-5 animate-fade-in"
       @click.self="emit('cancel-confirm')"
     >
-      <section class="feedback-dialog recharge-confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="recharge-confirm-title">
+      <section class="app-modal-surface feedback-dialog recharge-confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="recharge-confirm-title">
         <div class="feedback-icon feedback-icon-success mx-auto">¥</div>
         <h2 id="recharge-confirm-title" class="mt-4 text-2xl font-black text-slate-900">请再核对一次</h2>
         <p class="mt-2 text-base text-slate-700">确认后将立即为 {{ confirmation.memberName }} 充值入账。</p>

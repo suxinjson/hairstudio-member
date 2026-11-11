@@ -122,9 +122,12 @@
           :form="rechargeSettingsForm"
           :is-dirty="rechargeSettingsDirty"
           :can-save="canSaveRechargeSettings"
-          :example-amount="rechargeSettingsExample"
+          :example="rechargeSettingsExample"
+          :is-saving="savingRechargeSettings"
           :can-write="canCloudWrite"
           @change-switch="changeRechargeGiftSwitch"
+          @input-rate="markRechargeSettingsDirty"
+          @reload="reloadRechargeSettingsForm"
           @save="saveRechargeSettingsForm"
         />
 
@@ -457,6 +460,9 @@ const {
   rechargeSettings,
   rechargeSettingsForm,
   rechargeSettingsDirty,
+  markRechargeSettingsDirty,
+  reloadRechargeSettingsForm,
+  saving: savingRechargeSettings,
   changeRechargeGiftSwitch,
   canSaveRechargeSettings,
   rechargeSettingsExample,

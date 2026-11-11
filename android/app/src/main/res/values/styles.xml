@@ -5,7 +5,7 @@
     <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
         <item name="colorPrimary">#0f172a</item>
         <item name="colorPrimaryDark">#0f172a</item>
-        <item name="colorAccent">#4f46e5</item>
+        <item name="colorAccent">#167c68</item>
     </style>
 
     <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.Light.NoActionBar">
@@ -16,7 +16,7 @@
         <item name="android:navigationBarColor">#ffffff</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowBackground">#f3f6f6</item>
-        <item name="android:colorBackgroundFloating">#ffffff</item>
+        <item name="android:colorBackgroundFloating">#f3f8f5</item>
         <item name="android:textColorPrimary">#202a36</item>
         <item name="colorAccent">#167c68</item>
         <item name="android:colorAccent">#167c68</item>

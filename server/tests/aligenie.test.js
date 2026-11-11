@@ -19,6 +19,81 @@ import {
   formatAliGenieResponse
 } from '../aligenie.js';
 
+test('business intents and fallback commands ignore action words in member names and confirm the correct member', async t => {
+  const db = new PGlite();
+  const query = (sql, params) => params ? db.query(sql, params) : sql.includes(';') ? db.exec(sql) : db.query(sql);
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+  try {
+    await migrate(pool);
+    const service = createService(pool), password = 'Intent-Regression-Password-2026!';
+    await service.createOwner({ username: 'intent-owner', password });
+    const session = await service.login({ username: 'intent-owner', password, deviceId: randomUUID() });
+    const identity = await service.authenticate(session.accessToken), secret = 'intent-secret-' + randomUUID();
+    await service.saveVoiceConfig(identity, { aligenie: {
+      enabled: true, actorId: identity.id, token: secret, allowedDevices: ['intent-device']
+    } });
+    const values = new Map();
+    const ledger = createLocalDb({ getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) });
+    ledger.init();
+    for (const [index, name] of ['查女士', '女士', '消费顾客', '充值顾客'].entries()) {
+      ledger.createMember({ name, phone: '1390000000' + index, initialBalance: 100 });
+    }
+    await service.bootstrap(identity, { id: randomUUID(), data: ledger.readBackupState() });
+    const signed = body => {
+      const timestamp = String(Date.now());
+      return service.handleAliGenieWebhook(body, { headers: {
+        'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp,
+        'x-aligenie-signature': signAliGenieRequest(secret, timestamp, identity.store_id, body)
+      } });
+    };
+    const cases = [
+      ['RechargeIntent', '查女士', '查女士充值200元', 'recharge'],
+      ['ConsumeIntent', '查女士', '查女士消费20元', 'consume'],
+      ['RechargeIntent', '消费顾客', '消费顾客充值200元', 'recharge'],
+      ['ConsumeIntent', '充值顾客', '充值顾客消费20元', 'consume'],
+      ['QueryMemberIntent', '消费顾客', '消费顾客', 'query'],
+      ['', '查女士', '查女士充值200元', 'recharge'],
+      ['OtherIntent', '消费顾客', '消费顾客充值200元', 'recharge'],
+      ['', '充值顾客', '查询充值顾客余额', 'query']
+    ];
+    for (const version of ['1.0', '2.0']) for (const [intent, name, utterance, action] of cases) {
+      await t.test(`${version} ${intent || 'missing intent'}: ${utterance}`, async () => {
+        const before = await service.account(identity), sessionId = randomUUID();
+        const requestId = randomUUID(), amount = action === 'recharge' ? '200' : '20';
+        const context = { System: { device: { deviceOpenId: 'intent-device' }, user: { userOpenId: 'intent-user' } } };
+        const body = version === '2.0' ? {
+          version, context, session: { sessionId }, request: { requestId, input: { value: utterance },
+            intent: { name: intent, slots: { member: { value: name }, amount: { value: amount } } } }
+        } : { context, sessionId, requestId, intentName: intent, utterance, slotEntities: [
+          { intentParameterName: 'memberQuery', standardValue: name },
+          { intentParameterName: 'amount', standardValue: amount }
+        ] };
+        const preview = await signed(body), speech = preview.response.outputSpeechs[0].text;
+        assert.match(speech, new RegExp('会员' + name));
+        assert.deepEqual((await service.account(identity)).data, before.data, 'preview must never write');
+        if (action === 'query') {
+          assert.match(speech, /余额/); assert.equal(preview.confirmationRequestId, undefined); return;
+        }
+        assert.match(speech, action === 'recharge' ? /确认充值/ : /确认扣款/);
+        assert.equal(preview.confirmationRequestId, requestId);
+        const confirmation = version === '2.0' ? {
+          version, context, session: { sessionId }, request: { requestId: randomUUID(), confirmationRequestId: requestId,
+            input: { value: '确认' }, intent: { name: 'ConfirmIntent', confirmationStatus: 'CONFIRMED' } }
+        } : { context, sessionId, requestId: randomUUID(), confirmationRequestId: requestId,
+          intentName: 'ConfirmIntent', confirmStatus: 'CONFIRMED', utterance: '确认' };
+        assert.match((await signed(confirmation)).response.outputSpeechs[0].text, action === 'recharge' ? /充值成功/ : /扣款成功/);
+        const after = await service.account(identity), member = before.data.members.find(member => member.name === name);
+        assert.equal(after.data.members.find(item => item.id === member.id).balance, member.balance + (action === 'recharge' ? 22000 : -2000));
+        assert.equal(after.data.ledgers.length, before.data.ledgers.length + 1);
+        assert.equal(after.data.ledgers[0].memberId, member.id);
+        assert.equal(after.data.ledgers[0].type, action === 'recharge' ? 'RECHARGE' : 'CONSUME');
+        assert.deepEqual(after.data.members.filter(item => item.id !== member.id), before.data.members.filter(item => item.id !== member.id));
+      });
+    }
+  } finally { await db.close(); }
+});
+
 test('signed member queries report only non-refunded visits and omit the visit date when all consumption is reversed', async () => {
   const db = new PGlite();
   const query = (sql, params) => params ? db.query(sql, params) : sql.includes(';') ? db.exec(sql) : db.query(sql);

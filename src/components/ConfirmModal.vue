@@ -1,14 +1,14 @@
 <template>
   <div
     v-if="modal"
-    class="feedback-backdrop fixed inset-0 z-[75] flex items-center justify-center p-5 animate-fade-in backdrop-blur-xs"
+    class="app-modal-backdrop feedback-backdrop fixed inset-0 z-[75] flex items-center justify-center p-5 animate-fade-in backdrop-blur-xs"
     @click.self="emit('cancel')"
     role="dialog"
     aria-modal="true"
     aria-labelledby="confirm-modal-title"
   >
     <section
-      class="feedback-dialog confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl"
+      class="app-modal-surface feedback-dialog confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="confirm-modal-title"

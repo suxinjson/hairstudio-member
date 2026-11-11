@@ -1,5 +1,5 @@
 import { watch } from 'vue';
-import { AdminApiClient, buildAdminOperation } from '../admin/src/api/client.js';
+import { ADMIN_SESSION_KEY, AdminApiClient, buildAdminOperation } from '../admin/src/api/client.js';
 import { createLocalDb, STORAGE_KEYS, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from './storage.js';
 import { replayOperation } from './cloud-storage.js';
 import { canWrite } from './sync-protocol.js';
@@ -96,7 +96,17 @@ export function createWebClient({ api = new AdminApiClient(), onData = () => {},
       if (running) return running;
       const refresh = () => client.sync().catch(() => {});
       const activity = () => api.recordActivity();
-      const storageChanged = () => { api.restoreSession(); refresh(); };
+      const storageChanged = event => {
+        api.restoreSession();
+        if (!api.user.value || api.isLocked.value) return;
+        if (event.key === null || event.key === api.headKey()) return refresh();
+        if (event.key !== ADMIN_SESSION_KEY) return;
+        let previous;
+        try { previous = JSON.parse(event.oldValue || 'null'); } catch {}
+        // Activity deadlines and token refreshes share this storage key. They
+        // must not each download the full ledger in every open cashier tab.
+        if (!api.accountData.value || previous?.isLocked || previous?.user?.role !== api.user.value.role) refresh();
+      };
       const timer = setInterval(refresh, 30000);
       eventTarget?.addEventListener('online', refresh);
       eventTarget?.addEventListener('storage', storageChanged);

@@ -76,8 +76,8 @@
     </div>
 
     <!-- 开通新员工弹窗 -->
-    <div v-if="showAddModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
+    <div v-if="showAddModal" class="admin-modal-backdrop fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="admin-modal-surface bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
         <h3 class="text-lg font-black text-slate-900 mb-4">开通新员工账号</h3>
 
         <div class="space-y-3">

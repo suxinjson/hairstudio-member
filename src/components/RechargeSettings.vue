@@ -13,7 +13,7 @@
             type="checkbox" 
             role="switch" 
             aria-label="允许充值赠送" 
-            :disabled="!canWrite('saveRechargeSettings')" 
+            :disabled="isSaving || !canWrite('saveRechargeSettings')"
           />
           <span>允许赠送</span>
         </label>
@@ -30,7 +30,7 @@
             max="100" 
             step="0.01" 
             required 
-            :disabled="!canWrite('saveRechargeSettings')" 
+            :disabled="isSaving || !canWrite('saveRechargeSettings')"
           />
           <span>%</span>
         </div>
@@ -40,10 +40,13 @@
       </p>
       <button 
         type="submit" 
-        :disabled="!canWrite('saveRechargeSettings') || !canSave" 
+        :disabled="isSaving || !canWrite('saveRechargeSettings') || !canSave"
         class="recharge-settings-save"
       >
         保存赠送设置
+      </button>
+      <button v-if="isDirty" type="button" :disabled="isSaving" class="recharge-settings-save" @click="emit('reload')">
+        重新加载已保存设置
       </button>
     </form>
   </section>
@@ -54,8 +57,10 @@ defineProps({
   form: { type: Object, required: true },
   canWrite: { type: Function, default: () => true },
   canSave: Boolean,
+  isDirty: Boolean,
+  isSaving: Boolean,
   example: { type: String, default: '—' }
 });
 
-const emit = defineEmits(['save', 'change-switch', 'input-rate']);
+const emit = defineEmits(['save', 'reload', 'change-switch', 'input-rate']);
 </script>

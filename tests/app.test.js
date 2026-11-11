@@ -690,7 +690,9 @@ test('App cancels speech on account changes and unmount while routine sync updat
 
 test('service settings validate gift rates and allow switching off after an invalid entry', async () => {
   await mount(); await settings('services');
+  assert.match(document.querySelector('.recharge-rate-example').textContent, /20\.00/);
   await inputValue('#recharge-gift-rate', '12.5');
+  assert.match(document.querySelector('.recharge-rate-example').textContent, /25\.00/);
   button('保存赠送设置').click(); await nextTick();
   assert.deepEqual(localDb.getRechargeSettings(), { giftEnabled: true, giftRate: 12.5 });
   await inputValue('#recharge-gift-rate', '101');
@@ -700,6 +702,25 @@ test('service settings validate gift rates and allow switching off after an inva
   assert.equal(button('保存赠送设置').disabled, false);
   button('保存赠送设置').click(); await nextTick();
   assert.deepEqual(localDb.getRechargeSettings(), { giftEnabled: false, giftRate: 12.5 });
+});
+
+test('unsaved gift rates survive synchronization and stale policies require reload before saving', async () => {
+  await mount(); await settings('services');
+  await inputValue('#recharge-gift-rate', '12.5');
+  window.dispatchEvent(new window.Event('cloud-data-updated')); await nextTick();
+  assert.equal(document.querySelector('#recharge-gift-rate').value, '12.5');
+  localDb.saveRechargeSettings({ giftEnabled: true, giftRate: 20 });
+  window.dispatchEvent(new window.Event('cloud-data-updated')); await nextTick();
+  assert.equal(document.querySelector('#recharge-gift-rate').value, '12.5');
+  button('保存赠送设置').click(); await nextTick();
+  assert.deepEqual(localDb.getRechargeSettings(), { giftEnabled: true, giftRate: 20 });
+  assert.match(document.body.textContent, /充值赠送设置已变化/);
+  assert.equal(document.querySelector('#recharge-gift-rate').value, '12.5');
+  button('重新加载已保存设置').click(); await nextTick();
+  assert.equal(document.querySelector('#recharge-gift-rate').value, '20');
+  await inputValue('#recharge-gift-rate', '15');
+  button('保存赠送设置').click(); await nextTick();
+  assert.deepEqual(localDb.getRechargeSettings(), { giftEnabled: true, giftRate: 15 });
 });
 
 test('conflicting backup disables merge but still permits canceling the preview', async () => {
@@ -1587,6 +1608,38 @@ test('repayment from the consume drawer previews the remaining debt and produces
   assert.ok(document.body.textContent.includes('本次抵扣欠款：¥10.00'));
   assert.ok(document.body.textContent.includes('当前仍欠款：¥28.00'));
 });
+
+for (const change of ['price', 'name', 'deleted']) {
+  test(`service edits retain inputs and reject a synchronized ${change} change`, async () => {
+    await mount(); await settings('services');
+    const original = localDb.getServices()[0];
+    button('修改').click(); await nextTick();
+    const nameInput = document.querySelector('input[placeholder="如：商品购买 / 服务项目"]');
+    nameInput.value = '本机修改的名称';
+    nameInput.dispatchEvent(new window.Event('input', { bubbles: true })); await nextTick();
+    if (change === 'deleted') localDb.deleteService(original.id);
+    else localDb.saveService({ ...original, [change]: change === 'price' ? 80 : '其他设备修改的名称' });
+    window.dispatchEvent(new window.Event('cloud-data-updated')); await nextTick();
+    const latest = localDb.getServices();
+    button('保存项目').click(); await nextTick();
+    assert.deepEqual(localDb.getServices(), latest);
+    assert.match(document.body.textContent, /服务项目已变化.*重新打开/);
+    assert.equal(nameInput.value, '本机修改的名称');
+    assert.ok(document.querySelector('input[placeholder="如：商品购买 / 服务项目"]'));
+    if (change !== 'deleted') {
+      button('知道了').click(); await nextTick(); button('取消').click(); await nextTick();
+      button('修改').click(); await nextTick();
+      const reopened = document.querySelector('input[placeholder="如：商品购买 / 服务项目"]');
+      assert.equal(reopened.value, latest[0].name);
+      reopened.value = '核对后的名称';
+      reopened.dispatchEvent(new window.Event('input', { bubbles: true })); await nextTick();
+      button('保存项目').click(); await nextTick();
+      assert.equal(document.querySelector('input[placeholder="如：商品购买 / 服务项目"]'), null);
+      assert.equal(localDb.getServices()[0].name, '核对后的名称');
+      assert.equal(localDb.getServices()[0].price, latest[0].price);
+    }
+  });
+}
 
 test('confirmation inquiry modal renders friendly Chinese buttons, handles cancel, back button and accept', async t => {
   await mount();

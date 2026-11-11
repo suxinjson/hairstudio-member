@@ -160,8 +160,8 @@
     </div>
 
     <!-- 冲正撤单二次确认弹窗 -->
-    <div v-if="refundingItem" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
+    <div v-if="refundingItem" class="admin-modal-backdrop fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="admin-modal-surface bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
         <div class="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center text-2xl mb-3">
           ⚠️
         </div>

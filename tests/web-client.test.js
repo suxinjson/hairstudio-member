@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWebClient } from '../src/web-client.js';
-import { AdminApiClient, buildAdminOperation } from '../admin/src/api/client.js';
+import { ADMIN_SESSION_KEY, AdminApiClient, buildAdminOperation } from '../admin/src/api/client.js';
 import { createLocalDb, STORAGE_KEYS } from '../src/storage.js';
 import { replayOperation } from '../src/cloud-storage.js';
 import { canonicalJSON } from '../src/sync-protocol.js';
@@ -37,9 +37,9 @@ function fixture(t) {
     }
     throw new Error('Unexpected request: ' + path);
   };
-  const create = () => {
+  const create = (eventTarget = null) => {
     const api = new AdminApiClient({ storage, fetch, eventTarget: null, serverOrigin: 'https://member.example.com' });
-    const web = createWebClient({ api, eventTarget: null });
+    const web = createWebClient({ api, eventTarget });
     t.after(() => web.dispose()); return { api, web };
   };
   const first = create(); first.api.saveSession(session, false);
@@ -103,4 +103,32 @@ test('an acknowledged write retains its ID when newer-tab account confirmation i
   const pending = JSON.parse(storage.getItem(api.scopedKey('pending')));
   assert.equal(pending.operations[0].id, operation.id);
   assert.equal(pending.uncertain, true);
+});
+
+test('cross-tab activity and token updates do not reload the ledger, while head changes and unlocks do', { timeout: 10000 }, async t => {
+  const { create, storage, requests } = fixture(t);
+  const target = new EventTarget();
+  const { api, web } = create(target);
+  await web.start();
+  const loaded = requests.length;
+  const dispatch = (key, oldValue) => target.dispatchEvent(Object.assign(new Event('storage'), { key, oldValue }));
+  const saved = storage.getItem(ADMIN_SESSION_KEY);
+  for (let i = 0; i < 200; i++) {
+    dispatch(ADMIN_SESSION_KEY, saved);
+    dispatch('unrelated-key', null);
+    dispatch(api.scopedKey('pending'), null);
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, loaded);
+  const waitForSync = async action => {
+    const finished = new Promise(resolve => {
+      let started = false;
+      const stop = web.subscribe(state => { if (state.busy) started = true; else if (started) { stop(); resolve(); } });
+    });
+    action(); await finished;
+  };
+  await waitForSync(() => dispatch(api.headKey(), null));
+  assert.equal(requests.length, loaded + 1);
+  await waitForSync(() => dispatch(ADMIN_SESSION_KEY, JSON.stringify({ ...JSON.parse(saved), isLocked: true })));
+  assert.equal(requests.length, loaded + 2);
 });
