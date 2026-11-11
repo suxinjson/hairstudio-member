@@ -1,29 +1,81 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- Base application theme. -->
-    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+    <!-- Shared runtime theme: never use a launch image as a default View background. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="colorPrimary">#0f172a</item>
         <item name="colorPrimaryDark">#0f172a</item>
         <item name="colorAccent">#167c68</item>
+        <item name="android:colorAccent">#167c68</item>
+        <!-- setTheme overlays attributes; explicitly clear any background from the launch theme. -->
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:windowBackground">#f3f6f6</item>
+        <item name="android:colorBackgroundFloating">#E6F8FAF9</item>
+        <item name="android:textColorPrimary">#202a36</item>
+        <item name="android:textColorSecondary">#52645e</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="windowActionModeOverlay">true</item>
+        <item name="android:actionModeBackground">@drawable/native_popup_surface</item>
+        <item name="actionModeBackground">@drawable/native_popup_surface</item>
+        <item name="android:actionModeSplitBackground">@android:color/transparent</item>
+        <item name="actionModeSplitBackground">@android:color/transparent</item>
+        <item name="android:popupMenuStyle">@style/MemberPopupMenu</item>
+        <item name="popupMenuStyle">@style/MemberPopupMenu</item>
+        <item name="android:popupWindowStyle">@style/MemberPopupWindow</item>
+        <item name="popupWindowStyle">@style/MemberPopupWindow</item>
+        <item name="android:listPopupWindowStyle">@style/MemberListPopupWindow</item>
+        <item name="listPopupWindowStyle">@style/MemberListPopupWindow</item>
+        <item name="android:dialogTheme">@style/MemberPlatformDialog</item>
+        <item name="android:alertDialogTheme">@style/MemberPlatformDialog</item>
+        <item name="dialogTheme">@style/MemberDialog</item>
+        <item name="alertDialogTheme">@style/MemberDialog</item>
     </style>
 
-    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.Light.NoActionBar">
+    <style name="AppTheme.NoActionBar" parent="AppTheme">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:statusBarColor">#ffffff</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">#ffffff</item>
         <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:windowBackground">#f3f6f6</item>
-        <item name="android:colorBackgroundFloating">#f3f8f5</item>
+    </style>
+
+    <style name="MemberPopupMenu" parent="Widget.AppCompat.PopupMenu">
+        <item name="android:popupBackground">@drawable/native_popup_surface</item>
+    </style>
+
+    <style name="MemberPopupWindow" parent="Widget.AppCompat.PopupWindow">
+        <item name="android:popupBackground">@drawable/native_popup_surface</item>
+    </style>
+
+    <style name="MemberListPopupWindow" parent="Widget.AppCompat.ListPopupWindow">
+        <item name="android:popupBackground">@drawable/native_popup_surface</item>
+    </style>
+
+    <!-- Dialog windows have transparent corners; only the compact content panel has a surface. -->
+    <style name="MemberPlatformDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:windowBackground">@drawable/native_dialog_surface</item>
+        <item name="android:colorAccent">#167c68</item>
+        <item name="android:colorBackgroundFloating">#E6F8FAF9</item>
         <item name="android:textColorPrimary">#202a36</item>
+        <item name="android:textColorSecondary">#52645e</item>
+    </style>
+
+    <style name="MemberDialog" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:windowBackground">@drawable/native_dialog_surface</item>
+        <item name="android:colorBackgroundFloating">#E6F8FAF9</item>
+        <item name="android:textColorPrimary">#202a36</item>
+        <item name="android:textColorSecondary">#52645e</item>
         <item name="colorAccent">#167c68</item>
         <item name="android:colorAccent">#167c68</item>
     </style>
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <!-- Splash attributes are consumed only by AndroidX SplashScreen, never by menu Views. -->
+        <item name="windowSplashScreenBackground">#f3f6f6</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_member_card</item>
         <item name="android:statusBarColor">#ffffff</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>

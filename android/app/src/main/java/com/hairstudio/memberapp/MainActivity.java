@@ -11,6 +11,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.WebView;
 import androidx.core.graphics.Insets;
+import androidx.core.splashscreen.SplashScreen;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -27,6 +28,8 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override public void onCreate(Bundle savedInstanceState) {
+        // Apply postSplashScreenTheme before AppCompat/WebView create any themed Views.
+        SplashScreen.installSplashScreen(this);
         registerPlugin(CloudDevicePlugin.class);
         super.onCreate(savedInstanceState);
         installSafeViewport();
