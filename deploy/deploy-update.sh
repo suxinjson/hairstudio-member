@@ -55,6 +55,13 @@ fi
 echo ">>> [1/3] 正在重新构建并平滑重启服务容器 (Web & API)..."
 $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d --build
 
+# 若宿主机上运行有《钢了钢》(ganglegang) 容器，自动将其接入 Web 反代网络
+if docker ps -q --filter "name=^ganglegang$" 2>/dev/null | grep -q .; then
+  for NET in $(docker inspect member-web-1 --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null); do
+    docker network connect --alias ganglegang "$NET" ganglegang 2>/dev/null || true
+  done
+fi
+
 echo ">>> [2/3] 正在验证 HTTPS 与反向代理服务状态..."
 # 配置校验失败时保留日志并停止发布。
 if ! $SUDO docker compose "${COMPOSE_ARGS[@]}" exec -T web caddy validate --config /etc/caddy/Caddyfile; then
