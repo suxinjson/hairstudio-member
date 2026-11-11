@@ -1,6 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="app_name">会员管家</string>
+    <string name="app_description">会员资料、储值充值与消费记账工具，支持本机账本和自建云端同步。</string>
     <string name="title_activity_main">会员管家</string>
     <string name="package_name">com.hairstudio.memberapp</string>
     <string name="custom_url_scheme">com.hairstudio.memberapp</string>

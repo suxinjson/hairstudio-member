@@ -76,12 +76,14 @@
         </div>
       </div>
       <div v-if="props.section === 'update'" class="space-y-3">
-        <button @click="checkUpdate" :disabled="state.busy || downloading || !canRequest" class="border rounded-xl p-3 disabled:opacity-50">检查更新</button>
+        <p v-if="isNativeApp" class="text-sm text-slate-600">在这里更新即可，无需卸载，现有账本会保留。</p>
+        <button @click="checkUpdate" :disabled="state.busy || checkingUpdate || downloading || installing || !canRequest" class="border rounded-xl p-3 disabled:opacity-50">{{ checkingUpdate ? '正在检查…' : '检查更新' }}</button>
         <div v-if="update" class="space-y-2 rounded-xl bg-slate-50 p-3">
           <p class="font-bold">新版本 {{ update.versionName }}</p><p class="text-sm whitespace-pre-wrap">{{ update.notes }}</p>
           <p v-if="downloading" role="status">下载中 {{ progress }}%</p>
-          <button v-if="!downloaded" @click="download" :disabled="downloading" class="rounded-xl bg-indigo-700 text-white p-3 font-bold">下载并校验更新</button>
-          <button v-else-if="!downloaded.browser" @click="install" class="rounded-xl bg-emerald-700 text-white p-3 font-bold">打开系统安装界面</button>
+          <p v-if="isNativeApp" class="text-sm text-slate-600">首次更新如需授权，请开启“允许来自此来源的应用”，返回后会自动继续安装。</p>
+          <button v-if="!downloaded" @click="download" :disabled="checkingUpdate || downloading || installing" class="rounded-xl bg-indigo-700 text-white p-3 font-bold disabled:opacity-50">{{ downloading ? '正在下载…' : isNativeApp ? '下载并安装更新' : '下载并校验更新' }}</button>
+          <button v-else-if="!downloaded.browser" @click="install" :disabled="checkingUpdate || downloading || installing" class="rounded-xl bg-emerald-700 text-white p-3 font-bold disabled:opacity-50">{{ installing ? '正在准备安装…' : '继续安装更新' }}</button>
           <p v-else>已发起 APK 下载，请在浏览器下载记录中确认，再打开安装。</p>
         </div>
       </div>
@@ -123,7 +125,7 @@ async function promptConfirm(options) {
   if (injectAskConfirm) return await injectAskConfirm(options);
   return window.confirm(typeof options === 'string' ? options : options.message);
 }
-const message = ref(''), users = ref(null), audit = ref(null), update = ref(null), downloaded = ref(null), downloading = ref(false), progress = ref(0);
+const message = ref(''), users = ref(null), audit = ref(null), update = ref(null), downloaded = ref(null), checkingUpdate = ref(false), downloading = ref(false), installing = ref(false), progress = ref(0);
 const resolutionMessage = computed(() => {
   if (state.value.cloudAdoption?.mode === 'upload') return '正在核对原待办，未提交的交易会取消，核对完成后上传本机完整恢复账本。期间暂停记账和自动同步；断网或重启后请继续核对并上传，本机账本和原待办仍保留。';
   if (state.value.cloudAdoption) return '正在逐笔核对原待办：已提交的交易会保留，尚未提交的交易会取消。核对完成前已暂停记账和自动同步；断网或重启后请继续核对。本机账本与原待办仍保留。';
@@ -206,11 +208,37 @@ async function updateUser(user, active) {
   });
   if (confirmed) await perform(async () => { await cloudClient.request('/users/' + user.id, { role: user.role, active }, 'PATCH'); await loadUsers(); });
 }
-async function checkUpdate() { await perform(async () => { update.value = await checkForUpdate(); downloaded.value = null; if (!update.value) message.value = '当前没有可用的新版本'; }); }
-async function download() {
-  downloading.value = true; progress.value = 0;
-  await perform(async () => { await cloudClient.sync(); if (state.value.outbox.length || state.value.status === 'conflict') throw new Error('请先同步或处理待办记录，再下载更新'); downloaded.value = await downloadUpdate(update.value, value => { progress.value = value; }); });
-  downloading.value = false;
+async function checkUpdate() {
+  if (checkingUpdate.value || downloading.value || installing.value) return;
+  checkingUpdate.value = true;
+  try {
+    await perform(async () => { update.value = await checkForUpdate(); downloaded.value = null; if (!update.value) message.value = '当前没有可用的新版本'; });
+  } finally { checkingUpdate.value = false; }
 }
-async function install() { await perform(async () => { const result = await installUpdate(downloaded.value, update.value); message.value = result.status === 'permission-required' ? '请允许此应用安装更新，返回后再次点击安装。' : '已打开安卓系统安装界面，请按系统提示完成更新。'; }); }
+async function download() {
+  if (checkingUpdate.value || downloading.value || installing.value) return;
+  downloading.value = true; progress.value = 0;
+  try {
+    await perform(async () => {
+      await cloudClient.sync();
+      if (state.value.outbox.length || state.value.status === 'conflict') throw new Error('请先同步或处理待办记录，再下载更新');
+      downloaded.value = await downloadUpdate(update.value, value => { progress.value = value; });
+      if (!downloaded.value.browser) await openInstaller();
+    });
+  } finally { downloading.value = false; }
+}
+async function openInstaller() {
+  installing.value = true;
+  message.value = '正在准备安装。如系统要求授权，请允许后返回，安装会自动继续。';
+  try {
+    const result = await installUpdate(downloaded.value, update.value);
+    message.value = result.status === 'permission-required'
+      ? '尚未允许安装。安装包已保留，点击“继续安装更新”可重新授权，无需再次下载。'
+      : '已打开系统安装界面，请确认安装。更新时无需卸载会员管家。';
+  } finally { installing.value = false; }
+}
+async function install() {
+  if (checkingUpdate.value || downloading.value || installing.value || !downloaded.value || downloaded.value.browser) return;
+  await perform(openInstaller);
+}
 </script>

@@ -1,5 +1,7 @@
 # GitHub Actions 编译 APK：固定签名配置
 
+固定发布签名用于 APK 完整性和覆盖升级校验，不代表手机厂商已验证开发者身份。安装时出现“开发者身份未验证”“签名来源不明”等提示，请按[安装身份认证说明](android-install-verification.md)核验实际 APK，并在对应平台完成身份与应用来源认证；重新生成密钥不能消除这些提示。
+
 `Missing SIGNING_KEYSTORE_BASE64` 表示仓库未向构建任务提供 Android 发布签名文件。这会使 release 构建停止；更新 Actions 版本不能补上密钥。首次正式发布时配置一次，后续构建继续使用同一份签名。
 
 当前工作流固定使用 Ubuntu 24.04、Node.js 22 和 Java 21，采用运行在 Node.js 24 上的 checkout v5、setup-node v5、setup-java v5、upload-artifact v6。Actions 自身的 Node.js 版本与用于编译项目的 Node.js 版本分别配置。

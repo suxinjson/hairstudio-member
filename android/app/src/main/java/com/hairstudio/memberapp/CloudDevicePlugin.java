@@ -14,11 +14,13 @@ import android.provider.Settings;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
+import androidx.activity.result.ActivityResult;
 import androidx.core.content.FileProvider;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
 import java.io.FileInputStream;
@@ -234,8 +236,10 @@ public class CloudDevicePlugin extends Plugin {
                 getActivity().runOnUiThread(() -> {
                     try {
                         if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
-                            getActivity().startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName())));
-                            call.resolve(new JSObject().put("status", "permission-required")); return;
+                            startActivityForResult(call,
+                                new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getContext().getPackageName())),
+                                "installPermissionResult");
+                            return;
                         }
                         Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", apk);
                         Intent intent = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive");
@@ -246,6 +250,17 @@ public class CloudDevicePlugin extends Plugin {
                 });
             } catch (Exception error) { call.reject(error.getMessage()); }
         });
+    }
+    @ActivityCallback
+    private void installPermissionResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        // Settings may return RESULT_CANCELED even after granting access; check the actual permission.
+        if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
+            call.resolve(new JSObject().put("status", "permission-required"));
+            return;
+        }
+        // Recheck the file, version and signature before opening the installer after returning.
+        installUpdate(call);
     }
     @Override protected void handleOnDestroy() { worker.shutdownNow(); }
 }
