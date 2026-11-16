@@ -25,11 +25,11 @@
         </div>
 
         <div>
-          <label class="font-black text-slate-800 block mb-1.5">手机号码 <span class="text-rose-500">*</span></label>
+          <label class="font-black text-slate-800 block mb-1.5">手机号码 <span class="text-slate-400">（选填）</span></label>
           <input 
             v-model="form.phone" 
             type="tel" 
-            placeholder="报手机尾号查找的唯一依据" 
+            placeholder="选填，填写后可按手机尾号查找"
             class="w-full h-14 px-4 border-2 border-slate-300 rounded-2xl outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 font-mono font-black text-base"
           />
         </div>
@@ -65,7 +65,7 @@
         </button>
         <button 
           @click="emit('save')"
-          :disabled="isSaving || !canWrite || !form.name.trim() || !form.phone.trim()"
+          :disabled="isSaving || !canWrite || !form.name.trim()"
           class="flex-1 h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-sm font-black text-white shadow-md shadow-indigo-500/20 btn-press"
         >
           保存档案

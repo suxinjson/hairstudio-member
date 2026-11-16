@@ -102,10 +102,11 @@
             </select>
           </div>
         </div>
+        <p class="text-xs text-slate-500">手机号码可留空，也可不选择手机号列；未填写手机号的记录将逐行登记为新会员。</p>
       </div>
 
       <label v-if="parseResult" class="flex items-center gap-2 text-sm text-slate-700">
-        <input v-model="mappingConfirmed" type="checkbox" />我已核对姓名、手机号、本金和赠送金分别对应的列。
+        <input v-model="mappingConfirmed" type="checkbox" />我已核对姓名及所选字段对应的列。
       </label>
       <!-- 步骤3：冲突处理策略与预检校验 -->
       <div v-if="parseResult" class="space-y-4 pt-3 border-t border-slate-100">
@@ -152,14 +153,14 @@
         <div class="flex items-center gap-3 pt-2">
           <button
             @click="runValidation"
-            :disabled="isValidating || !mappingConfirmed || customMapping.name === null || customMapping.phone === null"
+            :disabled="isValidating || !mappingConfirmed || customMapping.name === null"
             class="h-11 px-6 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-black transition btn-press disabled:opacity-40 flex items-center gap-2"
           >
             <span v-if="isValidating" class="animate-spin text-sm">⏳</span>
             <span>{{ isValidating ? '全面深度预检中...' : '开始零损数据预检 (Dry-Run)' }}</span>
           </button>
-          <span v-if="customMapping.name === null || customMapping.phone === null" class="text-xs text-rose-500 font-bold">
-            * 必须至少指定会员姓名与手机号码对应的列
+          <span v-if="customMapping.name === null" class="text-xs text-rose-500 font-bold">
+            * 必须指定会员姓名对应的列
           </span>
         </div>
       </div>
@@ -376,7 +377,7 @@ watch(conflictStrategy, () => { validationReport.value = null; debtImportConfirm
 
 const fieldDefinitions = {
   name: { label: '会员姓名', required: true },
-  phone: { label: '手机号码', required: true },
+  phone: { label: '手机号码（选填）', required: false },
   balance: { label: '可用本金余额', required: false },
   gift: { label: '赠送金', required: false },
   remark: { label: '备注说明', required: false },

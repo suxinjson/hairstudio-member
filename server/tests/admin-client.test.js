@@ -49,6 +49,36 @@ async function seed(count = 1, initialBalance = 100) {
   await client.getAccount(); return client.accountData.value;
 }
 
+test('cloud creation, imports and later transactions keep same-name members with no phones separate', async () => {
+  await client.getAccount();
+  const create = buildAdminOperation('createMember', [{ name: '同名客户', initialBalance: 100 }], client.accountData.value, client.identity());
+  await client.sync([create]);
+  const existingId = create.generated.ids[0];
+  const report = validateImportBatch([['同名客户', '20', '5'], ['同名客户', '-10', '0']],
+    { name: 0, phone: null, balance: 1, gift: 2, remark: null, tag: null }, client.accountData.value.members, { conflictStrategy: 'merge_balance' });
+  assert.equal(report.validCount, 2);
+  assert.equal(report.conflictCount, 0);
+  assert.equal((await client.executeBatchImport(report.results, 'merge_balance', () => {}, { allowDebt: true })).count, 2);
+  const members = client.accountData.value.members;
+  assert.equal(members.length, 3);
+  assert.equal(new Set(members.map(member => member.id)).size, 3);
+  assert.ok(members.every(member => member.phone === ''));
+  assert.equal(members.find(member => member.id === existingId).balance, 10000);
+  const credit = members.find(member => member.balance === 2500), debt = members.find(member => member.balance === -1000);
+  assert.ok(credit); assert.ok(debt);
+  await client.sync([
+    buildAdminOperation('consume', [{ memberId: credit.id, amount: 5 }], client.accountData.value, client.identity()),
+    buildAdminOperation('recharge', [{ memberId: debt.id, actualPay: 5 }], client.accountData.value, client.identity()),
+    buildAdminOperation('updateMember', [existingId, { phone: '', notes: '无手机号仍可修改资料' }], client.accountData.value, client.identity())
+  ]);
+  assert.equal((await client.executeBatchImport(report.results, 'merge_balance', () => {}, { allowDebt: true })).resumed, true);
+  assert.equal(client.accountData.value.members.length, 3);
+  assert.equal(client.accountData.value.members.find(member => member.id === existingId).balance, 10000);
+  assert.equal(client.accountData.value.members.find(member => member.id === credit.id).balance, 2000);
+  assert.equal(client.accountData.value.members.find(member => member.id === debt.id).balance, -500);
+  assert.equal(client.accountData.value.members.find(member => member.id === existingId).notes, '无手机号仍可修改资料');
+});
+
 test('the retained legacy completed task is archived before a new import replaces it', async () => {
   const data = await seed();
   const items = amount => validateImportBatch([[data.members[0].name, data.members[0].phone, String(amount), '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;

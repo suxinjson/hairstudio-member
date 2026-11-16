@@ -18,9 +18,10 @@ export function validateActiveMemberPhones(members) {
   const phones = new Set();
   for (const member of members) {
     if (member.isArchived) continue;
+    if (!member.phone.trim()) continue;
     const phone = normalizeMemberPhone(member.phone);
     if (!phone || phones.has(phone)) {
-      throw new Error('账本包含空手机号或重复的在用会员手机号，请按会员单号核对并修改档案后再记账');
+      throw new Error('账本包含无效或重复的在用会员手机号，请按会员单号核对并修改档案后再记账');
     }
     phones.add(phone);
   }
@@ -121,7 +122,7 @@ export function mergeAccounts(current, incoming) {
   const idMap = new Map(members.map(member => [member.id, member]));
   // 先为整份备份保留固定 ID 匹配，避免复用的旧手机号抢占另一位会员。
   const incomingIds = new Set(incoming.members.map(member => member.id));
-  const incomingPhoneOwners = new Map(incoming.members.filter(member => !member.isArchived)
+  const incomingPhoneOwners = new Map(incoming.members.filter(member => !member.isArchived && normalizeMemberPhone(member.phone))
     .map(member => [normalizeMemberPhone(member.phone), member.id]));
   const phoneMap = new Map(members.filter(member => !member.isArchived && normalizeMemberPhone(member.phone) && !incomingIds.has(member.id))
     .map(member => [normalizeMemberPhone(member.phone), member]));

@@ -30,6 +30,63 @@ beforeEach(() => {
 const newMember = (initialBalance = 100) => localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance });
 const backup = () => localDb.exportBackupData({ archiveSnapshot: false });
 
+test('members without phones keep independent balances and history through transactions and backup restoration', () => {
+  const members = [
+    localDb.createMember({ name: '同名客户', phone: '', initialBalance: 100 }),
+    localDb.createMember({ name: '同名客户', phone: ' \t ', initialBalance: 50 }),
+    localDb.createMember({ name: '同名客户' })
+  ];
+  assert.equal(new Set(members.map(member => member.id)).size, 3);
+  assert.ok(members.every(member => member.phone === ''));
+  localDb.consume({ memberId: members[0].id, amount: 20 });
+  localDb.recharge({ memberId: members[1].id, actualPay: 10 });
+  localDb.consume({ memberId: members[2].id, amount: 5, allowDebt: true });
+  assert.deepEqual(members.map(member => localDb.getMemberById(member.id).balance), [8000, 6000, -500]);
+  assert.ok(localDb.getLedgers().every(record => record.memberPhone === ''));
+  const saved = backup();
+  localDb.importBackupData(saved);
+  assert.deepEqual(localDb.readBackupState(), JSON.parse(saved).data);
+  assert.doesNotThrow(() => localDb.init());
+});
+
+test('clearing a phone allows further profile edits without changing financial history', () => {
+  const member = newMember(), other = localDb.createMember({ name: '另一无手机号客户' });
+  const history = localDb.getLedgers();
+  for (const phone of ['', '   ', '\t\n']) {
+    localDb.updateMember(member.id, { phone, notes: '手机号稍后补充' });
+    assert.equal(localDb.getMemberById(member.id).phone, '');
+  }
+  localDb.updateMember(member.id, { name: '新姓名', notes: '新的偏好' });
+  assert.equal(localDb.getMemberById(member.id).name, '新姓名');
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+  assert.equal(localDb.getMemberById(other.id).balance, 0);
+  assert.deepEqual(localDb.getLedgers(), history);
+  assert.doesNotThrow(() => localDb.init());
+});
+
+test('backup preview and merge match blank phones only by ID and preserve equal-time local profiles', () => {
+  const member = localDb.createMember({ name: '同名客户', notes: '本地备注' });
+  const legacy = JSON.parse(backup());
+  legacy.data.members[0].phone = '   ';
+  localDb.importBackupData(JSON.stringify(legacy));
+  const incoming = JSON.parse(backup());
+  incoming.data.members[0].name = '旧备份姓名';
+  incoming.data.members[0].phone = '';
+  incoming.data.members.push({ ...incoming.data.members[0], id: 'M-INCOMING-NO-PHONE', name: member.name, notes: '导入备注' });
+  const json = JSON.stringify(incoming);
+  const preview = localDb.previewBackup(json);
+  assert.equal(preview.diff.newMembersCount, 1);
+  assert.equal(preview.diff.existingMembersCount, 1);
+  const result = localDb.importBackupData(json, { mode: 'merge' });
+  assert.equal(result.newMembersAdded, 1);
+  assert.equal(result.updatedMembers, 0);
+  assert.equal(localDb.getMemberById(member.id).name, member.name);
+  assert.equal(localDb.getMemberById(member.id).notes, '本地备注');
+  assert.equal(localDb.getMemberById('M-INCOMING-NO-PHONE').notes, '导入备注');
+  assert.equal(localDb.getMembers().length, 2);
+  assert.equal(localDb.importBackupData(json, { mode: 'merge' }).newMembersAdded, 0);
+});
+
 test('member edits reject a newer profile without losing the form and reopen against the latest data', () => {
   const member = newMember(), feedback = [];
   const edit = useMemberCrud({ localDb, refreshAll() {}, selectMember() {}, showToast() {},
@@ -75,7 +132,7 @@ test('legacy phone conflicts remain readable and repairable by ID while all fina
     () => localDb.updateMember(members[1].id, { phone: '---' }),
     () => localDb.updateMember(members[1].id, { phone: '138-0000-0002' })
   ]) {
-    assert.throws(write, /会员单号|不能为空|占用/);
+    assert.throws(write, /会员单号|格式无效|占用/);
     assert.deepEqual(localStorage.values, before);
   }
   localDb.updateMember(members[1].id, { phone: '13900000001' });
@@ -588,10 +645,10 @@ test('CSV round trips commas, quotes and embedded newlines in member names and r
   assert.equal(rows[1][4], '-38.00');
 });
 
-test('empty or invalid member edits leave the entire stored account unchanged', () => {
+test('invalid member edits leave the entire stored account unchanged', () => {
   const member = newMember();
   const previous = new Map(localStorage.values);
-  for (const phone of ['', '   ', '\t\n', null, 13800001111]) {
+  for (const phone of [null, 13800001111, '---', 'abc']) {
     assert.throws(() => localDb.updateMember(member.id, { phone }), /手机号码/);
     assert.deepEqual(localStorage.values, previous);
   }
@@ -786,7 +843,7 @@ test('CSV exports untrusted cells as text while keeping numeric amounts and ordi
   assert.equal(rows[1][5], '90.00');
 });
 
-test('reversing a legacy archive with no phone fails before writing and succeeds after restoring its profile', () => {
+test('reversing a legacy archive with no phone reactivates only the original member by ID', () => {
   const member = newMember();
   const consumed = localDb.consume({ memberId: member.id, amount: 100 });
   localDb.deleteMember(member.id);
@@ -795,17 +852,13 @@ test('reversing a legacy archive with no phone fails before writing and succeeds
   for (const record of legacy.data.ledgers) delete record.memberPhone;
   localDb.importBackupData(JSON.stringify(legacy));
   assert.equal(localDb.readBackupState().members[0].phone, '');
-  const previous = new Map(localStorage.values);
-  assert.throws(() => localDb.refundLedger(consumed.ledgerId), /手机号/);
-  assert.deepEqual(localStorage.values, previous);
-  assert.doesNotThrow(() => localDb.init());
-  assert.equal(localDb.getLedgers().find(record => record.id === consumed.ledgerId).isRefunded, undefined);
-
-  const repaired = JSON.parse(backup());
-  repaired.data.members[0].phone = member.phone;
-  localDb.importBackupData(JSON.stringify(repaired));
+  const other = localDb.createMember({ name: member.name });
   localDb.refundLedger(consumed.ledgerId);
   assert.equal(localDb.getMemberById(member.id).balance, 10000);
+  assert.equal(localDb.getMemberById(member.id).phone, '');
+  assert.equal(localDb.getMemberById(other.id).balance, 0);
+  assert.equal(localDb.getLedgers().find(record => record.id === consumed.ledgerId).isRefunded, true);
+  assert.doesNotThrow(() => localDb.init());
   assert.doesNotThrow(() => localDb.readBackupState());
 });
 

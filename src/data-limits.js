@@ -78,7 +78,7 @@ export function validateMutationArgs(method, args) {
   const id = value => boundedText(value, DATA_LIMITS.id, '单号', true);
   const object = value => { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('操作参数格式无效'); return value; };
   const labels = { name: '会员姓名', phone: '手机号码', notes: '会员备注', remark: '备注', payMethod: '付款方式', itemsSummary: '消费项目' };
-  const texts = (item, fields) => { for (const [key, max] of Object.entries(fields)) if (item[key] !== undefined) boundedText(item[key], max, labels[key] || key, ['name', 'phone'].includes(key)); };
+  const texts = (item, fields) => { for (const [key, max] of Object.entries(fields)) if (item[key] !== undefined) boundedText(item[key], max, labels[key] || key, key === 'name'); };
   const money = (item, fields) => { for (const key of fields) if (item[key] !== undefined && (typeof item[key] !== 'number' && typeof item[key] !== 'string' || String(item[key]).length > 32)) throw new Error('金额格式无效'); };
   if (['deleteMember', 'deleteService', 'refundLedger', 'updateMember'].includes(method)) id(args[0]);
   if (method === 'refundLedger' && args[1] !== undefined) boundedText(args[1], DATA_LIMITS.remark, '撤销原因');
@@ -86,7 +86,7 @@ export function validateMutationArgs(method, args) {
   if (['createMember', 'updateMember'].includes(method)) {
     const item = object(args[method === 'updateMember' ? 1 : 0]);
     texts(item, { name: DATA_LIMITS.name, phone: DATA_LIMITS.phone, notes: DATA_LIMITS.notes }); money(item, ['initialBalance']);
-    if (method === 'createMember') { boundedText(item.name, DATA_LIMITS.name, '姓名', true); boundedText(item.phone, DATA_LIMITS.phone, '手机', true); }
+    if (method === 'createMember') boundedText(item.name, DATA_LIMITS.name, '姓名', true);
   }
   if (['recharge', 'consume'].includes(method)) {
     const item = object(args[0]); id(item.memberId);

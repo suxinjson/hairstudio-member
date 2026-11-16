@@ -87,6 +87,55 @@ test('ambiguous legacy phone identities are rejected rather than choosing a fina
   }
 });
 
+test('blank phones import as separate new members under every conflict strategy while filled phones remain validated', () => {
+  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: null, tag: null };
+  const existing = [
+    { id: 'blank-a', name: '同名客户', phone: '', balance: 10000 },
+    { id: 'blank-b', name: '同名客户', phone: '   ', balance: 20000 },
+    { id: 'with-phone', name: '有手机号客户', phone: '13800001111', balance: 30000 }
+  ];
+  const rows = [
+    ['同名客户', '', '20', '0'],
+    ['同名客户', ' \t ', '30', '0'],
+    ['有手机号客户', '(138)0000-1111', '40', '0'],
+    ['短号码', '123', '50', '0'],
+    ['无效号码', '---', '60', '0']
+  ];
+  for (const conflictStrategy of ['skip', 'merge_balance', 'overwrite_profile']) {
+    const report = validateImportBatch(rows, mapping, existing, { conflictStrategy });
+    assert.equal(report.validCount, 2);
+    assert.equal(report.conflictCount, 1);
+    assert.equal(report.invalidCount, 2);
+    for (const item of report.results.slice(0, 2)) {
+      assert.equal(item.status, 'valid_new');
+      assert.equal(item.data.phone, '');
+      assert.equal(item.existingMember, undefined);
+    }
+    assert.equal(report.results[2].existingMember.id, 'with-phone');
+    for (const item of report.results.slice(3)) assert.match(item.reason, /手机号格式不正确/);
+  }
+});
+
+test('Excel and CSV headers without phone columns skip titles and preserve physical rows', async () => {
+  const rows = [['梦飞空间会员批量导入'], ['会员姓名', '本金余额'], ['同名客户', '20'], [], ['同名客户', '30']];
+  const csv = new TextEncoder().encode(rows.map(row => row.join(',')).join('\n'));
+  for (const file of [importFile(rows), { name: 'no-phone.csv', size: csv.length, arrayBuffer: async () => csv.buffer }]) {
+    const parsed = await parseUploadedFile(file);
+    assert.equal(parsed.headerIndex, 1);
+    assert.equal(parsed.mapping.phone, null);
+    assert.deepEqual(parsed.rowNumbers, [3, 5]);
+    const report = validateImportBatch(parsed.dataRows, parsed.mapping, [], { rowNumbers: parsed.rowNumbers });
+    assert.equal(report.validCount, 2);
+    assert.deepEqual(report.results.map(item => item.data.phone), ['', '']);
+    assert.deepEqual(report.results.map(item => item.data.balanceCents), [2000, 3000]);
+    assert.throws(() => validateImportBatch(parsed.dataRows, { ...parsed.mapping, name: null }), /姓名列/);
+    assert.throws(() => validateImportBatch(parsed.dataRows, { ...parsed.mapping, balance: parsed.mapping.name }), /不同的列/);
+  }
+  const namesOnly = await parseUploadedFile(importFile([['梦飞空间会员批量导入'], ['姓名'], ['同名客户'], ['同名客户']]));
+  assert.equal(namesOnly.headerIndex, 1);
+  assert.equal(validateImportBatch(namesOnly.dataRows, namesOnly.mapping).validCount, 2);
+});
+
 test('financial Excel cells remain numeric and summable after serialization while text stays protected', () => {
   const members = [{ name: '=1+1', phone: '13800001111', balance: 12345 }, { name: '欠款', phone: '13900002222', balance: -2000 }];
   const book = createMembersWorkbook(members);

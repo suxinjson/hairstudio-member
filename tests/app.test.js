@@ -767,10 +767,26 @@ test('native offline prompts once per entry, allows postponing, and expiry remov
   assert.equal(document.querySelector('nav[aria-label="主导航"]'), null);
 });
 
-test('whitespace-only phone edits cannot be saved through the member form', async () => {
+test('a new member can be saved through the app form with a name and no phone', async () => {
+  await mount();
+  button('登记会员').click(); await nextTick();
+  assert.equal(button('保存档案').disabled, true);
+  const name = document.querySelector('input[placeholder="如：张姐 / 8号熟客"]');
+  name.value = '无手机号客户';
+  name.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await nextTick();
+  assert.equal(document.querySelector('input[type="tel"]').value, '');
+  assert.equal(button('保存档案').disabled, false);
+  button('保存档案').click(); await nextTick();
+  assert.equal(localDb.getMembers().length, 1);
+  assert.equal(localDb.getMembers()[0].name, '无手机号客户');
+  assert.equal(localDb.getMembers()[0].phone, '');
+  assert.equal(document.body.textContent.includes('当前账本无法读取'), false);
+});
+
+test('the app member form can clear a phone and later add it back', async () => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
-  const previous = new Map(localStorage.values);
   document.querySelector('.customer-open').click();
   await nextTick();
   button('修改档案').click();
@@ -779,11 +795,16 @@ test('whitespace-only phone edits cannot be saved through the member form', asyn
   phone.value = '   ';
   phone.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   await nextTick();
-  assert.equal(button('保存档案').disabled, true);
+  assert.equal(button('保存档案').disabled, false);
   button('保存档案').click();
-  assert.deepEqual(localStorage.values, previous);
-  phone.value = '13900001111';
-  phone.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  await nextTick();
+  assert.equal(localDb.getMemberById(member.id).phone, '');
+  assert.equal(localDb.getMemberById(member.id).balance, 10000);
+  assert.equal(localDb.getLedgers()[0].memberPhone, member.phone);
+  button('修改档案').click(); await nextTick();
+  const nextPhone = document.querySelector('input[type="tel"]');
+  nextPhone.value = '13900001111';
+  nextPhone.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   await nextTick();
   button('保存档案').click();
   await nextTick();

@@ -261,13 +261,13 @@ const db = {
     return members.find(m => m.id === id && !m.isArchived) || null;
   },
 
-  createMember({ name, phone, initialBalance = 0, notes = '' }) {
+  createMember({ name, phone = '', initialBalance = 0, notes = '' }) {
     if (!name || !name.trim()) throw new Error('会员姓名不能为空');
-    if (!phone || !phone.trim()) throw new Error('手机号码不能为空');
 
     const cleanPhone = normalizeMemberPhone(phone);
+    if (phone.trim() && !cleanPhone) throw new Error('手机号码格式无效');
     const members = load(STORAGE_KEYS.MEMBERS);
-    if (members.some(m => !m.isArchived && normalizeMemberPhone(m.phone) === cleanPhone)) {
+    if (cleanPhone && members.some(m => !m.isArchived && normalizeMemberPhone(m.phone) === cleanPhone)) {
       throw new Error(`手机号 ${cleanPhone} 已存在`);
     }
 
@@ -314,10 +314,9 @@ const db = {
     if (!m || m.isArchived) throw new Error('会员不存在或已注销');
 
     if (phone !== undefined) {
-      if (typeof phone !== 'string' || !phone.trim()) throw new Error('手机号码不能为空');
       const cleanPhone = normalizeMemberPhone(phone);
-      if (!cleanPhone) throw new Error('手机号码不能为空');
-      if (members.some(item => !item.isArchived && item.id !== id && normalizeMemberPhone(item.phone) === cleanPhone)) {
+      if (phone.trim() && !cleanPhone) throw new Error('手机号码格式无效');
+      if (cleanPhone && members.some(item => !item.isArchived && item.id !== id && normalizeMemberPhone(item.phone) === cleanPhone)) {
         throw new Error(`手机号 ${cleanPhone} 已被其他会员占用`);
       }
       m.phone = cleanPhone;
@@ -454,7 +453,7 @@ const db = {
     const members = load(STORAGE_KEYS.MEMBERS);
     const m = members.find(item => item.id === target.memberId);
     if (!m) throw new Error('关联会员不存在');
-    if (m.isArchived && members.some(member => !member.isArchived && member.id !== m.id && normalizeMemberPhone(member.phone) === normalizeMemberPhone(m.phone))) {
+    if (m.isArchived && normalizeMemberPhone(m.phone) && members.some(member => !member.isArchived && member.id !== m.id && normalizeMemberPhone(member.phone) === normalizeMemberPhone(m.phone))) {
       throw new Error('该手机号已用于其他会员，请先修改该会员手机号，再撤销已注销档案的消费');
     }
 
@@ -488,7 +487,6 @@ const db = {
 
     target.isRefunded = true;
     if (m.isArchived && after !== 0) {
-      if (!normalizeMemberPhone(m.phone)) throw new Error('该注销会员缺少手机号，无法重新启用；请先核对并恢复完整会员档案后再撤销');
       m.isArchived = false;
       delete m.deleted_at;
       validateActiveMemberPhones(members);
@@ -804,7 +802,7 @@ const db = {
     const incomingMemberIds = new Set(backupMembers.map(member => member.id));
     const currentPhoneMap = new Map();
     for (const m of currentMembers) {
-      if (!m.isArchived && m.phone && !incomingMemberIds.has(m.id)) currentPhoneMap.set(normalizeMemberPhone(m.phone), m);
+      if (!m.isArchived && normalizeMemberPhone(m.phone) && !incomingMemberIds.has(m.id)) currentPhoneMap.set(normalizeMemberPhone(m.phone), m);
     }
     const currentMemberIdSet = new Set(currentMembers.map(member => member.id));
 

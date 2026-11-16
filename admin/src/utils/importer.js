@@ -95,12 +95,14 @@ export async function parseUploadedFile(file, { signal } = {}) {
   if (buffer.byteLength > MAX_FILE_SIZE) throw new Error('导入文件过大，最大支持 10MB');
   const rawRows = await readRows(buffer, isCsv, signal);
 
-  // A title mentioning members is not enough: the header needs separate name
-  // and phone columns. Ambiguous columns are still left for manual mapping.
+  // A title mentioning members is not enough. Accept an exact name header or
+  // a name column alongside another recognized field; the phone column is optional.
   let headerIndex = 0;
   for (let i = 0; i < Math.min(rawRows.length, 5); i++) {
     const candidates = columnCandidates(rawRows[i]);
-    if (candidates.get('name').length && candidates.get('phone').length) {
+    const exactNameHeader = candidates.get('name').some(index => HEADER_ALIASES.name.includes(String(rawRows[i][index] ?? '').trim().toLowerCase()));
+    const otherField = [...candidates].some(([field, indices]) => field !== 'name' && indices.length);
+    if (candidates.get('name').length && (exactNameHeader || otherField)) {
       headerIndex = i;
       break;
     }
@@ -151,15 +153,15 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
   const strategy = options.conflictStrategy || 'skip';
   if (!['skip', 'merge_balance', 'overwrite_profile'].includes(strategy)) throw new Error('导入策略无效');
   const columns = Object.values(mapping).filter(index => index != null);
-  if (mapping.name == null || mapping.phone == null || columns.some(index => !Number.isInteger(index) || index < 0) ||
-      new Set(columns).size !== columns.length) throw new Error('请为姓名、手机号及金额分别选择不同的列');
+  if (mapping.name == null || columns.some(index => !Number.isInteger(index) || index < 0) ||
+      new Set(columns).size !== columns.length) throw new Error('请指定姓名列，并为已选择的字段分别选择不同的列');
   if (options.rowNumbers !== undefined && (!Array.isArray(options.rowNumbers) || options.rowNumbers.length !== dataRows.length ||
       options.rowNumbers.some(number => !Number.isSafeInteger(number) || number < 1))) throw new Error('导入原始行号无效');
   const existingMap = new Map();
   existingMembers.forEach(m => {
     if (!m.isArchived && m.phone) {
       const phone = normalizeMemberPhone(String(m.phone));
-      existingMap.set(phone, [...(existingMap.get(phone) || []), m]);
+      if (phone) existingMap.set(phone, [...(existingMap.get(phone) || []), m]);
     }
   });
 
@@ -174,7 +176,7 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
     const rowNum = options.rowNumbers?.[i] ?? i + 2;
 
     const rawName = mapping.name !== null ? String(row[mapping.name] ?? '').trim() : '';
-    const rawPhone = mapping.phone !== null ? String(row[mapping.phone] ?? '').trim() : '';
+    const rawPhone = mapping.phone != null ? String(row[mapping.phone] ?? '').trim() : '';
     const rawBalance = mapping.balance !== null ? String(row[mapping.balance] ?? '').trim() : '0';
     const rawGift = mapping.gift !== null ? String(row[mapping.gift] ?? '').trim() : '0';
     const rawRemark = mapping.remark !== null ? String(row[mapping.remark] ?? '').trim() : '';
@@ -191,9 +193,7 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
 
     // 2. 手机号校验与清洗
     const cleanPhone = normalizeMemberPhone(rawPhone);
-    if (!cleanPhone) {
-      errors.push('联系电话不能为空');
-    } else if (cleanPhone.length !== 11) {
+    if (rawPhone && cleanPhone.length !== 11) {
       errors.push(`手机号格式不正确（须为11位，当前为${cleanPhone.length}位）`);
     }
 
@@ -341,11 +341,11 @@ export function downloadImportTemplate() {
     },
     {
       '会员姓名': '王强',
-      '手机号码': '13912345678',
+      '手机号码': '',
       '可用余额': 200.00,
       '赠送金': 0.00,
       '会员标签': '普通会员',
-      '备注': '偏好电话联系'
+      '备注': '手机号可稍后补充'
     },
     {
       '会员姓名': '李芳',

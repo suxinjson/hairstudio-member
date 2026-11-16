@@ -213,6 +213,55 @@ test('a changed balance during refund verification resets debt approval and subm
   assert.equal(document.querySelector('input[type="checkbox"]').checked, false); assert.equal(button('确认撤单冲正').disabled, true);
 });
 
+test('PC member forms allow blank phones for creation and edits and reject malformed filled phones', async () => {
+  const submitted = [];
+  await mount(Members, { members: data.members, submitOperations: async operations => { submitted.push(...operations); return {}; } });
+  button('登记会员').click(); await nextTick();
+  assert.equal(button('确认保存').disabled, true);
+  await input('input[placeholder="请输入会员姓名"]', '无手机号客户');
+  assert.equal(button('确认保存').disabled, false);
+  button('确认保存').click(); await flush();
+  assert.equal(submitted[0].method, 'createMember');
+  assert.equal(submitted[0].args[0].phone, '');
+  button('修改').click(); await nextTick();
+  await input('input[type="tel"]', '   ');
+  assert.equal(button('确认保存').disabled, false);
+  button('确认保存').click(); await flush();
+  assert.equal(submitted[1].method, 'updateMember');
+  assert.equal(submitted[1].args[1].phone, '');
+  button('登记会员').click(); await nextTick();
+  await input('input[placeholder="请输入会员姓名"]', '无效号码客户');
+  await input('input[type="tel"]', '---');
+  button('确认保存').click(); await flush();
+  assert.equal(submitted.length, 2);
+  assert.ok(document.body.textContent.includes('手机号必须为11位数字'));
+});
+
+for (const [kind, csvText] of [
+  ['blank phone cells', '会员姓名,手机号码,本金余额\n同名客户,,20\n同名客户,   ,30'],
+  ['no phone column', '梦飞空间会员批量导入\n会员姓名,本金余额\n同名客户,20\n同名客户,30']
+]) {
+  test(`PC import accepts ${kind} after mapping confirmation`, async t => {
+    let submitted;
+    t.mock.method(adminApi, 'executeBatchImport', async items => { submitted = items; return { count: items.length }; });
+    const existing = [...data.members, { ...data.members[0], id: 'blank-phone', name: '同名客户', phone: '' }];
+    await mount(ImportExport, { members: existing, ledgers: [] });
+    const csv = new TextEncoder().encode(csvText);
+    const picker = document.querySelector('input[type="file"]');
+    Object.defineProperty(picker, 'files', { value: [{ name: 'no-phone.csv', size: csv.length, arrayBuffer: async () => csv.buffer }], configurable: true });
+    picker.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await flush();
+    assert.equal(button('开始零损数据预检').disabled, true);
+    const approve = document.querySelector('input[type="checkbox"]');
+    approve.checked = true; approve.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+    assert.equal(button('开始零损数据预检').disabled, false);
+    button('开始零损数据预检').click(); await nextTick();
+    assert.equal(button('确认入库至系统账本').disabled, false);
+    button('确认入库至系统账本').click(); await flush();
+    assert.equal(submitted.length, 2);
+    assert.ok(submitted.every(item => item.status === 'valid_new' && item.data.phone === ''));
+  });
+}
+
 test('import requires separate column and debt confirmations before sending a negative balance task', async t => {
   let submitted;
   t.mock.method(adminApi, 'executeBatchImport', async (items, strategy, progress, options) => { submitted = { items, options }; return { count: 1 }; });

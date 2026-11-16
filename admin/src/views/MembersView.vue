@@ -277,12 +277,12 @@
             />
           </div>
           <div>
-            <label class="block text-xs font-bold text-slate-600 mb-1">手机号码 *</label>
+            <label class="block text-xs font-bold text-slate-600 mb-1">手机号码 (选填)</label>
             <input
               v-model="editForm.phone"
               type="tel"
               maxlength="11"
-              placeholder="请输入11位手机号"
+              placeholder="选填，填写时请输入11位手机号"
               class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono font-bold focus:outline-none focus:border-emerald-600"
             />
           </div>
@@ -329,7 +329,7 @@
           </button>
           <button
             @click="submitMemberForm"
-            :disabled="!editForm.name.trim() || !editForm.phone.trim() || isSubmitting"
+            :disabled="!editForm.name.trim() || isSubmitting"
             class="flex-1 h-11 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-sm disabled:opacity-50"
           >
             {{ isSubmitting ? '保存中...' : '确认保存' }}
@@ -527,13 +527,14 @@ function openEditModal(member) {
 async function submitMemberForm() {
   if (isSubmitting.value) return;
   const name = editForm.value.name.trim();
-  const phone = normalizeMemberPhone(editForm.value.phone);
+  const rawPhone = editForm.value.phone.trim();
+  const phone = normalizeMemberPhone(rawPhone);
 
   if (!name) {
     editError.value = '会员姓名不能为空';
     return;
   }
-  if (phone.length !== 11) {
+  if (rawPhone && phone.length !== 11) {
     editError.value = '手机号必须为11位数字';
     return;
   }
