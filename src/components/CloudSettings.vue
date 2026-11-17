@@ -91,13 +91,14 @@
   </section>
 </template>
 <script setup>
-import { ref, computed, onUnmounted, inject } from 'vue';
+import { ref, computed, onUnmounted, inject, watch } from 'vue';
 import { Capacitor } from '@capacitor/core';
 import { cloudClient, checkForUpdate, downloadUpdate, installUpdate, copyToClipboard } from '../cloud-device.js';
 import { DEFAULT_CLOUD_SERVER_URL } from '../cloud-config.js';
 import { localDb } from '../storage.js';
 import { exportFile } from '../file-export.js';
-const props = defineProps({ recoveryRequired: { type: Boolean, default: false }, section: { type: String, default: 'account' }, showTitle: { type: Boolean, default: true } });
+const props = defineProps({ recoveryRequired: { type: Boolean, default: false }, section: { type: String, default: 'account' }, showTitle: { type: Boolean, default: true },
+  availableUpdate: { type: Object, default: null } });
 const emit = defineEmits(['navigate']);
 const sectionTitles = { account: '☁️ 账号与同步', users: '账号管理', activity: '使用记录', update: '应用更新' };
 const isNativeApp = Capacitor.isNativePlatform();
@@ -125,7 +126,10 @@ async function promptConfirm(options) {
   if (injectAskConfirm) return await injectAskConfirm(options);
   return window.confirm(typeof options === 'string' ? options : options.message);
 }
-const message = ref(''), users = ref(null), audit = ref(null), update = ref(null), downloaded = ref(null), checkingUpdate = ref(false), downloading = ref(false), installing = ref(false), progress = ref(0);
+const message = ref(''), users = ref(null), audit = ref(null), update = ref(props.availableUpdate), downloaded = ref(null), checkingUpdate = ref(false), downloading = ref(false), installing = ref(false), progress = ref(0);
+watch(() => props.availableUpdate, value => {
+  if (value && !checkingUpdate.value && !downloading.value && !installing.value && !downloaded.value) update.value = value;
+});
 const resolutionMessage = computed(() => {
   if (state.value.cloudAdoption?.mode === 'upload') return '正在核对原待办，未提交的交易会取消，核对完成后上传本机完整恢复账本。期间暂停记账和自动同步；断网或重启后请继续核对并上传，本机账本和原待办仍保留。';
   if (state.value.cloudAdoption) return '正在逐笔核对原待办：已提交的交易会保留，尚未提交的交易会取消。核对完成前已暂停记账和自动同步；断网或重启后请继续核对。本机账本与原待办仍保留。';

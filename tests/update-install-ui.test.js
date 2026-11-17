@@ -75,6 +75,16 @@ test('native update opens the installer after download with one click and passes
   assert.ok(document.body.textContent.includes('已打开系统安装界面'));
 });
 
+test('a version discovered on startup is ready to download without a second manual check', async () => {
+  app = createApp(CloudSettings, { section: 'update', availableUpdate: manifest });
+  app.mount('#app'); await flush();
+  assert.ok(document.body.textContent.includes('新版本 1.0.70'));
+  assert.equal(fixture.check.mock.callCount(), 0);
+  button('下载并安装更新').click(); await flush();
+  assert.equal(fixture.download.mock.callCount(), 1);
+  assert.equal(fixture.install.mock.callCount(), 1);
+});
+
 test('double clicks cannot download or open multiple installers while authorization is pending', async () => {
   let finish;
   fixture.install.mock.mockImplementation(() => new Promise(resolve => { finish = resolve; }));

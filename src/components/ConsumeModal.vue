@@ -106,7 +106,8 @@
         </p>
         <div class="feedback-amount mt-5 rounded-xl px-4 py-4 text-left">
           <div class="flex justify-between gap-3 text-base"><span>消费会员</span><strong class="text-slate-900">{{ confirmation.memberName }}</strong></div>
-          <div class="mt-2 flex justify-between gap-3 text-sm"><span>手机号</span><strong>{{ formatPhoneSpaced(confirmation.memberPhone) }}</strong></div>
+          <div class="mt-2 flex justify-between gap-3 text-sm"><span>手机号</span><strong>{{ formatPhoneSpaced(confirmation.memberPhone) || '未留手机号' }}</strong></div>
+          <div v-if="confirmation.memberNotes" class="mt-2 text-sm break-words"><span>会员备注：</span><strong>{{ confirmation.memberNotes }}</strong></div>
           <div class="mt-2 flex justify-between gap-3 text-base"><span>服务项目</span><strong class="text-slate-800 max-w-[170px] truncate text-right">{{ confirmation.itemsSummary }}</strong></div>
           <div class="mt-2 flex justify-between gap-3 text-base"><span>{{ confirmation.currentBalance < 0 ? '原有欠款' : '当前余额' }}</span><strong :class="{ 'balance-debt': confirmation.currentBalance < 0 }">¥{{ formatCent(Math.abs(confirmation.currentBalance)) }}</strong></div>
           <div class="mt-3 border-t border-rose-200 pt-3 flex justify-between items-baseline gap-3 text-xl font-black text-rose-700">

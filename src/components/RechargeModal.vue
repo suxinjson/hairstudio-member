@@ -17,6 +17,7 @@
         </header>
 
         <div class="recharge-content">
+          <p v-if="member.notes" class="consume-preference"><strong>会员备注</strong><span>{{ member.notes }}</span></p>
           <div v-if="member.balance < 0" class="recharge-debt-note">充值先抵扣欠款，结清后剩余金额转为可用余额。</div>
           <div class="recharge-section-heading"><h3>快捷充值</h3><span>也可直接输入金额</span></div>
           <div class="recharge-plans">
@@ -72,7 +73,8 @@
         <div class="feedback-icon feedback-icon-success mx-auto">¥</div>
         <h2 id="recharge-confirm-title" class="mt-4 text-2xl font-black text-slate-900">请再核对一次</h2>
         <p class="mt-2 text-base text-slate-700">确认后将立即为 {{ confirmation.memberName }} 充值入账。</p>
-        <p class="mt-1 text-sm text-slate-600">手机号：{{ confirmation.memberPhone }}</p>
+        <p class="mt-1 text-sm text-slate-600">手机号：{{ confirmation.memberPhone || '未留手机号' }}</p>
+        <p v-if="confirmation.memberNotes" class="mt-1 text-sm text-slate-600 break-words">会员备注：{{ confirmation.memberNotes }}</p>
         <div class="feedback-amount mt-5 rounded-xl px-4 py-4 text-left">
           <div class="flex justify-between gap-3 text-base"><span>实收金额</span><strong>¥{{ confirmation.actualPay.toFixed(2) }}</strong></div>
           <div v-if="confirmation.rechargeSettings.giftEnabled" class="mt-2 flex justify-between gap-3 text-base"><span>赠送额度</span><strong>¥{{ confirmation.giftAmount.toFixed(2) }}</strong></div>

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createWebClient } from '../src/web-client.js';
-import { ADMIN_SESSION_KEY, AdminApiClient, buildAdminOperation } from '../admin/src/api/client.js';
+import { ADMIN_IDLE_TIMEOUT_MS, ADMIN_SESSION_KEY, AdminApiClient, buildAdminOperation } from '../admin/src/api/client.js';
 import { createLocalDb, STORAGE_KEYS } from '../src/storage.js';
 import { replayOperation } from '../src/cloud-storage.js';
 import { canonicalJSON } from '../src/sync-protocol.js';
@@ -37,9 +37,9 @@ function fixture(t) {
     }
     throw new Error('Unexpected request: ' + path);
   };
-  const create = (eventTarget = null) => {
+  const create = (eventTarget = null, documentTarget = null) => {
     const api = new AdminApiClient({ storage, fetch, eventTarget: null, serverOrigin: 'https://member.example.com' });
-    const web = createWebClient({ api, eventTarget });
+    const web = createWebClient({ api, eventTarget, documentTarget });
     t.after(() => web.dispose()); return { api, web };
   };
   const first = create(); first.api.saveSession(session, false);
@@ -103,6 +103,83 @@ test('an acknowledged write retains its ID when newer-tab account confirmation i
   const pending = JSON.parse(storage.getItem(api.scopedKey('pending')));
   assert.equal(pending.operations[0].id, operation.id);
   assert.equal(pending.uncertain, true);
+});
+
+test('cashier auto-locks at the idle deadline without waiting for the periodic ledger refresh', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const { create } = fixture(t);
+  const target = new EventTarget(), { api, web } = create(target);
+  await web.start();
+  t.mock.timers.tick(ADMIN_IDLE_TIMEOUT_MS - 1);
+  assert.equal(api.isLocked.value, false);
+  t.mock.timers.tick(1);
+  assert.equal(api.isLocked.value, true);
+});
+
+for (const event of ['focus', 'visibilitychange']) {
+  test(`cashier rechecks expiry on ${event} before activity can renew a suspended session`, async t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+    const { create, requests } = fixture(t);
+    const target = new EventTarget(), documentTarget = new EventTarget();
+    documentTarget.visibilityState = 'visible';
+    const { api, web } = create(target, documentTarget);
+    await web.start();
+    const loaded = requests.length, deadline = api.idleExpiresAt.value;
+    t.mock.timers.setTime(deadline);
+    (event === 'focus' ? target : documentTarget).dispatchEvent(new Event(event));
+    assert.equal(api.isLocked.value, true);
+    target.dispatchEvent(new Event('pointerdown'));
+    assert.equal(api.isLocked.value, true);
+    assert.equal(api.idleExpiresAt.value, deadline);
+    assert.equal(requests.length, loaded);
+  });
+}
+
+test('cashier activity reschedules the deadline, repeated start reuses listeners, and stop removes them', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const { create } = fixture(t);
+  const target = new EventTarget(), documentTarget = new EventTarget();
+  const { api, web } = create(target, documentTarget);
+  const stop = await web.start();
+  assert.equal(await web.start(), stop);
+  const activity = t.mock.method(api, 'recordActivity');
+  const restore = t.mock.method(api, 'restoreSession');
+  t.mock.timers.tick(60000);
+  target.dispatchEvent(new Event('pointerdown'));
+  assert.equal(activity.mock.callCount(), 1);
+  t.mock.timers.tick(ADMIN_IDLE_TIMEOUT_MS - 60000);
+  assert.equal(api.isLocked.value, false);
+  t.mock.timers.tick(60000);
+  assert.equal(api.isLocked.value, true);
+  await api.saveSession(session, false, { resetIdle: true });
+  stop();
+  const reads = restore.mock.callCount();
+  t.mock.timers.tick(ADMIN_IDLE_TIMEOUT_MS);
+  target.dispatchEvent(new Event('focus'));
+  documentTarget.dispatchEvent(new Event('visibilitychange'));
+  target.dispatchEvent(new Event('keydown'));
+  assert.equal(activity.mock.callCount(), 1);
+  assert.equal(restore.mock.callCount(), reads);
+});
+
+test('stopping during the initial ledger request cannot recreate a lock timer or stop a later start', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const { create } = fixture(t), target = new EventTarget();
+  const { api, web } = create(target);
+  let resolve;
+  api.requestFetch = () => new Promise(done => { resolve = done; });
+  const starting = web.start();
+  const stopFirst = await web.start();
+  stopFirst();
+  const restarting = web.start();
+  resolve(Response.json({ data: { members: [], ledgers: [], services: [], rechargePlans: [] }, revision: 1, integrity: integrity({ members: [], ledgers: [], services: [], rechargePlans: [] }) }));
+  const [stopped, stopSecond] = await Promise.all([starting, restarting]);
+  assert.equal(stopped, stopFirst);
+  assert.notEqual(stopSecond, stopFirst);
+  stopFirst();
+  t.mock.timers.tick(ADMIN_IDLE_TIMEOUT_MS);
+  assert.equal(api.isLocked.value, true);
+  stopSecond();
 });
 
 test('cross-tab activity and token updates do not reload the ledger, while head changes and unlocks do', { timeout: 10000 }, async t => {

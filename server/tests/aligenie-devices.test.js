@@ -17,7 +17,7 @@ async function fixture(run) {
     await service.createOwner({ username: 'device-owner', password });
     const owner = await service.login({ username: 'device-owner', password, deviceId: randomUUID() });
     const identity = await service.authenticate(owner.accessToken), secret = 'device-secret-' + randomUUID();
-    await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: secret, allowedDevices: ['*'] } });
+    await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: secret, allowedDevices: ['*'] } }, 0);
     server = createApi({ service, pool, production: false });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const root = `http://127.0.0.1:${server.address().port}/api/v1`;
@@ -64,7 +64,7 @@ test('authenticated speakers are discoverable only by their store owner and rema
   assert.deepEqual(await (await call('/voice/aligenie/devices', {}, other.accessToken)).json(), []);
   assert.deepEqual(await service.account(identity), before);
   for (const table of ['voice_requests','voice_dialogs','operations']) assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count, 0);
-  const save = await call('/voice/config', { method: 'POST', body: JSON.stringify({ aligenie: { allowedDevices: ['real-speaker'] } }) });
+  const save = await call('/voice/config', { method: 'POST', body: JSON.stringify({ expectedVersion: 1, aligenie: { allowedDevices: ['real-speaker'] } }) });
   assert.equal(save.status, 200);
   assert.deepEqual(await (await call('/voice/aligenie/devices')).json(), []);
   const bound = await (await post(body('real-speaker','QueryMemberIntent'))).json();
@@ -84,7 +84,7 @@ test('device candidates expire, are bounded, and cannot cross signing-secret rot
   assert.equal((await post(v2)).status, 200);
   assert.deepEqual((await (await call('/voice/aligenie/devices')).json()).map(d=>d.deviceOpenId), ['v2-speaker']);
   const nextSecret = 'next-device-secret-' + randomUUID();
-  await service.saveVoiceConfig(identity, { aligenie: { token: nextSecret } });
+  await service.saveVoiceConfig(identity, { aligenie: { token: nextSecret } }, (await service.getVoiceConfig(identity)).version);
   assert.deepEqual(await (await call('/voice/aligenie/devices')).json(), []);
   assert.equal((await post(body('old-secret-speaker'), secret)).status, 401);
   assert.deepEqual(await (await call('/voice/aligenie/devices')).json(), []);

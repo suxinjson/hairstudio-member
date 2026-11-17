@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-const config = { enabled: true, volume: 1, templates: { consume: '{name}消费{amount}元' } };
+const config = { enabled: true, version: 3, volume: 1, templates: { consume: '{name}消费{amount}元' } };
 
 async function connected(handler) {
   const user = { id: 'user-1', storeId: 'store-1', role: 'clerk' };
@@ -64,12 +64,17 @@ test('expired App token refreshes and retries synthesis as audio instead of JSON
 test('App settings submit authenticated config and only explicit preview requests contain draft credentials', async () => {
   const { client, requests } = await connected(async (url, options) => {
     if (url.endsWith('/users')) return json([{ id: 'owner-1', role: 'owner', active: true }]);
-    if (url.endsWith('/voice/config')) return json({ ...JSON.parse(options.body), apiKey: '', hasApiKey: true });
+    if (url.endsWith('/voice/config')) {
+      const body = JSON.parse(options.body);
+      return json({ ...body, version: body.expectedVersion + 1, apiKey: '', hasApiKey: true });
+    }
     return new Response('preview-mp3', { headers: { 'content-type': 'audio/mpeg' } });
   });
   assert.equal((await client.getUsers())[0].role, 'owner');
-  const saved = await client.saveVoiceConfig({ enabled: true, events: { consume: false, recharge: true }, templates: { consume: '扣款', recharge: '充值' } });
+  const saved = await client.saveVoiceConfig({ enabled: true, events: { consume: false, recharge: true }, templates: { consume: '扣款', recharge: '充值' } }, config.version);
   assert.deepEqual(saved.events, { consume: false, recharge: true });
+  assert.equal(saved.version, 4);
+  assert.equal(JSON.parse(requests[1].body).expectedVersion, config.version);
   const preview = await client.previewVoice({ text: '试听草稿', provider: 'xfyun', appId: 'testappid', apiKey: 'draft-test-only', voiceId: 'aisjinger', aligenie: { token: 'must-not-send' } });
   assert.equal(await preview.text(), 'preview-mp3');
   assert.deepEqual(JSON.parse(requests[2].body), { text: '试听草稿', test: true, provider: 'xfyun', appId: 'testappid', apiKey: 'draft-test-only', voiceId: 'aisjinger' });

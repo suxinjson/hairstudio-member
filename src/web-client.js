@@ -1,12 +1,12 @@
 import { watch } from 'vue';
-import { ADMIN_SESSION_KEY, AdminApiClient, buildAdminOperation } from '../admin/src/api/client.js';
+import { ADMIN_SESSION_KEY, AdminApiClient, buildAdminOperation } from '../admin/src/api/admin-client.js';
 import { createLocalDb, STORAGE_KEYS, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from './storage.js';
 import { replayOperation } from './cloud-storage.js';
 import { canWrite } from './sync-protocol.js';
 
 // Browser account data is a projection of a verified server response. No local
 // ledger, migration state or offline journal participates in this client.
-export function createWebClient({ api = new AdminApiClient(), onData = () => {}, eventTarget = globalThis.window } = {}) {
+export function createWebClient({ api = new AdminApiClient(), onData = () => {}, eventTarget = globalThis.window, documentTarget = globalThis.document } = {}) {
   const listeners = new Set();
   let busy = false, running = null;
   const empty = { members: [], ledgers: [], services: DEFAULT_SERVICES, rechargePlans: DEFAULT_RECHARGE_PLANS };
@@ -89,15 +89,28 @@ export function createWebClient({ api = new AdminApiClient(), onData = () => {},
     loadStoreProfile: () => run(() => api.loadStoreProfile()),
     saveStoreProfile: (profile, expectedVersion) => run(() => api.saveStoreProfile(profile, expectedVersion)),
     getAliGenieDevices: () => api.request('/api/v1/voice/aligenie/devices'),
-    saveVoiceConfig: config => api.saveVoiceConfig(config),
+    saveVoiceConfig: (config, expectedVersion) => api.saveVoiceConfig(config, expectedVersion),
     previewVoice: (options, control) => api.synthesizeVoice({ ...options, test: true }, control),
     synthesizeVoice: (options, control) => api.synthesizeVoice(options, control),
     async start() {
       if (running) return running;
-      const refresh = () => client.sync().catch(() => {});
-      const activity = () => api.recordActivity();
+      let active = true, lockTimer = null;
+      const scheduleLock = () => {
+        if (!active) return;
+        clearTimeout(lockTimer); lockTimer = null;
+        const deadline = api.idleExpiresAt.value;
+        if (!api.user.value || api.isLocked.value || !Number.isSafeInteger(deadline)) return;
+        lockTimer = setTimeout(() => { api.restoreSession(); scheduleLock(); }, Math.max(0, deadline - Date.now()));
+      };
+      const refresh = () => client.sync().catch(() => {}).finally(scheduleLock);
+      const activity = () => { api.recordActivity(); scheduleLock(); };
+      const resume = () => {
+        if (documentTarget?.visibilityState === 'hidden') return;
+        api.restoreSession(); scheduleLock();
+      };
       const storageChanged = event => {
         api.restoreSession();
+        scheduleLock();
         if (!api.user.value || api.isLocked.value) return;
         if (event.key === null || event.key === api.headKey()) return refresh();
         if (event.key !== ADMIN_SESSION_KEY) return;
@@ -108,20 +121,31 @@ export function createWebClient({ api = new AdminApiClient(), onData = () => {},
         if (!api.accountData.value || previous?.isLocked || previous?.user?.role !== api.user.value.role) refresh();
       };
       const timer = setInterval(refresh, 30000);
+      const stopLockWatch = watch([api.user, api.isLocked, api.idleExpiresAt], scheduleLock, { flush: 'sync' });
       eventTarget?.addEventListener('online', refresh);
+      eventTarget?.addEventListener('focus', resume);
+      documentTarget?.addEventListener('visibilitychange', resume);
       eventTarget?.addEventListener('storage', storageChanged);
       eventTarget?.addEventListener('pointerdown', activity);
       eventTarget?.addEventListener('keydown', activity);
-      running = () => {
+      const stop = () => {
+        if (!active) return;
+        active = false;
         clearInterval(timer);
+        clearTimeout(lockTimer); lockTimer = null; stopLockWatch();
         eventTarget?.removeEventListener('online', refresh);
+        eventTarget?.removeEventListener('focus', resume);
+        documentTarget?.removeEventListener('visibilitychange', resume);
         eventTarget?.removeEventListener('storage', storageChanged);
         eventTarget?.removeEventListener('pointerdown', activity);
         eventTarget?.removeEventListener('keydown', activity);
-        running = null;
+        if (running === stop) running = null;
       };
+      running = stop;
+      scheduleLock();
       await client.sync().catch(() => {});
-      return running;
+      scheduleLock();
+      return stop;
     },
     dispose() { running?.(); stopWatch(); api.dispose(); listeners.clear(); }
   };

@@ -100,6 +100,41 @@ test('store profile is owner controlled, isolated between stores and versioned s
   assert.equal(committed.data.members.find(member => member.id === baseline.member.id).balance, 11000);
 });
 
+test('voice configuration versions prevent stale pages from restoring switches or removed speakers', async () => {
+  const identity = owner.identity, account = await service.account(identity);
+  const initial = await service.getVoiceConfig(identity);
+  assert.equal(initial.version, 0);
+  for (const invalidVersion of [undefined, null, '0', -1, 0.5]) {
+    await assert.rejects(service.saveVoiceConfig(identity, { enabled: true }, invalidVersion), { status: 400, code: 'VOICE_CONFIG_VERSION_REQUIRED' });
+  }
+  const enabled = await service.saveVoiceConfig(identity, { enabled: true, aligenie: {
+    enabled: true, actorId: identity.id, token: 'config-version-secret-' + randomUUID(), allowedDevices: ['speaker-a', 'speaker-b']
+  } }, initial.version);
+  assert.equal(enabled.version, 1);
+  const pageA = await service.getVoiceConfig(identity), pageB = await service.getVoiceConfig(identity);
+  const saved = await service.saveVoiceConfig(identity, { ...pageA, enabled: false,
+    aligenie: { ...pageA.aligenie, allowedDevices: ['speaker-a'] } }, pageA.version);
+  assert.equal(saved.version, 2);
+  const beforeAudit = await service.auditLog(identity);
+  const stale = await api('/voice/config', { ...pageB, expectedVersion: pageB.version, templates: { consume: '陈旧页面的新模板' } });
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).code, 'VOICE_CONFIG_CHANGED');
+  assert.deepEqual(await service.getVoiceConfig(identity), saved);
+  assert.deepEqual(await service.auditLog(identity), beforeAudit);
+
+  const results = await Promise.allSettled([
+    service.saveVoiceConfig(identity, { templates: { consume: '页面一模板' } }, saved.version),
+    service.saveVoiceConfig(identity, { templates: { consume: '页面二模板' } }, saved.version)
+  ]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.find(result => result.status === 'rejected').reason.code, 'VOICE_CONFIG_CHANGED');
+  const latest = await service.getVoiceConfig(identity);
+  assert.equal(latest.version, 3);
+  assert.equal(latest.enabled, false);
+  assert.deepEqual(latest.aligenie.allowedDevices, ['speaker-a']);
+  assert.deepEqual(await service.account(identity), account);
+});
+
 test('mobile store settings update without changing its outbox or financial synchronization state', async () => {
   await initialAccount(); let online = false;
   const mobile = await connectedClient({ online: () => online }); await mobile.useCloudLedger();
@@ -201,6 +236,24 @@ async function connectedClient({ requestFetch, online = () => true, vault, usern
   for (let count = 0; client.snapshot().busy && count < 100; count++) await new Promise(resolve => setTimeout(resolve, 5));
   return client;
 }
+
+test('an empty cloud outbox performs one full integrity check while queued writes retain the preflight check', async () => {
+  const routes = [];
+  const client = await connectedClient({ requestFetch: (input, options) => {
+    routes.push(new URL(input).pathname);
+    return fetch(input, options);
+  } });
+  const syncRoutes = () => routes.filter(path => ['/api/v1/account/head', '/api/v1/sync'].includes(path));
+
+  routes.length = 0;
+  await client.sync();
+  assert.deepEqual(syncRoutes(), ['/api/v1/account/head']);
+
+  routes.length = 0;
+  localDb.createMember({ name: '同步校验会员', phone: '13900009991', initialBalance: 100 });
+  await client.sync();
+  assert.deepEqual(syncRoutes(), ['/api/v1/account/head', '/api/v1/sync', '/api/v1/account/head']);
+});
 
 for (const sameRevision of [false, true]) {
   for (const alreadyQueued of [false, true]) {

@@ -102,6 +102,7 @@ export function useRecharge({
       memberId: rechargingMember.value.id,
       memberName: rechargingMember.value.name,
       memberPhone: rechargingMember.value.phone,
+      memberNotes: rechargingMember.value.notes || '',
       actualPay: Number(rechargeForm.value.actualPay),
       giftAmount: Number(rechargeForm.value.giftAmount),
       rechargeSettings: policy,
@@ -135,9 +136,9 @@ export function useRecharge({
       showToast('会员余额已变化，请重新核对充值结果。');
       return;
     }
-    if (current.name !== confirmation.memberName || current.phone !== confirmation.memberPhone) {
+    if (current.name !== confirmation.memberName || current.phone !== confirmation.memberPhone || (current.notes || '') !== confirmation.memberNotes) {
       requestRechargeConfirmation();
-      showToast('会员资料已变化，请重新核对姓名和手机号。');
+      showToast('会员资料已变化，请重新核对姓名、手机号和备注。');
       return;
     }
     isSubmittingRecharge.value = true;

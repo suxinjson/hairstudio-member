@@ -13,9 +13,13 @@ const flockAvailable = bashAvailable && spawnSync(bash, ['--noprofile', '--norc'
 const unix = path => path.replaceAll('\\', '/');
 
 async function fixture(t) {
-  const directory = await mkdtemp(join(tmpdir(), 'member-deployment-test-'));
+  // Keep Windows fixtures on the workspace volume: cross-volume junctions in
+  // the OS temp directory can be created but remain unreadable to Node/Git Bash.
+  const base = process.platform === 'win32' ? join(root, 'tmp') : tmpdir();
+  await mkdir(base, { recursive: true });
+  const directory = await mkdtemp(join(base, 'member-deployment-test-'));
   t.after(async () => {
-    assert.ok(resolve(directory).startsWith(resolve(tmpdir()) + sep));
+    assert.ok(resolve(directory).startsWith(resolve(base) + sep));
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
   return directory;

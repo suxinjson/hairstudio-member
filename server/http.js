@@ -178,7 +178,9 @@ export function createApi({ service, pool, production = false, allowedOrigins = 
       if (route === 'GET /api/v1/voice/config') return send(200, await service.getVoiceConfig(identity));
       if (route === 'POST /api/v1/voice/config') {
         await service.authorize(identity, 'owner'); guard.take('admin:' + identity.id, 10);
-        return send(200, await service.saveVoiceConfig(identity, await body(request, 8 * 1024)));
+        const input = await body(request, 8 * 1024);
+        const { expectedVersion, ...config } = input;
+        return send(200, await service.saveVoiceConfig(identity, config, expectedVersion));
       }
       if (route === 'POST /api/v1/voice/synthesize') {
         guard.take('voice:' + identity.id, 30);

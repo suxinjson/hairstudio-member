@@ -7,6 +7,23 @@ import { createApi } from '../http.js';
 import { sanitizeVoiceConfig, maskApiKey, synthesizeTTS, readVoiceConfig, publicVoiceConfig, PROVIDER_DEFAULTS, VOICE_SYNTHESIS_TIMEOUT_MS, VOICE_DOWNLOAD_TIMEOUT_MS } from '../voice.js';
 import { randomUUID } from 'node:crypto';
 
+test('voice configuration migration preserves legacy settings and gives them an initial version', async () => {
+  const db = new PGlite();
+  const pool = { query: sql => db.exec(sql) };
+  const storeId = randomUUID(), legacy = { enabled: false, aligenie: { allowedDevices: ['existing-speaker'] } };
+  try {
+    await db.exec(`CREATE TABLE stores(id uuid PRIMARY KEY, name text NOT NULL);
+      CREATE TABLE store_settings(store_id uuid PRIMARY KEY REFERENCES stores(id), voice_config jsonb NOT NULL DEFAULT '{}', updated_at timestamptz NOT NULL DEFAULT now());`);
+    await db.query('INSERT INTO stores(id,name) VALUES($1,$2)', [storeId, '原门店']);
+    await db.query('INSERT INTO store_settings(store_id,voice_config) VALUES($1,$2)', [storeId, legacy]);
+    await migrate(pool);
+    await migrate(pool);
+    const { rows: [saved] } = await db.query('SELECT voice_config,voice_config_version FROM store_settings WHERE store_id=$1', [storeId]);
+    assert.deepEqual(saved.voice_config, legacy);
+    assert.equal(saved.voice_config_version, 0);
+  } finally { await db.close(); }
+});
+
 test('legacy voice config enables both event types and partial updates preserve separate switches', () => {
   const legacy = readVoiceConfig({ enabled: true });
   assert.deepEqual(publicVoiceConfig(legacy, 'clerk').events, { consume: true, recharge: true });
@@ -283,6 +300,15 @@ test('Voice configuration endpoints and synthesis API security and flow', async 
     assert.equal(initialConfig.enabled, false);
     assert.equal(initialConfig.provider, 'fish_audio');
     assert.equal(initialConfig.hasApiKey, false);
+    assert.equal(initialConfig.version, 0);
+
+    const versionlessSave = await fetch(`${baseUrl}/api/v1/voice/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
+      body: JSON.stringify({ enabled: true })
+    });
+    assert.equal(versionlessSave.status, 400);
+    assert.equal((await versionlessSave.json()).code, 'VOICE_CONFIG_VERSION_REQUIRED');
 
     // 4. Clerk cannot save voice config (403 Forbidden)
     const clerkSaveRes = await fetch(`${baseUrl}/api/v1/voice/config`, {
@@ -297,6 +323,7 @@ test('Voice configuration endpoints and synthesis API security and flow', async 
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
       body: JSON.stringify({
+        expectedVersion: initialConfig.version,
         enabled: true,
         provider: 'fish_audio',
         apiKey: 'sk-fish-valid-key-12345678',
@@ -309,6 +336,16 @@ test('Voice configuration endpoints and synthesis API security and flow', async 
     assert.equal(savedData.enabled, true);
     assert.equal(savedData.apiKey, '');
     assert.equal(savedData.hasApiKey, true);
+    assert.equal(savedData.version, 1);
+
+    const staleSave = await fetch(`${baseUrl}/api/v1/voice/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` },
+      body: JSON.stringify({ expectedVersion: initialConfig.version, enabled: false, templates: { consume: '陈旧配置' } })
+    });
+    assert.equal(staleSave.status, 409);
+    assert.equal((await staleSave.json()).code, 'VOICE_CONFIG_CHANGED');
+    assert.equal((await (await fetch(`${baseUrl}/api/v1/voice/config`, { headers: { Authorization: `Bearer ${ownerToken}` } })).json()).enabled, true);
 
     // 6. Clerk reads voice config: apiKey must be masked
     const clerkReadRes = await fetch(`${baseUrl}/api/v1/voice/config`, {

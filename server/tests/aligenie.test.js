@@ -31,7 +31,7 @@ test('business intents and fallback commands ignore action words in member names
     const identity = await service.authenticate(session.accessToken), secret = 'intent-secret-' + randomUUID();
     await service.saveVoiceConfig(identity, { aligenie: {
       enabled: true, actorId: identity.id, token: secret, allowedDevices: ['intent-device']
-    } });
+    } }, 0);
     const values = new Map();
     const ledger = createLocalDb({ getItem: key => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) });
@@ -106,7 +106,7 @@ test('signed member queries report only non-refunded visits and omit the visit d
     const identity = await service.authenticate(session.accessToken), secret = 'visit-secret-' + randomUUID();
     await service.saveVoiceConfig(identity, { aligenie: {
       enabled: true, actorId: identity.id, token: secret, allowedDevices: ['visit-device']
-    } });
+    } }, 0);
     const values = new Map(); let date = '2026-01-02T12:00:00.000Z';
     const ledger = createLocalDb({ getItem: key => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) }, { now: () => date });
@@ -147,7 +147,7 @@ test('platform Header welcomes and business validation replies use the skill pro
     const secret = 'platform-token-' + randomUUID();
     await service.saveVoiceConfig(identity, { aligenie: {
       enabled: true, actorId: identity.id, token: secret, allowedDevices: ['bound-device']
-    } });
+    } }, 0);
     const before = await service.account(identity);
     server = createApi({ service, pool, production: false });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -251,7 +251,7 @@ test('platform Header welcomes and business validation replies use the skill pro
     for (const table of ['voice_dialogs', 'voice_requests']) {
       assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count, 0);
     }
-    await service.saveVoiceConfig(identity, { aligenie: { enabled: false } });
+    await service.saveVoiceConfig(identity, { aligenie: { enabled: false } }, (await service.getVoiceConfig(identity)).version);
     assert.equal((await post(welcome)).status, 401);
   } finally {
     if (server) {
@@ -421,7 +421,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
   const identity = await service.authenticate(ownerLogin.accessToken);
 
   const signingSecret = 'test-signing-secret-' + randomUUID();
-  await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: signingSecret, allowedDevices: ['allowed-device-888'] } });
+  await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: signingSecret, allowedDevices: ['allowed-device-888'] } }, 0);
   const previewRequests = new Map();
   const fetch = async (url, options = {}) => {
     if (options.method !== 'POST' || !url.includes('/api/v1/voice/aligenie')) return globalThis.fetch(url, options);
@@ -464,7 +464,7 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
 
   // 2. Test Verification File Serving (GET /aligenie/<file>.txt)
   const testFileName = 'test_verify_hash_9876543210.txt';
-  await service.saveVoiceConfig(identity, { aligenie: { verificationFile: testFileName, verificationContent: 'test_verify_hash_9876543210' } });
+  await service.saveVoiceConfig(identity, { aligenie: { verificationFile: testFileName, verificationContent: 'test_verify_hash_9876543210' } }, (await service.getVoiceConfig(identity)).version);
 
 
 

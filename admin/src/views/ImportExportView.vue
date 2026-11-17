@@ -244,6 +244,7 @@
                   </td>
                   <td class="py-2.5 px-3 text-slate-500" :class="{ 'text-rose-600 font-bold': item.status === 'invalid' }">
                     {{ item.reason }}
+                    <p v-if="item.sameNameWarning" class="mt-1 font-bold text-amber-800">{{ item.sameNameWarning }}</p>
                   </td>
                 </tr>
               </tbody>
@@ -264,7 +265,7 @@
 
           <button
             @click="executeImport"
-            :disabled="commitTargetCount === 0 || isImporting || (validationReport.debtCount > 0 && !debtImportConfirmed)"
+            :disabled="commitTargetCount === 0 || isImporting || (validationReport.debtCount > 0 && !debtImportConfirmed) || (validationReport.sameNameCount > 0 && !sameNameImportConfirmed)"
             class="h-12 px-8 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-xl text-sm font-black shadow-lg shadow-emerald-700/25 transition btn-press disabled:opacity-40 flex items-center gap-2"
           >
             <span v-if="isImporting" class="animate-spin text-base">⏳</span>
@@ -275,6 +276,19 @@
         <label v-if="validationReport.debtCount > 0" class="flex items-center gap-2 text-sm text-rose-700">
           <input v-model="debtImportConfirmed" type="checkbox" />我已核对 {{ validationReport.debtCount }} 条负余额记录，确认将期初欠款写入账本。
         </label>
+        <div v-if="validationReport.sameNameCount > 0" role="alert" class="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <p class="font-black">有 {{ validationReport.sameNameCount }} 条未填写手机号的记录与已有档案或本次文件中的会员重名。</p>
+          <p class="mt-2">{{ MEMBER_IDENTITY_ADVICE }}请先核对，避免重复建档；也可修改文件后重新上传预检。</p>
+          <details class="mt-2">
+            <summary class="cursor-pointer font-bold">查看重名记录</summary>
+            <ul class="mt-2 max-h-40 overflow-y-auto">
+              <li v-for="item in validationReport.results.filter(row => row.sameNameWarning)" :key="item.rowNum">第 {{ item.rowNum }} 行：{{ item.data.name }}<span v-if="item.data.remark">，备注：{{ item.data.remark }}</span></li>
+            </ul>
+          </details>
+          <label class="mt-3 flex items-center gap-2 font-bold">
+            <input v-model="sameNameImportConfirmed" type="checkbox" />我已核对这些同名记录，确认按不同会员分别新建档案。
+          </label>
+        </div>
         <!-- 进度条 -->
         <div v-if="isImporting" class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
           <div
@@ -338,6 +352,7 @@
 import { storeFilePrefix } from '../../../src/store-profile.js';
 import { ref, computed, watch, onUnmounted } from 'vue';
 import { adminApi } from '../api/client.js';
+import { MEMBER_IDENTITY_ADVICE } from '../../../src/member-identity.js';
 import {
   parseUploadedFile,
   selectImportHeader,
@@ -372,8 +387,14 @@ const mappingConfirmed = ref(false);
 let parseController = null;
 onUnmounted(() => parseController?.abort());
 const debtImportConfirmed = ref(false);
+const sameNameImportConfirmed = ref(false);
+watch(validationReport, () => { sameNameImportConfirmed.value = false; }, { flush: 'sync' });
 watch(customMapping, () => { validationReport.value = null; mappingConfirmed.value = false; debtImportConfirmed.value = false; }, { deep: true });
 watch(conflictStrategy, () => { validationReport.value = null; debtImportConfirmed.value = false; });
+watch(() => [props.members, adminApi.accountData.value?.rechargeSettings], () => {
+  validationReport.value = null;
+  debtImportConfirmed.value = false;
+}, { deep: true, flush: 'sync' });
 
 const fieldDefinitions = {
   name: { label: '会员姓名', required: true },
@@ -474,7 +495,8 @@ function downloadErrors() {
 }
 
 async function executeImport() {
-  if (!validationReport.value || isImporting.value || (validationReport.value.debtCount > 0 && !debtImportConfirmed.value)) return;
+  if (!validationReport.value || isImporting.value || (validationReport.value.debtCount > 0 && !debtImportConfirmed.value) ||
+      (validationReport.value.sameNameCount > 0 && !sameNameImportConfirmed.value)) return;
 
   const validItems = validationReport.value.results.filter(r => {
     if (r.status === 'valid_new') return true;

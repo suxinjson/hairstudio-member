@@ -250,9 +250,10 @@ const db = {
     const cleanQuery = rawQuery.replace(/\D/g, '');
     return members.filter(m => {
       const nameMatch = m.name.toLowerCase().includes(rawQuery);
+      const notesMatch = (m.notes || '').toLowerCase().includes(rawQuery);
       const cleanPhone = (m.phone || '').replace(/\D/g, '');
       const phoneMatch = Boolean(cleanQuery && cleanPhone.includes(cleanQuery));
-      return nameMatch || phoneMatch;
+      return nameMatch || phoneMatch || notesMatch;
     }).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
   },
 

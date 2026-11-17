@@ -120,6 +120,7 @@ export function useConsume({
       memberId: consumingMember.value.id,
       memberName: consumingMember.value.name,
       memberPhone: consumingMember.value.phone,
+      memberNotes: consumingMember.value.notes || '',
       currentBalance: consumingMember.value.balance,
       amount: amountNum,
       amountCent,
@@ -144,9 +145,9 @@ export function useConsume({
       showToast('会员余额已变化，请重新核对金额和欠款。');
       return;
     }
-    if (current.name !== conf.memberName || current.phone !== conf.memberPhone) {
+    if (current.name !== conf.memberName || current.phone !== conf.memberPhone || (current.notes || '') !== conf.memberNotes) {
       requestConsumeConfirmation();
-      showToast('会员资料已变化，请重新核对姓名和手机号。');
+      showToast('会员资料已变化，请重新核对姓名、手机号和备注。');
       return;
     }
     isSubmittingConsume.value = true;

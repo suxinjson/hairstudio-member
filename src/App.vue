@@ -90,7 +90,8 @@
         </div>
         <WebAccountSettings v-if="isWeb && (cloudLocked || settingsPage === 'account')" :ask-confirm="askConfirm" @logged-in="activeTab = 'customers'; settingsPath = []" />
         <CloudSettings v-else-if="cloudLocked || ['account', 'users', 'activity', 'update'].includes(settingsPage)"
-          :section="cloudLocked ? 'account' : settingsPage" :show-title="cloudLocked" :recovery-required="Boolean(storageError)" @navigate="openSettings" />
+          :section="cloudLocked ? 'account' : settingsPage" :show-title="cloudLocked" :recovery-required="Boolean(storageError)"
+          :available-update="availableUpdate" @navigate="openSettings" />
         <template v-if="!cloudLocked">
         <SettingsOverview
           v-if="settingsPage === 'overview' || settingsPage === 'backup'"
@@ -366,6 +367,7 @@ import { useBackupOperations } from './composables/useBackupOperations.js';
 import { useRechargeSettings } from './composables/useRechargeSettings.js';
 import { useLedgerRefund } from './composables/useLedgerRefund.js';
 import { useAppBackHandler } from './composables/useAppBackHandler.js';
+import { useAppUpdate } from './composables/useAppUpdate.js';
 
 const isNativeApp = Capacitor.isNativePlatform();
 const localDb = cloudClient.getDb();
@@ -768,6 +770,16 @@ function handleContextMenu(event) {
 }
 
 // 物理返回键与退出控制
+const updateReady = ref(false);
+const canPromptUpdate = computed(() => !cloudLocked.value && !cloudState.value.busy && !showDevicePrompt.value &&
+  !confirmModal.value && !feedbackModal.value && !receiptModal.value && !backupRestoreRequest.value &&
+  !showMemberModal.value && !showServiceModal.value && !consumingMember.value && !rechargingMember.value &&
+  !selectedMember.value && !(activeTab.value === 'settings' && settingsPage.value === 'update'));
+const { availableUpdate, checkOnOpen: checkUpdateOnOpen, onBackground: pauseUpdateCheck } = useAppUpdate({
+  state: cloudState, ready: updateReady, isNativeApp, canPrompt: canPromptUpdate, askConfirm,
+  onUpdate: () => openSettings('update')
+});
+
 const {
   resetExitSequence,
   closeTopLayer,
@@ -808,10 +820,10 @@ function scheduleDailyRefresh() {
   const now = new Date();
   const midnight = new Date(now);
   midnight.setHours(24, 0, 0, 0);
-  dailyRefreshTimer = setTimeout(refreshOnResume, midnight.getTime() - now.getTime());
+  dailyRefreshTimer = setTimeout(refreshAppState, midnight.getTime() - now.getTime());
 }
 
-function refreshOnResume() {
+function refreshAppState() {
   if (isUnmounted) return;
   refreshAll();
   scheduleDailyRefresh();
@@ -820,8 +832,15 @@ function refreshOnResume() {
   cloudClient.sync().catch(() => {}).finally(() => { deviceEntryChecking = false; promptForDevice(); });
 }
 
+function refreshOnResume() {
+  if (isUnmounted) return;
+  refreshAppState();
+  void checkUpdateOnOpen();
+}
+
 function handleVisibilityChange() {
   if (document.visibilityState === 'visible') refreshOnResume();
+  else pauseUpdateCheck();
 }
 
 onMounted(async () => {
@@ -837,7 +856,10 @@ onMounted(async () => {
     .then(async (stop) => {
       if (isUnmounted) stop();
       else stopCloud = stop;
-      if (!isUnmounted) { await cloudClient.sync().catch(() => {}); deviceEntryChecking = false; promptForDevice(); }
+      if (!isUnmounted) {
+        updateReady.value = true;
+        await cloudClient.sync().catch(() => {}); deviceEntryChecking = false; promptForDevice();
+      }
     })
     .catch((error) => showFeedback(error.message, 'error', { title: '云端连接未启动' }));
 
@@ -845,6 +867,7 @@ onMounted(async () => {
     try {
       const listener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
         if (isActive) refreshOnResume();
+        else pauseUpdateCheck();
       });
       if (isUnmounted) listener.remove();
       else appStateListener = listener;

@@ -16,7 +16,7 @@
     <div v-if="!displayed.length" class="customer-empty">
       <UsersRound :size="34" aria-hidden="true" />
       <h3>{{ query.trim() ? '未找到符合条件的会员' : filter === 'debt' ? '目前没有欠款会员' : filter === 'low' ? '目前没有低余额会员' : '还没有会员档案' }}</h3>
-      <p>{{ query.trim() ? '试试姓名、完整手机号或手机尾号' : '登记会员后，即可扣款、充值和查看记录' }}</p>
+      <p>{{ query.trim() ? '试试姓名、手机号、手机尾号或辨识备注' : '登记会员后，即可扣款、充值和查看记录' }}</p>
       <button v-if="filter !== 'all'" type="button" class="customer-empty-secondary" @click="$emit('update:filter', 'all')">查看全部会员</button>
       <button v-if="!query.trim() || filter === 'all'" type="button" class="customer-empty-primary" :disabled="!canCreate" @click="$emit('create')">＋ 登记新会员</button>
     </div>
@@ -26,7 +26,8 @@
           <span class="customer-avatar" aria-hidden="true">{{ member.name.charAt(0) }}</span>
           <span class="customer-identity">
             <strong>{{ member.name }}</strong>
-            <span class="customer-phone">{{ phone(member.phone) }}</span>
+            <span class="customer-phone">{{ phone(member.phone) || '未留手机号' }}</span>
+            <span v-if="member.notes" class="customer-notes line-clamp-2 break-words text-sm text-amber-800" :title="member.notes">{{ member.notes }}</span>
             <span class="customer-visit">{{ visitLabel(member.id) }}</span>
           </span>
         </button>

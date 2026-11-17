@@ -43,6 +43,7 @@ test('AdminApiClient voice configuration and synthesis methods', async () => {
           status: 200,
           json: async () => ({
             enabled: true,
+            version: 0,
             provider: 'fish_audio',
             apiUrl: '',
             apiKey: 'sk-f****1234',
@@ -96,9 +97,10 @@ test('AdminApiClient voice configuration and synthesis methods', async () => {
     enabled: true,
     provider: 'heygen',
     apiKey: 'sk_heygen_new_key'
-  });
+  }, config.version);
   assert.equal(saved.provider, 'heygen');
   assert.equal(saved.hasApiKey, true);
+  assert.equal(JSON.parse(requests.find(request => request.path === '/api/v1/voice/config' && request.method === 'POST').body).expectedVersion, 0);
 
   // 3. Synthesize voice
   const blob = await client.synthesizeVoice({ text: '测试播报文本' });

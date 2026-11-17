@@ -40,7 +40,7 @@ beforeEach(async () => {
   local.createMember({ name: '张三', phone: '13800001234', initialBalance: 100 });
   memberId = local.readBackupState().members[0].id;
   await service.bootstrap(identity, { id: randomUUID(), data: local.readBackupState() });
-  await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: secret, allowedDevices: ['device-a', 'device-b'] } });
+  await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: secret, allowedDevices: ['device-a', 'device-b'] } }, 0);
 });
 const request = (utterance, extra = {}) => ({ requestId: randomUUID(), sessionId: 'session-shared', utterance,
   context: { System: { device: { deviceOpenId: 'device-a' }, user: { userOpenId: 'voice-user' } } }, ...extra });
@@ -361,7 +361,7 @@ test('session IDs are isolated by device, platform user, store, and explicit pre
   const other = await service.createOwner({ username: 'other', password });
   const login = await service.login({ username: 'other', password, deviceId: randomUUID() }, 'local');
   const otherIdentity = await service.authenticate(login.accessToken);
-  await service.saveVoiceConfig(otherIdentity, { aligenie: { enabled: true, actorId: otherIdentity.id, token: secret, allowedDevices: ['device-a'] } });
+  await service.saveVoiceConfig(otherIdentity, { aligenie: { enabled: true, actorId: otherIdentity.id, token: secret, allowedDevices: ['device-a'] } }, 0);
   await send(request('确认', { confirmationRequestId: preview.requestId }), service, other.storeId);
   assert.equal(await balance(), 10000);
   await send(request('确认', { confirmationRequestId: 'old-preview' }));
@@ -436,7 +436,7 @@ test('unsigned and legacy integrations fail closed and bound actors lose access 
 });
 
 test('only owners can test disabled synthesis, and no role can read saved credentials', async () => {
-  await service.saveVoiceConfig(identity, { apiKey: 'new-server-only-key', enabled: false, events: { consume: false, recharge: true } });
+  await service.saveVoiceConfig(identity, { apiKey: 'new-server-only-key', enabled: false, events: { consume: false, recharge: true } }, (await service.getVoiceConfig(identity)).version);
   const clerk = await service.createUser(identity, { username: 'clerk', password, displayName: '收银', role: 'clerk' });
   await service.createUser(identity, { username: 'viewer', password, displayName: '查看', role: 'viewer' });
   for (const username of ['owner', 'clerk', 'viewer']) {
@@ -454,7 +454,7 @@ test('only owners can test disabled synthesis, and no role can read saved creden
 });
 
 test('synthesis releases SQL connections before network IO and caps concurrency independently', async () => {
-  await service.saveVoiceConfig(identity, { apiKey: 'server-only-key', enabled: true });
+  await service.saveVoiceConfig(identity, { apiKey: 'server-only-key', enabled: true }, (await service.getVoiceConfig(identity)).version);
   let calls = 0, releaseNetwork;
   const pending = new Promise(resolve => { releaseNetwork = resolve; });
   const instance = createService(pool, { fetchFn: async () => {
@@ -547,7 +547,7 @@ test('expired voice previews cannot execute and must be issued again', async () 
 });
 
 test('Xfyun service synthesis respects draft authorization and releases SQL connections before opening WebSocket', async () => {
-  await service.saveVoiceConfig(identity, { provider: 'xfyun', appId: 'testappid', apiKey: 'ak-server-password', enabled: false });
+  await service.saveVoiceConfig(identity, { provider: 'xfyun', appId: 'testappid', apiKey: 'ak-server-password', enabled: false }, (await service.getVoiceConfig(identity)).version);
   let sent;
   const instance = createService(pool, { socketFn: async (_url, options) => {
     assert.equal(leases, 0); assert.equal(options.headers['x-api-key'], 'ak-server-password');

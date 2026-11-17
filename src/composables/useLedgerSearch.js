@@ -23,7 +23,7 @@ export function useLedgerSearch({
   });
 
   const searchPlaceholder = computed(() =>
-    activeTab.value === 'ledgers' ? '搜索姓名、手机号、服务项目或备注…' : '姓名 / 手机号 / 手机尾号'
+    activeTab.value === 'ledgers' ? '搜索姓名、手机号、服务项目或备注…' : '姓名 / 手机号 / 手机尾号 / 备注'
   );
 
   const filteredLedgersList = computed(() => {

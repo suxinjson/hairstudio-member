@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import { canonicalJSON, mutationPrecondition } from '../sync-protocol.js';
+import { sameNameMembers, sameNameMemberPrompt, memberIdentitySignature } from '../member-identity.js';
 
 export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, showFeedback, askConfirm, selectedMember }) {
   const showMemberModal = ref(false);
@@ -37,20 +38,33 @@ export function useMemberCrud({ localDb, refreshAll, selectMember, showToast, sh
   }
 
   async function submitMemberForm() {
-    if (isSavingMember.value) return;
+    if (isSavingMember.value || !showMemberModal.value) return;
     isSavingMember.value = true;
     try {
+      const form = memberForm.value, memberId = editingMemberId.value;
+      const draft = { ...form };
+      const identity = { ...draft, id: memberId };
+      const matches = sameNameMembers(localDb.getMembers(), identity);
+      if (matches.length) {
+        const signature = memberIdentitySignature(matches);
+        const confirmed = await askConfirm(sameNameMemberPrompt(identity, matches));
+        if (!confirmed || !showMemberModal.value || memberForm.value !== form || editingMemberId.value !== memberId) return;
+        if (canonicalJSON(draft) !== canonicalJSON(memberForm.value)) throw new Error('填写的会员资料已变化，请核对后重新保存');
+        if (signature !== memberIdentitySignature(sameNameMembers(localDb.getMembers(), identity))) {
+          throw new Error('同名会员资料已变化，请核对后重新保存');
+        }
+      }
       if (editingMemberId.value) {
         const current = mutationPrecondition({ members: localDb.getMembers() }, 'updateMember', [editingMemberId.value]);
         if (canonicalJSON(current) !== canonicalJSON(editBaseline)) throw new Error('会员档案已变化，请重新打开编辑窗口核对后保存');
-        let updated = localDb.updateMember(editingMemberId.value, memberForm.value);
+        let updated = localDb.updateMember(editingMemberId.value, draft);
         if (updated?.then) updated = await updated;
         showMemberModal.value = false;
         showToast('会员档案修改成功！');
         refreshAll();
         selectMember(updated);
       } else {
-        let created = localDb.createMember(memberForm.value);
+        let created = localDb.createMember(draft);
         if (created?.then) created = await created;
         showMemberModal.value = false;
         showToast(`会员 ${created.name} 建档成功！`);

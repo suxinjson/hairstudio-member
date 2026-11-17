@@ -20,10 +20,16 @@ const keypadPath = join(directory, 'keypad.mjs');
 const cloudSettingsPath = join(directory, 'cloud-settings.mjs');
 const customersPath = join(directory, 'customers.mjs');
 const nativeAppPath = join(directory, 'native-app.mjs');
-await writeFile(nativeAppPath, 'export const App = { addListener() { throw new Error("Unexpected native subscription"); }, async exitApp() {} };');
+await writeFile(nativeAppPath, 'export const App = { addListener() { throw new Error("Unexpected native subscription"); }, getInfo() { throw new Error("Unexpected native app info request"); }, async exitApp() {} };');
 const nativeAppUrl = pathToFileURL(nativeAppPath).href;
 const { App: nativeApp } = await import(nativeAppUrl);
 const { Capacitor } = await import('@capacitor/core');
+// Exercise the real update checker while supplying Android's app version locally.
+Capacitor.PluginHeaders = [{ name: 'App', methods: [{ name: 'getInfo', rtype: 'promise' }] }];
+Capacitor.nativePromise = async (plugin, method) => {
+  assert.equal(plugin, 'App');
+  return nativeApp[method]();
+};
 
 const compiledCache = new Map();
 
@@ -560,7 +566,7 @@ test('consumption broadcasts only after confirmation and keeps its receipt when 
 });
 
 for (const type of ['consume', 'recharge']) {
-  for (const field of ['name', 'phone']) {
+  for (const field of ['name', 'phone', 'notes']) {
     test(`${type} requires a new identity confirmation after the member ${field} changes`, async t => {
       const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => true);
       const member = localDb.createMember({ name: '张三', phone: '13800006003', initialBalance: 100 });
@@ -571,7 +577,7 @@ for (const type of ['consume', 'recharge']) {
         await openRecharge(); await inputValue('#recharge-pay', '10');
         button('核对充值信息').click(); await nextTick();
       }
-      const changed = { name: '李四', phone: '13900006003' };
+      const changed = { name: '李四', phone: '13900006003', notes: '东区门店熟客' };
       localDb.updateMember(member.id, { [field]: changed[field] });
       const before = localDb.getLedgers().length;
       button(type === 'consume' ? '确认扣款' : '确认充值').click(); await nextTick();
@@ -784,6 +790,110 @@ test('a new member can be saved through the app form with a name and no phone', 
   assert.equal(document.body.textContent.includes('当前账本无法读取'), false);
 });
 
+test('a blank-phone duplicate warns before saving, preserves inputs and allows a distinguishing name suffix', async () => {
+  const original = localDb.createMember({ name: '张姐', phone: '13800001111', notes: '西区熟客', initialBalance: 100 });
+  await mount();
+  await inputValue('header input', '未匹配的筛选');
+  button('登记会员').click(); await nextTick();
+  await inputValue('input[placeholder="如：张姐 / 8号熟客"]', ' 张姐 ');
+  await inputValue('input[type="tel"]', '   ');
+  await inputValue('input[type="number"]', '20.50');
+  await inputValue('textarea', '东区熟客');
+  button('保存档案').click(); await nextTick();
+  const warning = document.querySelector('.confirm-dialog');
+  assert.match(warning.textContent, /发现同名会员/);
+  assert.match(warning.textContent, /填写手机号/);
+  assert.match(warning.textContent, /备注.*括号/);
+  assert.match(warning.textContent, /西区熟客/);
+  assert.equal(localDb.getMembers().length, 1);
+  assert.equal(localDb.getLedgers().length, 1);
+  button('返回补充').click(); await nextTick();
+  assert.equal(document.querySelector('input[type="number"]').value, '20.50');
+  assert.equal(document.querySelector('textarea').value, '东区熟客');
+  await inputValue('input[placeholder="如：张姐 / 8号熟客"]', '张姐（东区）');
+  button('保存档案').click(); await nextTick();
+  assert.equal(document.querySelector('.confirm-dialog'), null);
+  assert.equal(localDb.getMembers().length, 2);
+  assert.equal(localDb.getMembers().find(member => member.id !== original.id).balance, 2050);
+  assert.equal(localDb.getMemberById(original.id).balance, 10000);
+});
+
+for (const native of [true, false]) {
+  test(`${native ? 'native' : 'web cashier'} requires explicit confirmation for same-name blank-phone registration`, async t => {
+    const original = localDb.createMember({ name: '张姐', notes: '西区熟客', initialBalance: 100 });
+    const fixture = native ? null : webFixture(t);
+    await mount(); if (!native) await loginWeb();
+    const db = fixture?.web.getDb() || localDb;
+    button('登记会员').click(); await nextTick();
+    await inputValue('input[placeholder="如：张姐 / 8号熟客"]', '张姐');
+    await inputValue('textarea', '东区熟客');
+    button('保存档案').click(); await nextTick();
+    button('保存档案').click(); await nextTick();
+    assert.equal(document.querySelectorAll('.confirm-dialog').length, 1);
+    assert.equal(db.getMembers().length, 1);
+    button('仍然保存').click(); await flushWeb();
+    // Server snapshot verification uses async crypto and may finish later under
+    // the full suite's load; wait for the confirmed member instead of fixed ticks.
+    const deadline = Date.now() + 5000;
+    while (db.getMembers().length < 2 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    await flushWeb();
+    const all = db.getMembers();
+    assert.equal(all.length, 2);
+    assert.equal(all.find(member => member.id !== original.id).notes, '东区熟客');
+    assert.equal(db.getMemberById(original.id).balance, 10000);
+    assert.equal(document.querySelector('input[placeholder="如：张姐 / 8号熟客"]'), null);
+    await inputValue('header input', '东区熟客');
+    assert.equal(document.querySelectorAll('.customer-row').length, 1);
+    assert.match(document.querySelector('.customer-notes').textContent, /东区熟客/);
+    if (fixture) assert.equal(fixture.requests.filter(request => request.path === '/api/v1/sync').length, 1);
+  });
+}
+
+for (const change of ['clear-phone', 'rename']) {
+  test(`editing a member warns about duplicate identity after ${change}`, async () => {
+    const original = localDb.createMember({ name: change === 'rename' ? '李姐' : '张姐', phone: '13800001111' });
+    localDb.createMember({ name: '张姐', notes: '另一位熟客' });
+    await mount();
+    [...document.querySelectorAll('.customer-row')].find(row => row.textContent.includes('138 0000 1111')).querySelector('.customer-open').click();
+    await nextTick(); button('修改档案').click(); await nextTick();
+    await inputValue('input[placeholder="如：张姐 / 8号熟客"]', '张姐');
+    await inputValue('input[type="tel"]', '');
+    button('保存档案').click(); await nextTick();
+    assert.match(document.querySelector('.confirm-dialog').textContent, /已有 1 位/);
+    button('返回补充').click(); await nextTick();
+    assert.equal(localDb.getMemberById(original.id).phone, '13800001111');
+    await inputValue('input[type="tel"]', '13900001111');
+    button('保存档案').click(); await nextTick();
+    assert.equal(document.querySelector('.confirm-dialog'), null);
+    assert.equal(localDb.getMemberById(original.id).phone, '13900001111');
+  });
+}
+
+test('a changed same-name profile invalidates the open confirmation without creating a member', async () => {
+  const original = localDb.createMember({ name: '张姐', notes: '旧备注' });
+  await mount(); button('登记会员').click(); await nextTick();
+  await inputValue('input[placeholder="如：张姐 / 8号熟客"]', '张姐');
+  button('保存档案').click(); await nextTick();
+  localDb.updateMember(original.id, { notes: '更新后的辨识备注' });
+  button('仍然保存').click(); await flushWeb();
+  assert.equal(localDb.getMembers().length, 1);
+  assert.match(document.querySelector('#feedback-title').parentElement.textContent, /同名会员资料已变化/);
+  button('知道了').click(); await nextTick();
+  button('保存档案').click(); await nextTick();
+  assert.match(document.querySelector('.confirm-dialog').textContent, /更新后的辨识备注/);
+  button('返回补充').click(); await nextTick();
+});
+
+test('archived same-name members do not warn on a new registration', async () => {
+  const original = localDb.createMember({ name: '张姐' }); localDb.deleteMember(original.id);
+  await mount(); button('登记会员').click(); await nextTick();
+  await inputValue('input[placeholder="如：张姐 / 8号熟客"]', '张姐');
+  button('保存档案').click(); await nextTick();
+  assert.equal(document.querySelector('.confirm-dialog'), null);
+  assert.equal(localDb.getMembers().length, 1);
+  assert.notEqual(localDb.getMembers()[0].id, original.id);
+});
+
 test('the app member form can clear a phone and later add it back', async () => {
   const member = localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
@@ -908,6 +1018,61 @@ test('native app activation refreshes daily totals and removes its listener on u
   assert.equal(remove.mock.callCount(), 1);
   assert.equal(removeBack.mock.callCount(), 1);
 });
+
+for (const lifecycle of ['visibility', 'native']) {
+  test(`${lifecycle} reopening checks and prompts again, while midnight in the background stays silent`, async t => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date(2026, 10, 2, 23, 59, 59) });
+    const user = { id: 'owner-update', storeId: 'store-update', role: 'owner', displayName: '测试店主' };
+    const state = { ...getCloudState(), user, binding: { storeId: user.storeId }, serverUrl: 'https://member.example.com',
+      online: true, syncLoginRequired: false, deviceAccess: { ready: true, allowed: true } };
+    saveCloudState(state);
+    t.mock.method(cloudClient, 'snapshot', () => state);
+    t.mock.method(cloudClient, 'subscribe', callback => { callback(state); return () => {}; });
+    t.mock.method(cloudClient, 'start', async () => () => {});
+    t.mock.method(cloudClient, 'sync', async () => {});
+    const appId = 'com.hairstudio.memberapp', hash = 'a'.repeat(64);
+    t.mock.method(nativeApp, 'getInfo', async () => ({ build: '69', id: appId }));
+    const request = t.mock.method(cloudClient, 'request', async path => {
+      assert.equal(path, '/updates/latest');
+      return { versionCode: 70, versionName: '1.0.70', notes: '修复记账与同步问题', appId, sha256: hash,
+        certificateSha256: 'b'.repeat(64), size: 100, downloadPath: '/api/v1/updates/files/' + hash + '.apk' };
+    });
+    let onAppStateChange;
+    t.mock.method(nativeApp, 'addListener', async (event, listener) => {
+      if (event === 'appStateChange') onAppStateChange = listener;
+      return { remove: async () => {} };
+    });
+    t.after(() => { delete document.visibilityState; });
+    const changeVisibility = visible => {
+      Object.defineProperty(document, 'visibilityState', { value: visible ? 'visible' : 'hidden', configurable: true });
+      document.dispatchEvent(new dom.window.Event('visibilitychange'));
+    };
+    const setActive = active => lifecycle === 'native' ? onAppStateChange({ isActive: active }) : changeVisibility(active);
+    await mount(); await flushWeb();
+    assert.equal(request.mock.callCount(), 1);
+    assert.match(document.querySelector('.confirm-dialog').textContent, /发现新版本 1\.0\.70/);
+    button('稍后再说').click(); await flushWeb();
+    for (let opening = 2; opening <= 3; opening++) {
+      setActive(false); setActive(false);
+      t.mock.timers.tick(1000); await flushWeb();
+      assert.equal(request.mock.callCount(), opening - 1);
+      assert.equal(document.querySelector('.confirm-dialog'), null);
+      setActive(true);
+      // Android and the WebView can both report the same foreground transition.
+      changeVisibility(true);
+      onAppStateChange({ isActive: true });
+      window.dispatchEvent(new dom.window.Event('focus'));
+      await flushWeb();
+      assert.equal(request.mock.callCount(), opening);
+      assert.equal(document.querySelectorAll('.confirm-dialog').length, 1);
+      assert.match(document.querySelector('.confirm-dialog').textContent, /发现新版本 1\.0\.70/);
+      button(opening === 2 ? '稍后再说' : '前往更新').click(); await flushWeb();
+    }
+    assert.match(document.body.textContent, /新版本 1\.0\.70/);
+    assert.ok(button('下载并安装更新'));
+    assert.equal(request.mock.callCount(), 3);
+  });
+}
 
 test('a native listener that finishes registering after unmount is removed immediately', async t => {
   t.mock.method(Capacitor, 'isNativePlatform', () => true);
@@ -1721,6 +1886,7 @@ function voiceSettingsSession(t, { role = 'owner', online = true } = {}) {
 }
 
 const appVoiceConfig = () => ({ enabled: false, provider: 'xfyun', apiUrl: 'wss://tts-api.xfyun.cn/v2/tts', appId: 'testappid',
+  version: 5,
   hasApiKey: true, serverXfyunConfigured: true, voiceId: 'x4_xiaoyan', volume: 0.8,
   events: { consume: true, recharge: true }, templates: { consume: '{name}消费{amount}元', recharge: '{name}充值{amount}元' },
   aligenie: { enabled: false, hasToken: true, actorId: '11111111-1111-4111-8111-111111111111', allowedDevices: ['speaker-1'], verificationFile: 'verify.txt', verificationContent: 'platform-verification' } });
@@ -1733,7 +1899,7 @@ test('App owner edits and saves voice switches, voices, volume, templates and Al
   t.mock.method(cloudClient, 'getUsers', async () => [
     { ...user, active: true }, { ...user, id: 'viewer', active: true, role: 'viewer' }, { ...user, id: 'inactive', active: false }
   ]);
-  const save = t.mock.method(cloudClient, 'saveVoiceConfig', async payload => ({ ...payload, apiKey: '', hasApiKey: true, aligenie: { ...payload.aligenie, token: undefined, hasToken: true } }));
+  const save = t.mock.method(cloudClient, 'saveVoiceConfig', async (payload, expectedVersion) => ({ ...payload, version: expectedVersion + 1, apiKey: '', hasApiKey: true, aligenie: { ...payload.aligenie, token: undefined, hasToken: true } }));
   const stop = t.mock.method(appVoicePlayer, 'stop', () => {});
   await mount(); await settings('voice'); await flushVoiceSettings();
   assert.equal(document.querySelector('input[type="password"]').value, '');
@@ -1753,6 +1919,7 @@ test('App owner edits and saves voice switches, voices, volume, templates and Al
   button('保存播报配置').click(); button('保存播报配置').click(); await flushVoiceSettings();
   assert.equal(save.mock.callCount(), 1);
   const payload = save.mock.calls[0].arguments[0];
+  assert.equal(save.mock.calls[0].arguments[1], 5);
   assert.equal(payload.enabled, true); assert.equal(payload.voiceId, 'aisjinger'); assert.equal(payload.volume, 0.45);
   assert.deepEqual(payload.events, { consume: false, recharge: true });
   assert.equal(payload.templates.consume, '{name}付款{amount}元，剩余{balance}元');

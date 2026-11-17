@@ -373,7 +373,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
           // Check before uploading: a pending write must not advance a rolled-back
           // server to the previously observed revision and hide the rollback.
           let checkedHead = null;
-          if (!getCloudState().bootstrap) {
+          if (!getCloudState().bootstrap && getCloudState().outbox.length) {
             checkedHead = await request('/account/head');
             assertRemoteHead(checkedHead);
           }
@@ -532,7 +532,7 @@ export function createCloudClient({ fetch: requestFetch = (...args) => fetch(...
     getVoiceConfig() { return request('/voice/config'); },
     getAliGenieDevices() { return request('/voice/aligenie/devices'); },
     getUsers() { return request('/users'); },
-    saveVoiceConfig(config) { return request('/voice/config', config, 'POST'); },
+    saveVoiceConfig(config, expectedVersion) { return request('/voice/config', { ...config, expectedVersion }, 'POST'); },
     previewVoice(options, { signal } = {}) {
       const { text, provider, apiUrl, apiKey, appId, model, voiceId } = options;
       return request('/voice/synthesize', { text, test: true, provider, apiUrl, apiKey, appId, model, voiceId }, 'POST', { responseType: 'blob', timeoutMs: 130000, signal });

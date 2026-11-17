@@ -59,8 +59,10 @@ CREATE TABLE IF NOT EXISTS releases (
 CREATE TABLE IF NOT EXISTS store_settings (
   store_id uuid PRIMARY KEY REFERENCES stores(id),
   voice_config jsonb NOT NULL DEFAULT '{}',
+  voice_config_version integer NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS voice_config_version integer NOT NULL DEFAULT 0;
 
 -- Pending preview and response are committed atomically with voice financial writes.
 CREATE TABLE IF NOT EXISTS voice_dialogs (

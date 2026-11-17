@@ -208,6 +208,8 @@
       <div class="admin-modal-surface bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-slate-100">
         <h3 class="text-lg font-black text-slate-900 mb-1">为 {{ rechargingMember.name }} 充值</h3>
         <p class="text-xs text-slate-400 mb-4">当前可用余额：¥{{ formatYuan(rechargingMember.balance) }}</p>
+        <p class="mb-2 text-sm text-slate-600">手机号：{{ maskPhone(rechargingMember.phone, showFullPhone) || '未留手机号' }}</p>
+        <p v-if="rechargingMember.notes" class="mb-3 text-sm text-amber-800 break-words">会员备注：{{ rechargingMember.notes }}</p>
 
         <div class="space-y-3">
           <div>
@@ -320,6 +322,16 @@
           {{ editError }}
         </div>
 
+        <div v-if="duplicateMemberWarning" role="alert" class="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          <h4 class="font-black">发现同名会员</h4>
+          <p class="mt-2 whitespace-pre-line break-words">{{ duplicateMemberWarning.message }}</p>
+          <div class="mt-3 flex gap-2">
+            <button type="button" @click="duplicateMemberWarning = null" class="flex-1 rounded-lg bg-emerald-700 px-3 py-2 font-bold text-white">返回补充</button>
+            <button type="button" @click="submitMemberForm(duplicateMemberWarning.signature)" :disabled="isSubmitting"
+              class="flex-1 rounded-lg border border-amber-400 px-3 py-2 font-bold disabled:opacity-50">仍然保存</button>
+          </div>
+        </div>
+
         <div class="mt-6 flex gap-2.5">
           <button
             @click="editingMember = null"
@@ -328,7 +340,7 @@
             取消
           </button>
           <button
-            @click="submitMemberForm"
+            @click="submitMemberForm()"
             :disabled="!editForm.name.trim() || isSubmitting"
             class="flex-1 h-11 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-black text-sm disabled:opacity-50"
           >
@@ -352,6 +364,7 @@ import { normalizeMemberPhone } from '../../../src/accounting.js';
 import { memberTagText } from '../../../src/member-tags.js';
 import { voicePlayer } from '../utils/voice-player.js';
 import { canonicalJSON, mutationPrecondition } from '../../../src/sync-protocol.js';
+import { sameNameMembers, sameNameMemberPrompt, memberIdentitySignature } from '../../../src/member-identity.js';
 
 const props = defineProps({
   members: { type: Array, default: () => [] },
@@ -501,6 +514,8 @@ const editingMember = ref(null);
 let editBaseline = null;
 const editForm = ref({ name: '', phone: '', initialBalanceStr: '', tag: '', remark: '' });
 const editError = ref('');
+const duplicateMemberWarning = ref(null);
+watch(editForm, () => { duplicateMemberWarning.value = null; }, { deep: true, flush: 'sync' });
 
 function openNewModal() {
   editBaseline = null;
@@ -524,8 +539,8 @@ function openEditModal(member) {
   editError.value = '';
 }
 
-async function submitMemberForm() {
-  if (isSubmitting.value) return;
+async function submitMemberForm(confirmedSignature = '') {
+  if (isSubmitting.value || !editingMember.value) return;
   const name = editForm.value.name.trim();
   const rawPhone = editForm.value.phone.trim();
   const phone = normalizeMemberPhone(rawPhone);
@@ -538,6 +553,15 @@ async function submitMemberForm() {
     editError.value = '手机号必须为11位数字';
     return;
   }
+
+  const identity = { id: editingMember.value.id, name, phone };
+  const matches = sameNameMembers(props.members, identity);
+  const signature = canonicalJSON([identity.id || null, editForm.value, memberIdentitySignature(matches)]);
+  if (matches.length && signature !== confirmedSignature) {
+    duplicateMemberWarning.value = { ...sameNameMemberPrompt(identity, matches), signature };
+    return;
+  }
+  duplicateMemberWarning.value = null;
 
   isSubmitting.value = true;
   editError.value = '';

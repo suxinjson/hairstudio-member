@@ -434,7 +434,7 @@
         :disabled="isSaving"
         class="h-11 px-5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition disabled:opacity-50"
       >
-        取消修改
+        {{ configChanged ? '重新加载配置' : '取消修改' }}
       </button>
       <button
         type="button"
@@ -477,7 +477,7 @@ const DEFAULTS = {
 
 const isOwner = computed(() => props.user?.role === 'owner');
 const webhookUrl = computed(() => props.serverUrl ? props.serverUrl + '/api/v1/voice/aligenie' : '');
-const loaded = ref(false), isLoading = ref(false);
+const loaded = ref(false), isLoading = ref(false), configVersion = ref(null), configChanged = ref(false);
 let alive = true, loadSequence = 0, tipTimer = null, previewSequence = 0;
 
 const form = reactive({
@@ -608,11 +608,13 @@ async function loadConfig() {
   if (isSaving.value) return;
   deviceLoadSequence++; candidateDevices.value = []; devicesChecked.value = false; isLoadingDevices.value = false;
   const sequence = ++loadSequence;
-  loaded.value = false; isLoading.value = true;
+  loaded.value = false; isLoading.value = true; configChanged.value = false;
   try {
     const [data, users] = await Promise.all([props.api.getVoiceConfig(), isOwner.value ? props.api.getUsers() : []]);
     if (!alive || sequence !== loadSequence) return;
     if (!Object.hasOwn(DEFAULTS, data.provider || 'fish_audio')) throw new Error('语音服务商配置无效');
+    if (!Number.isSafeInteger(data.version) || data.version < 0) throw new Error('语音配置版本无效，请更新服务器后重试');
+    configVersion.value = data.version;
     testText.value = `欢迎光临${data.storeName || '我的门店'}，张三消费 50 元，卡内余额 200 元`;
     form.enabled = Boolean(data.enabled);
     form.provider = data.provider || 'fish_audio';
@@ -729,8 +731,14 @@ async function handleSave() {
       }
     };
 
-    const result = await props.api.saveVoiceConfig(payload);
+    const result = await props.api.saveVoiceConfig(payload, configVersion.value);
     if (!alive) return;
+    if (!Number.isSafeInteger(result?.version) || result.version <= configVersion.value) {
+      loaded.value = false;
+      throw new Error('请重新加载语音配置，核对本次提交结果');
+    }
+    configVersion.value = result.version;
+    configChanged.value = false;
     hasSavedKey.value = Boolean(result.hasApiKey);
     serverXfyunConfigured.value = Boolean(result.serverXfyunConfigured);
     serverXfyunAppId.value = result.appId || form.appId;
@@ -740,7 +748,10 @@ async function handleSave() {
     emit('saved', result);
     showTip('语音播报配置已成功保存！', 'success');
   } catch (err) {
-    if (alive) showTip('保存配置失败: ' + err.message, 'error');
+    if (alive) {
+      configChanged.value = err.code === 'VOICE_CONFIG_CHANGED';
+      showTip(configChanged.value ? '配置已被其他页面修改，请重新加载后核对再保存' : '保存配置失败: ' + err.message, 'error');
+    }
   } finally {
     isSaving.value = false;
   }

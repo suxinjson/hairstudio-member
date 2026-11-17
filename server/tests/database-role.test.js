@@ -53,7 +53,7 @@ test('migration preserves existing accounts and runtime grants support business 
     const next = await service.createUser(identity, { username: 'clerk', password, displayName: '店员', role: 'clerk' });
     await service.updateUser(identity, next.id, { active: false, role: 'viewer' });
     const secret = 'runtime-signing-secret-' + randomUUID();
-    await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: secret, allowedDevices: ['runtime-device'] } });
+    await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: secret, allowedDevices: ['runtime-device'] } }, 0);
     const preview = { requestId: randomUUID(), sessionId: 'runtime-session', utterance: '导入客户充值20元', context: { System: { device: { deviceOpenId: 'runtime-device' }, user: { userOpenId: 'runtime-user' } } } };
     const voice = body => { const timestamp = String(Date.now()); return service.handleAliGenieWebhook(body, { headers: { 'x-store-id': identity.store_id, 'x-aligenie-timestamp': timestamp, 'x-aligenie-signature': signAliGenieRequest(secret, timestamp, identity.store_id, body) } }); };
     await voice(preview);

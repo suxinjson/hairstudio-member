@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { moneyToCent } from '../../../src/money.js';
 import { normalizeMemberPhone } from '../../../src/accounting.js';
+import { normalizeMemberName } from '../../../src/member-identity.js';
 import { parseImportBuffer, IMPORT_LIMITS, assertImportRowsBudget } from './import-parser.js';
 
 // 防 CSV / Excel 公式注入 (Formula Injection) 安全清洗
@@ -257,7 +258,7 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
         rowNum,
         status: 'conflict',
         reason: `系统已存在该会员 [${existingMember.name}] - ${strategyDesc}`,
-        existingMember,
+        existingMember: JSON.parse(JSON.stringify(existingMember)),
         data: {
           name: rawName,
           phone: cleanPhone,
@@ -285,12 +286,32 @@ export function validateImportBatch(dataRows, mapping, existingMembers = [], opt
     }
   }
 
+  // Names only identify candidates for review; they must never merge accounts.
+  const existingNames = new Set(), fileNameCounts = new Map();
+  for (const member of existingMembers) {
+    const name = normalizeMemberName(member.name);
+    if (name && !member.isArchived) existingNames.add(name);
+  }
+  for (const item of results) {
+    if (item.status === 'invalid') continue;
+    const name = normalizeMemberName(item.data.name);
+    fileNameCounts.set(name, (fileNameCounts.get(name) || 0) + 1);
+  }
+  for (const item of results) {
+    if (item.status !== 'valid_new' || item.data.phone) continue;
+    const name = normalizeMemberName(item.data.name);
+    if (existingNames.has(name) || fileNameCounts.get(name) > 1) {
+      item.sameNameWarning = '未填写手机号，已有档案或本次文件中存在同名会员，请补充手机号、辨识备注或姓名括号备注，并核对是否为不同会员';
+    }
+  }
+
   return {
     total: dataRows.length,
     validCount,
     conflictCount,
     invalidCount,
     strategy,
+    sameNameCount: results.filter(item => item.sameNameWarning).length,
     debtCount: results.filter(item => item.status !== 'invalid' && item.data.balanceCents + item.data.giftCents < 0 &&
       (item.status === 'valid_new' || strategy === 'merge_balance')).length,
     results

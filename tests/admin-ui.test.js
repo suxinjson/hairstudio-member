@@ -237,11 +237,78 @@ test('PC member forms allow blank phones for creation and edits and reject malfo
   assert.ok(document.body.textContent.includes('手机号必须为11位数字'));
 });
 
+test('PC registration warns about blank-phone names and keeps the draft when returning to add a phone', async () => {
+  data.members[0].name = '张姐'; data.members[0].notes = '西区熟客';
+  const submitted = [];
+  await mount(Members, { members: data.members, submitOperations: async operations => { submitted.push(...operations); return {}; } });
+  button('登记会员').click(); await nextTick();
+  await input('input[placeholder="请输入会员姓名"]', ' 张姐 ');
+  await input('input[type="tel"]', '   ');
+  await input('textarea', '东区熟客');
+  button('确认保存').click(); await flush();
+  const warning = document.querySelector('[role="alert"]');
+  assert.match(warning.textContent, /发现同名会员/);
+  assert.match(warning.textContent, /填写手机号/);
+  assert.match(warning.textContent, /辨识.*括号/);
+  assert.match(warning.textContent, /西区熟客/);
+  assert.equal(submitted.length, 0);
+  button('返回补充').click(); await nextTick();
+  assert.equal(document.querySelector('textarea').value, '东区熟客');
+  await input('input[type="tel"]', '13900001111');
+  button('确认保存').click(); await flush();
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].args[0].phone, '13900001111');
+  assert.equal(submitted[0].args[0].notes, '东区熟客');
+});
+
+test('PC duplicate confirmation rechecks synchronized identities and submits exactly once', async () => {
+  data.members[0].name = '张姐'; data.members[0].notes = '旧备注';
+  const members = ref(data.members), submitted = [], pending = deferred();
+  await mount({ setup: () => () => h(Members, { members: members.value, submitOperations: async operations => {
+    submitted.push(...operations); return pending.promise;
+  } }) });
+  button('登记会员').click(); await nextTick();
+  await input('input[placeholder="请输入会员姓名"]', '张姐');
+  button('确认保存').click(); await nextTick();
+  members.value = [{ ...data.members[0], notes: '更新后的辨识备注' }];
+  adminApi.accountData.value = { ...data, members: members.value }; await nextTick();
+  button('仍然保存').click(); await flush();
+  assert.equal(submitted.length, 0);
+  assert.match(document.querySelector('[role="alert"]').textContent, /更新后的辨识备注/);
+  button('仍然保存').click(); await nextTick();
+  assert.equal(submitted.length, 1);
+  assert.equal(button('保存中').disabled, true);
+  button('保存中').click(); assert.equal(submitted.length, 1);
+  pending.resolve({}); await flush();
+  assert.equal(document.querySelector('input[placeholder="请输入会员姓名"]'), null);
+});
+
+test('PC edits exclude the current member and warn when clearing the phone creates a duplicate identity', async () => {
+  data.members[0].name = '张姐';
+  const members = [...data.members, { ...data.members[0], id: 'member-B', phone: '13900001111', notes: '另一位熟客' }];
+  adminApi.accountData.value = { ...data, members };
+  const submitted = [];
+  await mount(Members, { members, submitOperations: async operations => { submitted.push(...operations); return {}; } });
+  button('修改').click(); await nextTick();
+  await input('input[type="tel"]', '');
+  button('确认保存').click(); await nextTick();
+  assert.match(document.querySelector('[role="alert"]').textContent, /已有 1 位/);
+  assert.equal(submitted.length, 0);
+  await input('textarea', '东区熟客');
+  assert.equal(document.querySelector('[role="alert"]'), null);
+  button('确认保存').click(); await nextTick();
+  button('仍然保存').click(); await flush();
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].method, 'updateMember');
+  assert.equal(submitted[0].args[0], data.members[0].id);
+  assert.equal(submitted[0].args[1].notes, '东区熟客');
+});
+
 for (const [kind, csvText] of [
   ['blank phone cells', '会员姓名,手机号码,本金余额\n同名客户,,20\n同名客户,   ,30'],
   ['no phone column', '梦飞空间会员批量导入\n会员姓名,本金余额\n同名客户,20\n同名客户,30']
 ]) {
-  test(`PC import accepts ${kind} after mapping confirmation`, async t => {
+  test(`PC import accepts ${kind} after separate mapping and same-name confirmations`, async t => {
     let submitted;
     t.mock.method(adminApi, 'executeBatchImport', async items => { submitted = items; return { count: items.length }; });
     const existing = [...data.members, { ...data.members[0], id: 'blank-phone', name: '同名客户', phone: '' }];
@@ -255,12 +322,39 @@ for (const [kind, csvText] of [
     approve.checked = true; approve.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
     assert.equal(button('开始零损数据预检').disabled, false);
     button('开始零损数据预检').click(); await nextTick();
+    assert.equal(button('确认入库至系统账本').disabled, true);
+    assert.equal(submitted, undefined);
+    const sameName = [...document.querySelectorAll('label')].find(label => label.textContent.includes('这些同名记录')).querySelector('input');
+    assert.match(document.querySelector('[role="alert"]').textContent, /有 2 条/);
+    sameName.checked = true; sameName.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
     assert.equal(button('确认入库至系统账本').disabled, false);
+    button('开始零损数据预检').click(); await nextTick();
+    assert.equal(sameName.checked, false);
+    assert.equal(button('确认入库至系统账本').disabled, true);
+    sameName.checked = true; sameName.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
     button('确认入库至系统账本').click(); await flush();
     assert.equal(submitted.length, 2);
     assert.ok(submitted.every(item => item.status === 'valid_new' && item.data.phone === ''));
   });
 }
+
+test('refreshing members invalidates the visible import preview before submission', async t => {
+  const rows = ref(data.members);
+  const submit = t.mock.method(adminApi, 'executeBatchImport', async () => ({ count: 1 }));
+  await mount({ setup: () => () => h(ImportExport, { members: rows.value, ledgers: [] }) });
+  const csv = new TextEncoder().encode('会员姓名,手机号码,本金余额\n新增会员,13900001111,10');
+  const picker = document.querySelector('input[type="file"]');
+  Object.defineProperty(picker, 'files', { value: [{ name: 'members.csv', size: csv.length, arrayBuffer: async () => csv.buffer }] });
+  picker.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await flush();
+  const approval = document.querySelector('input[type="checkbox"]');
+  approval.checked = true; approval.dispatchEvent(new dom.window.Event('change', { bubbles: true })); await nextTick();
+  button('开始零损数据预检').click(); await nextTick();
+  assert.equal(button('确认入库至系统账本').disabled, false);
+  rows.value = [{ ...data.members[0], phone: '13900001111' }]; await nextTick();
+  const commit = [...document.querySelectorAll('button')].find(button => button.textContent.includes('确认入库至系统账本'));
+  assert.ok(!commit || commit.disabled);
+  assert.equal(submit.mock.callCount(), 0);
+});
 
 test('import requires separate column and debt confirmations before sending a negative balance task', async t => {
   let submitted;
@@ -412,11 +506,11 @@ for (const event of ['focus', 'visibilitychange']) {
 }
 
 test('owner stages a discovered speaker, removes the literal wildcard, and binds only when saving', async t => {
-  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ provider: 'fish_audio', hasApiKey: true,
+  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ provider: 'fish_audio', version: 8, hasApiKey: true,
     aligenie: { enabled: true, actorId: owner.id, allowedDevices: ['*','existing-device'], hasToken: true } }));
   t.mock.method(adminApi, 'getUsers', async () => [{ ...owner, active: true }]);
   t.mock.method(adminApi, 'getAliGenieDevices', async () => [{deviceOpenId:'new-speaker-id',lastSeenAt:'2026-11-07T08:00:00Z'}]);
-  const save = t.mock.method(adminApi, 'saveVoiceConfig', async config => ({...config,hasApiKey:true,aligenie:{...config.aligenie,hasToken:true}}));
+  const save = t.mock.method(adminApi, 'saveVoiceConfig', async (config, expectedVersion) => ({...config,version:expectedVersion+1,hasApiKey:true,aligenie:{...config.aligenie,hasToken:true}}));
   await mount(VoiceSettings);
   button('刷新待绑定音箱').click(); await flush();
   assert.ok(document.body.textContent.includes('new-speaker-id'));
@@ -427,13 +521,40 @@ test('owner stages a discovered speaker, removes the literal wildcard, and binds
   button('保存播报配置').click(); await flush();
   assert.deepEqual(save.mock.calls[0].arguments[0].aligenie.allowedDevices,['existing-device','new-speaker-id']);
   assert.equal(save.mock.calls[0].arguments[0].aligenie.token,'');
+  assert.equal(save.mock.calls[0].arguments[1], 8);
+});
+
+test('voice conflicts preserve draft inputs and use the new version only after explicitly reloading', async t => {
+  let current = { enabled: true, provider: 'fish_audio', version: 2, templates: { consume: '原模板' } };
+  t.mock.method(adminApi, 'getVoiceConfig', async () => current);
+  t.mock.method(adminApi, 'getUsers', async () => []);
+  const save = t.mock.method(adminApi, 'saveVoiceConfig', async (config, expectedVersion) => {
+    if (expectedVersion !== current.version) throw Object.assign(new Error('配置冲突'), { status: 409, code: 'VOICE_CONFIG_CHANGED' });
+    current = { ...config, version: expectedVersion + 1 };
+    return current;
+  });
+  await mount(VoiceSettings);
+  await input('[aria-label="消费播报语句"]', '我的草稿');
+  current = { ...current, enabled: false, version: 3, templates: { consume: '其他页面模板' } };
+  button('保存播报配置').click(); await flush();
+  assert.match(document.body.textContent, /已被其他页面修改/);
+  assert.equal(document.querySelector('[aria-label="消费播报语句"]').value, '我的草稿');
+  button('保存播报配置').click(); await flush();
+  assert.deepEqual(save.mock.calls.map(call => call.arguments[1]), [2, 2]);
+  button('重新加载配置').click(); await flush();
+  assert.equal(document.querySelector('[aria-label="消费播报语句"]').value, '其他页面模板');
+  assert.equal(document.querySelector('[aria-label="播报总开关"]').getAttribute('aria-checked'), 'false');
+  button('保存播报配置').click(); await flush();
+  button('保存播报配置').click(); await flush();
+  assert.deepEqual(save.mock.calls.map(call => call.arguments[1]), [2, 2, 3, 4]);
+  assert.equal(current.enabled, false);
 });
 
 test('owner voice settings use blank secret inputs and clear newly submitted credentials after saving', async t => {
-  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', apiKey: '', hasApiKey: true,
+  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', version: 0, apiKey: '', hasApiKey: true,
     aligenie: { enabled: true, actorId: owner.id, allowedDevices: ['test-device'], hasToken: true } }));
   t.mock.method(adminApi, 'getUsers', async () => [{ ...owner, active: true }]);
-  const save = t.mock.method(adminApi, 'saveVoiceConfig', async () => ({ hasApiKey: true, aligenie: { hasToken: true } }));
+  const save = t.mock.method(adminApi, 'saveVoiceConfig', async () => ({ version: 1, hasApiKey: true, aligenie: { hasToken: true } }));
   await mount(VoiceSettings);
   const secrets = document.querySelectorAll('input[type="password"]');
   assert.equal(secrets.length, 2); assert.equal(secrets[0].value, ''); assert.equal(secrets[1].value, '');
@@ -446,7 +567,7 @@ test('owner voice settings use blank secret inputs and clear newly submitted cre
 });
 
 test('switching providers resets API parameters and requires the matching provider key before preview', async t => {
-  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', hasApiKey: true,
+  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', version: 0, hasApiKey: true,
     apiUrl: 'https://api.fish.audio/v1/tts', model: 'fish-custom-model', voiceId: 'fish-custom-voice' }));
   t.mock.method(adminApi, 'getUsers', async () => []);
   const { voicePlayer } = await import('../admin/src/utils/voice-player.js');
@@ -474,12 +595,12 @@ test('switching providers resets API parameters and requires the matching provid
 });
 
 test('Xfyun settings preview uses the server password without exposing it to the browser and allows voice selection', async t => {
-  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', hasApiKey: false,
+  t.mock.method(adminApi, 'getVoiceConfig', async () => ({ enabled: false, provider: 'fish_audio', version: 0, hasApiKey: false,
     serverXfyunConfigured: true, appId: 'serverappid' }));
   t.mock.method(adminApi, 'getUsers', async () => []);
   const { voicePlayer } = await import('../admin/src/utils/voice-player.js');
   const preview = t.mock.method(voicePlayer, 'queueSpeak', async () => {});
-  const save = t.mock.method(adminApi, 'saveVoiceConfig', async config => ({ ...config, hasApiKey: true, serverXfyunConfigured: true }));
+  const save = t.mock.method(adminApi, 'saveVoiceConfig', async (config, expectedVersion) => ({ ...config, version: expectedVersion + 1, hasApiKey: true, serverXfyunConfigured: true }));
   await mount(VoiceSettings); button('讯飞在线语音').click(); await flush();
   assert.equal(document.querySelector('input[type="password"]').value, '');
   assert.equal(document.querySelector('input[placeholder="控制台的 APPID"]').value, 'serverappid');

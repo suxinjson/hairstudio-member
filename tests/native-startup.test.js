@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { createLocalDb } from '../src/storage.js';
+import { Capacitor } from '@capacitor/core';
+
+test('native module loading preserves access to a full local ledger without creating a browser admin identity', async t => {
+  const seed = new JSDOM('', { url: 'https://localhost' });
+  const ledger = createLocalDb(seed.window.localStorage);
+  ledger.init();
+  ledger.createMember({ name: '原有会员', phone: '13800001111', initialBalance: 100 });
+  ledger.saveLocalSnapshot('原有备份');
+  const entries = Object.entries(seed.window.localStorage);
+  const quota = entries.reduce((total, [key, value]) => total + key.length + value.length, 0) + 16;
+  const dom = new JSDOM('', { url: 'https://localhost', storageQuota: quota });
+  for (const [key, value] of entries) dom.window.localStorage.setItem(key, value);
+  const previous = globalThis.localStorage;
+  globalThis.localStorage = dom.window.localStorage;
+  t.after(() => { globalThis.localStorage = previous; seed.window.close(); dom.window.close(); });
+  t.mock.method(Capacitor, 'isNativePlatform', () => true);
+  assert.throws(() => localStorage.setItem('hairstudio_device_id', 'pc-admin-' + 'a'.repeat(36)), { name: 'QuotaExceededError' });
+  const before = Object.entries(localStorage);
+  const { cloudClient } = await import('../src/cloud-device.js');
+  const nativeDb = cloudClient.getDb();
+  nativeDb.init();
+  const backup = JSON.parse(nativeDb.exportBackupData({ archiveSnapshot: false }));
+  assert.equal(backup.data.members[0].balance, 10000);
+  assert.equal(nativeDb.getLocalSnapshots().length, 1);
+  assert.deepEqual(Object.entries(localStorage), before);
+  assert.equal(localStorage.getItem('hairstudio_device_id'), null);
+});

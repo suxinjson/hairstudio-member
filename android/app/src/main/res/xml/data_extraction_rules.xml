@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
-    <cloud-backup><exclude domain="sharedpref" path="member_cloud_vault.xml" /></cloud-backup>
-    <device-transfer><exclude domain="sharedpref" path="member_cloud_vault.xml" /></device-transfer>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="member_cloud_vault.xml" />
+        <exclude domain="root" path="app_webview" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="member_cloud_vault.xml" />
+        <exclude domain="root" path="app_webview" />
+    </device-transfer>
 </data-extraction-rules>

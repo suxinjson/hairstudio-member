@@ -458,18 +458,21 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
     async getVoiceConfig(identity) {
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
-        const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
+        const { rows } = await client.query('SELECT voice_config,voice_config_version FROM store_settings WHERE store_id=$1', [user.store_id]);
         const saved = rows[0]?.voice_config || {};
         const config = readVoiceConfig(saved);
-        return { ...publicVoiceConfig(config, user.role), storeName: (await readStoreProfile(client, user.store_id)).name };
+        return { ...publicVoiceConfig(config, user.role), version: rows[0]?.voice_config_version || 0, storeName: (await readStoreProfile(client, user.store_id)).name };
       });
     },
-    async saveVoiceConfig(identity, input) {
+    async saveVoiceConfig(identity, input, expectedVersion) {
       return transaction(pool, async client => {
         await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
         const user = await lockedUser(client, identity);
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以修改语音播报配置');
-        const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1 FOR UPDATE', [user.store_id]);
+        if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw new ApiError(400, '语音配置版本无效，请重新加载或更新客户端', 'VOICE_CONFIG_VERSION_REQUIRED');
+        const { rows } = await client.query('SELECT voice_config,voice_config_version FROM store_settings WHERE store_id=$1 FOR UPDATE', [user.store_id]);
+        const currentVersion = rows[0]?.voice_config_version || 0;
+        if (expectedVersion !== currentVersion) throw new ApiError(409, '语音配置已被其他页面修改，请重新加载后再保存', 'VOICE_CONFIG_CHANGED');
         const previous = readVoiceConfig(rows[0]?.voice_config || {});
         if (rows[0]?.voice_config?.aligenie?.authVersion !== 2 && input?.aligenie?.token && input.aligenie.token === rows[0]?.voice_config?.aligenie?.token) throw new ApiError(400, '旧语音口令已泄漏，请生成新的随机签名密钥');
         const next = sanitizeVoiceConfig(input, previous);
@@ -477,12 +480,12 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
           const { rows: [actor] } = await client.query('SELECT id,role,active FROM users WHERE store_id=$1 AND id=$2', [user.store_id, next.aligenie.actorId || null]);
           if (!actor?.active || actor.role === 'viewer' || !next.aligenie.token || !next.aligenie.allowedDevices.length || next.aligenie.authVersion !== 2) throw new ApiError(400, '启用语音记账须配置新签名密钥、在用记账账号和设备白名单');
         }
-        await client.query(
-          'INSERT INTO store_settings(store_id, voice_config, updated_at) VALUES($1, $2, now()) ON CONFLICT(store_id) DO UPDATE SET voice_config=$2, updated_at=now()',
+        const { rows: [saved] } = await client.query(
+          'INSERT INTO store_settings(store_id, voice_config, voice_config_version, updated_at) VALUES($1, $2, 1, now()) ON CONFLICT(store_id) DO UPDATE SET voice_config=$2, voice_config_version=store_settings.voice_config_version+1, updated_at=now() RETURNING voice_config_version',
           [user.store_id, JSON.stringify(next)]
         );
         await audit(client, user, 'voice_config_updated', { provider: next.provider, enabled: next.enabled });
-        return { ...publicVoiceConfig(next, user.role), storeName: (await readStoreProfile(client, user.store_id)).name };
+        return { ...publicVoiceConfig(next, user.role), version: saved.voice_config_version, storeName: (await readStoreProfile(client, user.store_id)).name };
       });
     },
     async synthesizeVoice(identity, options = {}) {

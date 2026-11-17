@@ -79,9 +79,38 @@ test('cloud creation, imports and later transactions keep same-name members with
   assert.equal(client.accountData.value.members.find(member => member.id === existingId).notes, '无手机号仍可修改资料');
 });
 
+for (const strategy of ['merge_balance', 'overwrite_profile']) {
+  test(`a stale ${strategy} preview rejects changed phone ownership after a client refresh`, async () => {
+    const data = await seed(2);
+    const [a, b] = data.members;
+    const preview = validateImportBatch([['Imported name', a.phone, '10', '0']], mapping, data.members, { conflictStrategy: strategy });
+    await service.sync(identity, [buildAdminOperation('updateMember', [a.id, { phone: '13900003333' }], data, client.identity())]);
+    await client.getAccount();
+    await service.sync(identity, [buildAdminOperation('updateMember', [b.id, { phone: a.phone }], client.accountData.value, client.identity())]);
+    await client.getAccount();
+    const before = await service.account(identity);
+    await assert.rejects(client.executeBatchImport(preview.results, strategy), /重新预检/);
+    assert.deepEqual(await service.account(identity), before);
+    assert.equal(client.hasPending.value, false);
+    // A newly confirmed preview targets the current owner and can be committed.
+    const fresh = validateImportBatch([['Imported name', a.phone, '10', '0']], mapping, client.accountData.value.members, { conflictStrategy: strategy });
+    await client.executeBatchImport(fresh.results, strategy);
+    const member = client.accountData.value.members.find(member => member.id === b.id);
+    assert.equal(strategy === 'merge_balance' ? member.balance : member.name, strategy === 'merge_balance' ? 11000 : 'Imported name');
+  });
+}
+
+test('an import preview retains its original member snapshot and rejects balance changes', async () => {
+  const data = await seed();
+  const items = validateImportBatch([['客户0', data.members[0].phone, '10', '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+  data.members[0].balance += 1000;
+  assert.equal(items[0].existingMember.balance, 10000);
+  assert.throws(() => client.planImport(items, 'merge_balance'), /重新预检/);
+});
+
 test('the retained legacy completed task is archived before a new import replaces it', async () => {
   const data = await seed();
-  const items = amount => validateImportBatch([[data.members[0].name, data.members[0].phone, String(amount), '0']], mapping, data.members, { conflictStrategy: 'merge_balance' }).results;
+  const items = amount => validateImportBatch([[data.members[0].name, data.members[0].phone, String(amount), '0']], mapping, client.accountData.value.members, { conflictStrategy: 'merge_balance' }).results;
   const first = items(50), plan = client.planImport(first, 'merge_balance', false);
   await service.sync(identity, plan.batches[0].operations);
   const signature = integrity({ strategy: 'merge_balance', rows: first.map(item => item.data) });
@@ -176,7 +205,8 @@ test('a stale absent-task check cannot duplicate an import committed by another 
     return fetch(path, options);
   });
   await other.login('owner', password); await other.getAccount();
-  await other.executeBatchImport(items, 'merge_balance');
+  const fresh = validateImportBatch([[data.members[0].name, data.members[0].phone, '50', '0']], mapping, other.accountData.value.members, { conflictStrategy: 'merge_balance' }).results;
+  await other.executeBatchImport(fresh, 'merge_balance');
   assert.equal(other.accountData.value.members[0].balance, 15000);
   assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='recharge'")).rows[0].count, 1);
   other.dispose();
@@ -428,7 +458,8 @@ test('a confirmed stale import can cancel only uncommitted work while an uncerta
     if (path === '/api/v1/sync') { await response.clone().json(); throw new Error('lost response'); }
     return response;
   };
-  await assert.rejects(client.executeBatchImport(items, 'merge_balance'), /lost response/);
+  const fresh = validateImportBatch([[data.members[0].name, data.members[0].phone, '50', '0']], mapping, client.accountData.value.members, { conflictStrategy: 'merge_balance' }).results;
+  await assert.rejects(client.executeBatchImport(fresh, 'merge_balance'), /lost response/);
   await assert.rejects(client.cancelRemainingImport(), /尚未确认/);
 });
 
@@ -615,4 +646,33 @@ test('a delayed snapshot from another tab is refreshed without creating a false 
   await client.sync([recharge(data)]); release(); await loading;
   assert.equal(other.headConflict.value, false); assert.equal(other.accountData.value.members[0].balance, 15000);
   other.dispose();
+});
+
+test('a delayed pre-write head is rechecked after another tab observes a newer version', async () => {
+  const data = await seed(2);
+  const [a, b] = data.members;
+  let release, arrived, reads = 0;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const received = new Promise(resolve => { arrived = resolve; });
+  client.requestFetch = async (path, options) => {
+    const response = await fetch(url + path, options);
+    if (path === '/api/v1/account/head' && ++reads === 1) {
+      await response.clone().json(); arrived(); await waiting;
+    }
+    return response;
+  };
+  const other = newClient(storage);
+  try {
+    const pending = client.sync([buildAdminOperation('consume', [{ memberId: a.id, amount: 10 }], data, client.identity())]);
+    await received;
+    await service.sync(identity, [buildAdminOperation('consume', [{ memberId: b.id, amount: 20 }], data, client.identity())]);
+    await other.getAccount();
+    release(); await pending;
+    assert.equal(reads, 2);
+    assert.equal(client.headConflict.value, false);
+    assert.equal(storage.getItem(client.headKey() + ':conflict'), null);
+    assert.equal(client.hasPending.value, false);
+    assert.equal(client.accountData.value.members.find(member => member.id === a.id).balance, 9000);
+    assert.equal(client.accountData.value.members.find(member => member.id === b.id).balance, 8000);
+  } finally { release(); other.dispose(); }
 });
