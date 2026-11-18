@@ -98,7 +98,7 @@ import { DEFAULT_CLOUD_SERVER_URL } from '../cloud-config.js';
 import { localDb } from '../storage.js';
 import { exportFile } from '../file-export.js';
 const props = defineProps({ recoveryRequired: { type: Boolean, default: false }, section: { type: String, default: 'account' }, showTitle: { type: Boolean, default: true },
-  availableUpdate: { type: Object, default: null } });
+  availableUpdate: { type: Object, default: null }, checkUpdate: { type: Function, default: null } });
 const emit = defineEmits(['navigate']);
 const sectionTitles = { account: '☁️ 账号与同步', users: '账号管理', activity: '使用记录', update: '应用更新' };
 const isNativeApp = Capacitor.isNativePlatform();
@@ -111,7 +111,9 @@ const canRequest = computed(() => Boolean(state.value.user && !state.value.syncL
 const canResolve = computed(() => canRequest.value || Boolean(state.value.user && !state.value.syncLoginRequired &&
   (state.value.error || state.value.syncError) && globalThis.navigator?.onLine !== false));
 const unsubscribe = cloudClient.subscribe(value => { state.value = value; });
-onUnmounted(unsubscribe);
+let active = true;
+onUnmounted(() => { active = false; unsubscribe(); });
+const updateSession = () => JSON.stringify([state.value.serverUrl, state.value.user?.storeId, state.value.user?.id]);
 const browserOrigin = /^https?:$/.test(globalThis.location?.protocol || '') ? globalThis.location.origin : '';
 const loginServerUrl = computed(() => isNativeApp
   ? state.value.serverUrl || DEFAULT_CLOUD_SERVER_URL
@@ -128,7 +130,7 @@ async function promptConfirm(options) {
 }
 const message = ref(''), users = ref(null), audit = ref(null), update = ref(props.availableUpdate), downloaded = ref(null), checkingUpdate = ref(false), downloading = ref(false), installing = ref(false), progress = ref(0);
 watch(() => props.availableUpdate, value => {
-  if (value && !checkingUpdate.value && !downloading.value && !installing.value && !downloaded.value) update.value = value;
+  if ((!checkingUpdate.value || !value) && !downloading.value && !installing.value && !downloaded.value) update.value = value;
 });
 const resolutionMessage = computed(() => {
   if (state.value.cloudAdoption?.mode === 'upload') return '正在核对原待办，未提交的交易会取消，核对完成后上传本机完整恢复账本。期间暂停记账和自动同步；断网或重启后请继续核对并上传，本机账本和原待办仍保留。';
@@ -214,9 +216,17 @@ async function updateUser(user, active) {
 }
 async function checkUpdate() {
   if (checkingUpdate.value || downloading.value || installing.value) return;
+  const session = updateSession();
+  const current = () => active && props.section === 'update' && session === updateSession();
   checkingUpdate.value = true;
+  message.value = '';
   try {
-    await perform(async () => { update.value = await checkForUpdate(); downloaded.value = null; if (!update.value) message.value = '当前没有可用的新版本'; });
+    const manifest = await (props.checkUpdate || checkForUpdate)();
+    if (!current()) return;
+    update.value = manifest; downloaded.value = null;
+    if (!manifest) message.value = '当前没有可用的新版本';
+  } catch (error) {
+    if (current()) message.value = error.message;
   } finally { checkingUpdate.value = false; }
 }
 async function download() {

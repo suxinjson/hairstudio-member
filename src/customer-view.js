@@ -1,3 +1,10 @@
+export const CUSTOMER_FILTERS = [
+  { value: 'recent', label: '最近来店', description: '按消费时间，显示最近 12 位' },
+  { value: 'all', label: '全部会员', description: '查看完整会员名单' },
+  { value: 'low', label: '低余额', description: '可用余额 0–50 元' },
+  { value: 'debt', label: '欠款会员', description: '查看待还款会员' }
+];
+
 // 消费记录决定来店顺序，编辑档案与充值不改变最近来店时间。
 export function customerVisits(ledgers) {
   const visits = new Map();

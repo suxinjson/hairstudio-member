@@ -85,6 +85,33 @@ test('a version discovered on startup is ready to download without a second manu
   assert.equal(fixture.install.mock.callCount(), 1);
 });
 
+test('the update page removes a withdrawn version published by the shared checker', async () => {
+  const { h, ref } = await import(vueUrl);
+  const available = ref(manifest);
+  app = createApp({ setup: () => () => h(CloudSettings, { section: 'update', availableUpdate: available.value }) });
+  app.mount('#app'); await flush();
+  assert.ok(button('下载并安装更新'));
+  available.value = null; await flush();
+  assert.equal(button('下载并安装更新'), undefined);
+  assert.doesNotMatch(document.body.textContent, /新版本 1\.0\.70/);
+});
+
+for (const result of ['success', 'failure']) {
+  test(`a manual ${result} after an account change cannot update the new account's page`, async () => {
+    let finish;
+    fixture.state.user.id = 'original-owner';
+    fixture.check.mock.mockImplementation(() => new Promise((resolve, reject) => {
+      finish = () => result === 'success' ? resolve(manifest) : reject(new Error('previous account check failed'));
+    }));
+    await showUpdate();
+    fixture.state.user.id = 'another-owner';
+    finish(); await flush();
+    assert.equal(button('下载并安装更新'), undefined);
+    assert.doesNotMatch(document.body.textContent, /新版本 1\.0\.70|previous account check failed/);
+    assert.equal(button('检查更新').disabled, false);
+  });
+}
+
 test('double clicks cannot download or open multiple installers while authorization is pending', async () => {
   let finish;
   fixture.install.mock.mockImplementation(() => new Promise(resolve => { finish = resolve; }));

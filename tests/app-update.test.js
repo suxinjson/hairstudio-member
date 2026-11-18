@@ -21,9 +21,9 @@ beforeEach(t => {
 afterEach(() => { app?.unmount(); app = null; });
 after(() => dom.window.close());
 
-async function mount(isNativeApp = true) {
+async function mount(isNativeApp = true, options = {}) {
   app = createApp({
-    setup() { controller = useAppUpdate({ state, ready, isNativeApp, canPrompt, check, askConfirm, onUpdate }); return () => null; }
+    setup() { controller = useAppUpdate({ state, ready, isNativeApp, canPrompt, check, askConfirm, onUpdate, ...options }); return () => null; }
   });
   app.mount('#app'); await flush();
 }
@@ -152,4 +152,87 @@ test('web cashier never prompts to install an Android APK', async () => {
   await controller.checkOnOpen();
   assert.equal(check.mock.callCount(), 0);
   assert.equal(askConfirm.mock.callCount(), 0);
+});
+
+test('a known update survives disconnects, reauthentication and failed retries in the same session', async () => {
+  ready.value = true; await mount(true, { promptAutomatically: false });
+  state.value.online = false; await flush();
+  assert.deepEqual(controller.availableUpdate.value, manifest);
+  check.mock.mockImplementation(async () => { throw new Error('network unavailable'); });
+  state.value.online = true; await flush();
+  assert.deepEqual(controller.availableUpdate.value, manifest);
+  state.value.syncLoginRequired = true; await flush();
+  assert.deepEqual(controller.availableUpdate.value, manifest);
+  state.value.syncLoginRequired = false; await flush();
+  assert.deepEqual(controller.availableUpdate.value, manifest);
+  assert.equal(askConfirm.mock.callCount(), 0);
+  check.mock.mockImplementation(async () => null);
+  controller.onBackground(); await controller.checkOnOpen(); await flush();
+  assert.equal(controller.availableUpdate.value, null);
+});
+
+for (const change of ['server', 'store', 'account', 'logout']) {
+  test(`a ${change} change clears a version verified for the previous identity`, async () => {
+    ready.value = true; await mount(true, { promptAutomatically: false });
+    state.value.online = false;
+    if (change === 'server') state.value.serverUrl = 'https://another.example';
+    if (change === 'store') state.value.user.storeId = 'another-store';
+    if (change === 'account') state.value.user.id = 'another-owner';
+    if (change === 'logout') state.value.user = null;
+    await flush();
+    assert.equal(controller.availableUpdate.value, null);
+  });
+}
+
+test('manual checking shares a current startup request and suppresses its automatic prompt', async () => {
+  let finish;
+  check.mock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  ready.value = true; await mount();
+  const manual = controller.checkManually();
+  finish(manifest);
+  assert.deepEqual(await manual, manifest);
+  await flush();
+  assert.equal(check.mock.callCount(), 1);
+  assert.equal(askConfirm.mock.callCount(), 0);
+  assert.deepEqual(controller.availableUpdate.value, manifest);
+});
+
+test('manual checks publish newer versions, preserve a known version on failure and clear it on a confirmed no-update result', async () => {
+  ready.value = true; await mount(true, { promptAutomatically: false });
+  const newer = { ...manifest, versionCode: 71, versionName: '1.0.71' };
+  check.mock.mockImplementation(async () => newer);
+  assert.deepEqual(await controller.checkManually(), newer);
+  assert.deepEqual(controller.availableUpdate.value, newer);
+  check.mock.mockImplementation(async () => { throw new Error('check failed'); });
+  await assert.rejects(controller.checkManually(), /check failed/);
+  assert.deepEqual(controller.availableUpdate.value, newer);
+  check.mock.mockImplementation(async () => null);
+  assert.equal(await controller.checkManually(), null);
+  assert.equal(controller.availableUpdate.value, null);
+  assert.equal(askConfirm.mock.callCount(), 0);
+});
+
+test('manual checking waits for an obsolete foreground request and fetches one fresh result', async () => {
+  let finish;
+  const newer = { ...manifest, versionCode: 71, versionName: '1.0.71' };
+  check.mock.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  check.mock.mockImplementation(async () => newer);
+  ready.value = true; await mount(true, { promptAutomatically: false });
+  controller.onBackground(); await controller.checkOnOpen();
+  const manual = controller.checkManually();
+  finish(manifest);
+  assert.deepEqual(await manual, newer);
+  await flush();
+  assert.equal(check.mock.callCount(), 2);
+  assert.deepEqual(controller.availableUpdate.value, newer);
+});
+
+test('a late manual response after an identity change cannot restore the previous version', async () => {
+  ready.value = true; await mount(true, { promptAutomatically: false });
+  let finish;
+  check.mock.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const rejected = assert.rejects(controller.checkManually(), /状态已变化/);
+  state.value.online = false; state.value.user.id = 'another-owner'; await flush();
+  finish(manifest); await rejected; await flush();
+  assert.equal(controller.availableUpdate.value, null);
 });

@@ -1,16 +1,7 @@
 <template>
   <section class="customers-page" aria-label="会员列表">
-    <div class="customer-filters" aria-label="会员范围">
-      <button v-for="item in filters" :key="item.value" type="button" :aria-pressed="filter === item.value"
-        @click="$emit('update:filter', item.value)">{{ item.label }}</button>
-    </div>
-    <button v-if="summary.totalDebt > 0" type="button" class="customer-debt-summary" @click="$emit('update:filter', 'debt')">
-      <CircleAlert :size="21" aria-hidden="true" />
-      <span><strong>{{ summary.debtMemberCount }} 位会员尚有欠款</strong><span>待收回 ¥{{ format(summary.totalDebt) }}</span></span>
-      <ChevronRight :size="18" aria-hidden="true" />
-    </button>
     <div class="customer-list-heading" aria-live="polite">
-      <h2>{{ query.trim() ? '搜索结果' : filters.find(item => item.value === filter)?.label }} <span>{{ displayed.length }} 人</span></h2>
+      <h2>{{ query.trim() ? '搜索 · ' : '' }}{{ filters.find(item => item.value === filter)?.label }} <span>{{ displayed.length }} 人</span></h2>
       <span>{{ filter === 'low' ? '余额 0–50 元' : '点会员查看档案' }}</span>
     </div>
     <div v-if="!displayed.length" class="customer-empty">
@@ -45,17 +36,15 @@
 
 <script setup>
 import { computed } from 'vue';
-import { UsersRound, CircleAlert, ChevronRight } from 'lucide-vue-next';
-import { customerVisits, visibleCustomers } from '../customer-view.js';
+import { UsersRound } from 'lucide-vue-next';
+import { customerVisits, visibleCustomers, CUSTOMER_FILTERS as filters } from '../customer-view.js';
 
 const props = defineProps({
   members: { type: Array, default: () => [] }, ledgers: { type: Array, default: () => [] },
   filter: { type: String, default: 'recent' }, query: { type: String, default: '' },
-  summary: { type: Object, default: () => ({}) }, canConsume: Boolean, canCreate: Boolean
+  canConsume: Boolean, canCreate: Boolean
 });
 defineEmits(['update:filter', 'select', 'consume', 'create']);
-const filters = [{ value: 'recent', label: '最近来店' }, { value: 'all', label: '全部会员' },
-  { value: 'low', label: '低余额' }, { value: 'debt', label: '欠款会员' }];
 const visits = computed(() => customerVisits(props.ledgers));
 const displayed = computed(() => visibleCustomers(props.members, visits.value, props.filter, Boolean(props.query.trim())));
 const format = cents => (cents / 100).toFixed(2);

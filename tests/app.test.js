@@ -227,7 +227,8 @@ test('browser cashier waits for server confirmation and blocks new writes after 
   button('知道了').click(); await nextTick();
   fixture.failAccount(); await assert.rejects(fixture.web.sync(), /服务器无法连接/); await nextTick();
   assert.equal(button('扣款').disabled, true);
-  assert.match(document.body.textContent, /暂停记账/);
+  document.querySelector('.notice-entry').click(); await nextTick();
+  assert.match(document.querySelector('.notice-center').textContent, /暂停记账/);
   assert.doesNotMatch(document.body.textContent, /当前离线.*本机|待同步/);
 });
 
@@ -365,7 +366,7 @@ test('damaged storage keeps the backup restore screen available and permits vali
   const content = localDb.exportBackupData({ archiveSnapshot: false });
   localStorage.setItem('hairstudio_members_v2', '{broken');
   await mount();
-  assert.ok(document.body.textContent.includes('当前账本无法读取'));
+  assert.ok(document.body.textContent.includes('账本需要恢复'));
   await selectBackup(content);
   assert.ok(document.body.textContent.includes('读取异常，无法统计'));
   assert.equal(document.querySelector('input[value="merge"]').disabled, true);
@@ -403,7 +404,7 @@ test('a damaged transaction journal can be exported from the backup screen and t
   const backup = localDb.exportBackupData({ archiveSnapshot: false });
   localStorage.setItem('hairstudio_pending_write_v1', '{broken');
   await mount();
-  assert.ok(document.body.textContent.includes('当前账本无法读取'));
+  assert.ok(document.body.textContent.includes('账本需要恢复'));
   assert.equal(button('导出账本原始数据').disabled, false);
   button('导出账本原始数据').click();
   await new Promise(resolve => setTimeout(resolve, 10)); await nextTick();
@@ -1020,7 +1021,7 @@ test('native app activation refreshes daily totals and removes its listener on u
 });
 
 for (const lifecycle of ['visibility', 'native']) {
-  test(`${lifecycle} reopening checks and prompts again, while midnight in the background stays silent`, async t => {
+  test(`${lifecycle} reopening checks silently and keeps a known update in the notice center`, async t => {
     t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date(2026, 10, 2, 23, 59, 59) });
     const user = { id: 'owner-update', storeId: 'store-update', role: 'owner', displayName: '测试店主' };
     const state = { ...getCloudState(), user, binding: { storeId: user.storeId }, serverUrl: 'https://member.example.com',
@@ -1049,13 +1050,17 @@ for (const lifecycle of ['visibility', 'native']) {
     };
     const setActive = active => lifecycle === 'native' ? onAppStateChange({ isActive: active }) : changeVisibility(active);
     await mount(); await flushWeb();
-    assert.equal(request.mock.callCount(), 1);
-    assert.match(document.querySelector('.confirm-dialog').textContent, /发现新版本 1\.0\.70/);
-    button('稍后再说').click(); await flushWeb();
+    const updateCalls = () => request.mock.calls.filter(call => call.arguments[0] === '/updates/latest').length;
+    assert.equal(updateCalls(), 1);
+    assert.equal(document.querySelector('.confirm-dialog'), null);
+    document.querySelector('.notice-entry').click(); await nextTick();
+    const updateCard = [...document.querySelectorAll('.notice-card')].find(card => card.textContent.includes('发现新版本 1.0.70'));
+    assert.ok(updateCard); updateCard.querySelector('.notice-acknowledge').click(); await flushWeb();
+    document.querySelector('.notice-back').click(); await nextTick();
     for (let opening = 2; opening <= 3; opening++) {
       setActive(false); setActive(false);
       t.mock.timers.tick(1000); await flushWeb();
-      assert.equal(request.mock.callCount(), opening - 1);
+      assert.equal(updateCalls(), opening - 1);
       assert.equal(document.querySelector('.confirm-dialog'), null);
       setActive(true);
       // Android and the WebView can both report the same foreground transition.
@@ -1063,16 +1068,97 @@ for (const lifecycle of ['visibility', 'native']) {
       onAppStateChange({ isActive: true });
       window.dispatchEvent(new dom.window.Event('focus'));
       await flushWeb();
-      assert.equal(request.mock.callCount(), opening);
-      assert.equal(document.querySelectorAll('.confirm-dialog').length, 1);
-      assert.match(document.querySelector('.confirm-dialog').textContent, /发现新版本 1\.0\.70/);
-      button(opening === 2 ? '稍后再说' : '前往更新').click(); await flushWeb();
+      assert.equal(updateCalls(), opening);
+      assert.equal(document.querySelector('.confirm-dialog'), null);
     }
-    assert.match(document.body.textContent, /新版本 1\.0\.70/);
+    document.querySelector('.notice-entry').click(); await nextTick();
+    button('已知晓').click(); await nextTick();
+    assert.match(document.querySelector('.notice-center').textContent, /发现新版本 1\.0\.70/);
+    button('前往更新').click(); await flushWeb();
     assert.ok(button('下载并安装更新'));
-    assert.equal(request.mock.callCount(), 3);
+    assert.equal(updateCalls(), 3);
   });
 }
+
+function nativeUpdateFixture(t) {
+  const appId = 'com.hairstudio.memberapp', hash = 'a'.repeat(64);
+  const user = { id: 'owner-update', storeId: 'store-update', role: 'owner', displayName: '测试店主' };
+  let state = { ...getCloudState(), user, binding: { storeId: user.storeId }, serverUrl: 'https://member.example.com',
+    status: 'synced', online: true, syncStatus: 'confirmed', syncLoginRequired: false, deviceAccess: { ready: true, allowed: true } };
+  saveCloudState(state);
+  const listeners = new Set();
+  t.mock.method(cloudClient, 'snapshot', () => state);
+  t.mock.method(cloudClient, 'subscribe', callback => { listeners.add(callback); callback(state); return () => listeners.delete(callback); });
+  t.mock.method(cloudClient, 'start', async () => () => {});
+  t.mock.method(cloudClient, 'sync', async () => {});
+  t.mock.method(nativeApp, 'getInfo', async () => ({ build: '69', id: appId }));
+  t.mock.method(nativeApp, 'addListener', async () => ({ remove: async () => {} }));
+  const manifest = { versionCode: 70, versionName: '1.0.70', notes: '修复记账与同步问题', appId, sha256: hash,
+    certificateSha256: 'b'.repeat(64), size: 100, downloadPath: '/api/v1/updates/files/' + hash + '.apk' };
+  const fixture = { manifest, response: manifest, emit(patch) {
+    state = { ...state, ...patch }; saveCloudState(state);
+    for (const listener of listeners) listener(state);
+  } };
+  fixture.request = t.mock.method(cloudClient, 'request', async path => {
+    assert.equal(path, '/updates/latest');
+    if (fixture.response instanceof Error) throw fixture.response;
+    return fixture.response;
+  });
+  return fixture;
+}
+
+test('manual update checks populate the notice center after startup fails and remind for a newer version', async t => {
+  const fixture = nativeUpdateFixture(t);
+  fixture.response = new Error('首次检查失败');
+  await mount(); await flushWeb();
+  assert.equal(fixture.request.mock.callCount(), 1);
+  await settings('应用更新');
+  fixture.response = fixture.manifest;
+  button('检查更新').click(); await flushWeb();
+  assert.match(document.body.textContent, /新版本 1\.0\.70/);
+  document.querySelector('.notice-entry').click(); await nextTick();
+  assert.match(document.querySelector('.notice-card').textContent, /发现新版本 1\.0\.70/);
+  button('我知道了').click(); await nextTick();
+  assert.equal(document.querySelector('.notice-count'), null);
+  await settings('应用更新');
+  fixture.response = { ...fixture.manifest, versionCode: 71, versionName: '1.0.71' };
+  button('检查更新').click(); await flushWeb();
+  document.querySelector('.notice-entry').click(); await nextTick();
+  assert.equal(document.querySelector('.notice-count').textContent, '1');
+  assert.match(document.querySelector('.notice-card').textContent, /发现新版本 1\.0\.71/);
+  assert.equal(fixture.request.mock.callCount(), 3);
+  assert.equal(document.querySelector('.confirm-dialog'), null);
+});
+
+test('a successful manual no-update check removes the version from settings and the notice center', async t => {
+  const fixture = nativeUpdateFixture(t);
+  await mount(); await flushWeb(); await settings('应用更新');
+  assert.ok(button('下载并安装更新'));
+  fixture.response = { available: false };
+  button('检查更新').click(); await flushWeb();
+  assert.doesNotMatch(document.body.textContent, /下载并安装更新/);
+  assert.match(document.body.textContent, /当前没有可用的新版本/);
+  document.querySelector('.notice-entry').click(); await nextTick();
+  assert.equal(document.querySelector('.notice-count'), null);
+  assert.equal(document.querySelector('.notice-card'), null);
+});
+
+test('acknowledged update notes remain readable through disconnects and a failed reconnect check', async t => {
+  const fixture = nativeUpdateFixture(t);
+  await mount(); await flushWeb();
+  document.querySelector('.notice-entry').click(); await nextTick();
+  button('我知道了').click(); await nextTick();
+  fixture.emit({ online: false }); await flushWeb();
+  button('已知晓').click(); await nextTick();
+  assert.match(document.querySelector('.notice-card').textContent, /发现新版本 1\.0\.70/);
+  assert.match(document.querySelector('.notice-card').textContent, /修复记账与同步问题/);
+  assert.equal(fixture.request.mock.callCount(), 1);
+  fixture.response = new Error('连接暂时失败');
+  fixture.emit({ online: true }); await flushWeb();
+  assert.match(document.querySelector('.notice-card').textContent, /发现新版本 1\.0\.70/);
+  assert.equal(fixture.request.mock.callCount(), 2);
+  assert.equal(document.querySelector('.confirm-dialog'), null);
+});
 
 test('a native listener that finishes registering after unmount is removed immediately', async t => {
   t.mock.method(Capacitor, 'isNativePlatform', () => true);
@@ -1131,10 +1217,12 @@ test('native identity recovery shows the ledger check and disables accounting un
   cloudProfile('owner', t);
   saveCloudState({ ...getCloudState(), binding: null, bindingRecovery: true, status: 'needs-choice' });
   await mount();
-  assert.match(document.querySelector('.sync-banner').textContent, /核对并加载云端账本.*暂停记账/);
   assert.equal(button('扣款').disabled, true);
   assert.throws(() => localDb.recharge({ memberId: member.id, actualPay: 50 }), /核对并加载云端账本/);
-  button('同步设置').click(); await nextTick();
+  document.querySelector('.notice-entry').click(); await nextTick();
+  assert.match(document.querySelector('.notice-card').textContent, /核对并加载云端账本.*暂停记账/);
+  assert.equal(document.querySelector('.notice-acknowledge'), null);
+  button('前往核对').click(); await nextTick();
   assert.ok(button('采用云端账本，放弃本机待同步变更'));
 });
 
@@ -1695,11 +1783,16 @@ test('unified customer navigation filters low balances and debts without duplica
   assert.deepEqual([...document.querySelectorAll('nav button')].map(b => b.textContent.trim()), ['会员', '流水', '设置']);
   assert.equal(document.querySelectorAll('.customer-row').length, 3);
   assert.ok(document.querySelector('.customer-row-debt').textContent.includes('−¥38.00'));
-  assert.ok(document.querySelector('.customer-debt-summary').textContent.includes('38.00'));
-  document.querySelectorAll('.customer-filters button')[2].click(); await nextTick();
+  assert.equal(document.querySelector('.customer-debt-summary'), null);
+  assert.equal(document.querySelector('.customer-filter-menu'), null);
+  document.querySelector('.customer-filter-trigger').click(); await nextTick();
+  document.querySelectorAll('.customer-filter-menu button')[2].click(); await nextTick();
+  assert.equal(document.querySelector('.customer-filter-menu'), null);
   assert.equal(document.querySelectorAll('.customer-row').length, 1);
   assert.ok(document.querySelector('.customer-row').textContent.includes('低余额客户'));
-  document.querySelector('.customer-debt-summary').click(); await nextTick();
+  document.querySelector('.notice-entry').click(); await nextTick();
+  assert.ok(document.querySelector('.notice-card').textContent.includes('38.00'));
+  button('查看欠款会员').click(); await nextTick();
   assert.equal(document.querySelectorAll('.customer-row').length, 1);
   assert.ok(document.querySelector('.customer-row').textContent.includes('欠款客户甲'));
   document.querySelector('.customer-open').click(); await nextTick();
@@ -1719,6 +1812,120 @@ test('recent customers follow actual non-reversed consumption instead of profile
   assert.ok(document.querySelector('.customer-row').textContent.includes('近期来店'));
   assert.ok(document.querySelectorAll('.customer-row')[1].textContent.includes('尚未消费'));
 });
+
+test('filter popover closes on outside click, Escape and selection, preserving the search', async () => {
+  localDb.createMember({ name: '筛选会员', initialBalance: 20 });
+  await mount();
+  const search = document.querySelector('.header-search input');
+  search.value = '筛选'; search.dispatchEvent(new window.Event('input', { bubbles: true })); await nextTick();
+  const trigger = document.querySelector('.customer-filter-trigger');
+  trigger.click(); await nextTick();
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+  document.body.dispatchEvent(new window.Event('pointerdown', { bubbles: true })); await nextTick();
+  assert.equal(document.querySelector('.customer-filter-menu'), null);
+  trigger.click(); await nextTick();
+  document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await nextTick();
+  assert.equal(document.querySelector('.customer-filter-menu'), null);
+  assert.equal(document.activeElement, trigger);
+  trigger.click(); await nextTick();
+  document.querySelectorAll('.customer-filter-menu button')[2].click(); await nextTick();
+  assert.equal(search.value, '筛选');
+  assert.match(document.querySelector('.customer-list-heading').textContent, /搜索.*低余额.*1 人/);
+});
+
+test('local debt reminders stay quiet after reopening and never request server messages', async t => {
+  const request = t.mock.method(cloudClient, 'request', async () => { throw new Error('Reminders must not request the server'); });
+  const member = localDb.createMember({ name: '欠款提醒会员' });
+  localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+  await mount(); document.querySelector('.notice-entry').click(); await nextTick();
+  button('我知道了').click(); await nextTick();
+  assert.equal(document.querySelector('.notice-count'), null);
+  assert.equal(document.querySelector('.notice-card'), null);
+  button('已知晓').click(); await nextTick();
+  assert.match(document.querySelector('.notice-card').textContent, /38.00/);
+  app.unmount(); app = null; await mount();
+  assert.equal(document.querySelector('.notice-count'), null);
+  localDb.consume({ memberId: member.id, amount: 2, allowDebt: true });
+  window.dispatchEvent(new window.Event('cloud-data-updated')); await nextTick();
+  assert.equal(document.querySelector('.notice-count').textContent, '1');
+  document.querySelector('.notice-entry').click(); await nextTick();
+  assert.match(document.querySelector('.notice-card').textContent, /40.00/);
+  document.querySelector('.notice-delete').click(); await nextTick(); button('删除提醒').click(); await nextTick(); await nextTick();
+  assert.equal(document.querySelector('.notice-card'), null);
+  app.unmount(); app = null; await mount();
+  assert.equal(document.querySelector('.notice-count'), null);
+  assert.equal(request.mock.callCount(), 0);
+});
+
+for (const action of ['acknowledge', 'delete']) {
+  test(`browser account switching preserves the destination account's ${action} receipt while its ledger loads`, async t => {
+    const member = localDb.createMember({ name: '账号切换欠款会员' });
+    localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+    const fixture = webFixture(t);
+    await mount(); await loginWeb();
+    document.querySelector('.notice-entry').click(); await nextTick();
+    if (action === 'acknowledge') { button('我知道了').click(); await nextTick(); }
+    else {
+      document.querySelector('.notice-delete').click(); await nextTick();
+      button('删除提醒').click(); await nextTick(); await nextTick();
+    }
+    const server = fixture.web.snapshot().serverUrl;
+    const key = id => 'member_notice_receipts_v1:' + JSON.stringify([server, 'store-A', id]);
+    const saved = localStorage.getItem(key('owner-A'));
+    assert.ok(saved);
+    localStorage.setItem(key('owner-B'), saved);
+    fixture.api.saveSession({ accessToken: 'b-access', refreshToken: 'b-refresh',
+      user: { ...fixture.api.user.value, id: 'owner-B', displayName: '另一账号' } }, false, { resetIdle: true });
+    await nextTick();
+    assert.equal(localStorage.getItem(key('owner-B')), saved);
+    await fixture.web.sync(); await flushWeb();
+    document.querySelector('.notice-entry').click(); await nextTick();
+    assert.equal(document.querySelector('.notice-count'), null);
+    assert.equal(localStorage.getItem(key('owner-B')), saved);
+    button('已知晓').click(); await nextTick();
+    assert.equal(document.querySelectorAll('.notice-card').length, action === 'delete' ? 0 : 1);
+  });
+
+  test(`same-amount debt repaid and borrowed between app sessions reminds after its earlier ${action}`, async t => {
+    t.mock.method(nativeApp, 'addListener', async () => ({ remove: async () => {} }));
+    const member = localDb.createMember({ name: '关闭期间再次欠款会员' });
+    localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+    await mount(); document.querySelector('.notice-entry').click(); await nextTick();
+    if (action === 'acknowledge') { button('我知道了').click(); await nextTick(); }
+    else {
+      document.querySelector('.notice-delete').click(); await nextTick();
+      button('删除提醒').click(); await nextTick(); await nextTick();
+    }
+    app.unmount(); app = null;
+    localDb.recharge({ memberId: member.id, actualPay: 38 });
+    localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+    await mount();
+    assert.equal(document.querySelector('.notice-count')?.textContent, '1');
+    document.querySelector('.notice-entry').click(); await nextTick();
+    assert.match(document.querySelector('.notice-card').textContent, /38.00/);
+  });
+
+  test(`a debt paid while the app is closed recurs as pending after its earlier ${action}`, async t => {
+    t.mock.method(nativeApp, 'addListener', async () => ({ remove: async () => {} }));
+    const member = localDb.createMember({ name: '关闭期间结清欠款会员' });
+    localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+    await mount(); document.querySelector('.notice-entry').click(); await nextTick();
+    if (action === 'acknowledge') { button('我知道了').click(); await nextTick(); }
+    else {
+      document.querySelector('.notice-delete').click(); await nextTick();
+      button('删除提醒').click(); await nextTick(); await nextTick();
+    }
+    app.unmount(); app = null;
+    localDb.recharge({ memberId: member.id, actualPay: 38 });
+    await mount();
+    assert.equal(document.querySelector('.notice-count'), null);
+    localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+    window.dispatchEvent(new window.Event('cloud-data-updated')); await nextTick();
+    assert.equal(document.querySelector('.notice-count').textContent, '1');
+    document.querySelector('.notice-entry').click(); await nextTick();
+    assert.match(document.querySelector('.notice-card').textContent, /38.00/);
+  });
+}
 
 test('overdraft warns about additional and total debt and requires acknowledgement on every confirmation', async t => {
   const broadcast = t.mock.method(appVoicePlayer, 'broadcast', async () => true);

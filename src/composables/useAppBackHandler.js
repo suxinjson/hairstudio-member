@@ -18,6 +18,8 @@ export function useAppBackHandler({
   closeConsumeModal,
   selectedMember,
   activeTab,
+  filterOpen,
+  backFromNotices,
   settingsPath,
   cloudLocked,
   backInSettings
@@ -79,6 +81,8 @@ export function useAppBackHandler({
       selectedMember.value = null;
       return true;
     }
+    if (filterOpen?.value) { filterOpen.value = false; return true; }
+    if (activeTab.value === 'notices' && !cloudLocked.value && backFromNotices) { backFromNotices(); return true; }
     if (activeTab.value === 'settings' && settingsPath.value.length && !cloudLocked.value) {
       backInSettings();
       return true;

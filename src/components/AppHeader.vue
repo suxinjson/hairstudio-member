@@ -12,17 +12,12 @@
               <span class="brand-medium">会员管家</span>
               <span class="brand-short">会员管家</span>
             </h1>
-            <p class="text-xs text-slate-300 truncate max-w-44" :title="storeName">{{ storeName }}</p>
-            <div class="header-meta text-indigo-300 font-semibold" :title="currentDateText + ' · ' + connectionLabel">
-              <span class="header-meta-full">{{ currentDateText }} · {{ connectionLabel }}</span>
-              <span class="header-meta-compact">{{ compactDateText }} · {{ compactConnectionLabel }}</span>
-            </div>
           </div>
         </div>
 
         <!-- 登记按钮保留完整文字和字号，优先收缩品牌描述。 -->
         <button
-          v-if="activeTab !== 'settings' && !cloudLocked"
+          v-if="['customers', 'ledgers'].includes(activeTab) && !cloudLocked"
           @click="emit('create-member')"
           :disabled="hasStorageError || !canCreateMember"
           class="register-member h-11 bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 active:from-indigo-700 active:to-indigo-800 text-white text-sm rounded-2xl font-black shadow-md shadow-indigo-500/25 transition btn-press flex items-center"
@@ -31,9 +26,18 @@
           <span>登记会员</span>
         </button>
       </div>
+      <div class="header-store-row">
+        <p class="header-store-name" :title="storeName">{{ storeName }}</p>
+        <NoticeTicker v-if="!cloudLocked" :items="notices" @open="emit('open-notices')" />
+      </div>
+      <div class="header-meta" :title="currentDateText + ' · ' + connectionLabel">
+        <span class="header-meta-full">{{ currentDateText }} · {{ connectionLabel }}</span>
+        <span class="header-meta-compact">{{ compactDateText }} · {{ compactConnectionLabel }}</span>
+      </div>
 
       <!-- 紧凑搜索框，输入变化和失焦时立即查找。 -->
-      <div v-if="activeTab !== 'settings' && !cloudLocked && !(activeTab === 'ledgers' && ledgerView === 'summary')" class="header-search relative">
+      <div v-if="['customers', 'ledgers'].includes(activeTab) && !cloudLocked && !(activeTab === 'ledgers' && ledgerView === 'summary')" class="header-search-row">
+      <div class="header-search relative">
         <input
           v-model="searchModel"
           @input="emit('search', $event)"
@@ -56,6 +60,9 @@
           ✕
         </button>
       </div>
+      <CustomerFilter v-if="activeTab === 'customers'" :filter="customerFilter" :open="filterOpen"
+        @update:filter="emit('update:customerFilter', $event)" @update:open="emit('update:filterOpen', $event)" />
+      </div>
     </div>
   </header>
 </template>
@@ -63,9 +70,14 @@
 <script setup>
 import { computed } from 'vue';
 import { Search } from 'lucide-vue-next';
+import CustomerFilter from './CustomerFilter.vue';
+import NoticeTicker from './NoticeTicker.vue';
 
 const props = defineProps({
   activeTab: { type: String, required: true },
+  customerFilter: { type: String, default: 'recent' },
+  filterOpen: Boolean,
+  notices: { type: Array, default: () => [] },
   ledgerView: { type: String, default: 'transactions' },
   cloudLocked: Boolean,
   storeName: { type: String, default: '我的门店' },
@@ -82,7 +94,7 @@ const props = defineProps({
   placeholder: { type: String, default: '' }
 });
 
-const emit = defineEmits(['open-account', 'create-member', 'search', 'clear-search', 'update:searchQuery']);
+const emit = defineEmits(['open-account', 'open-notices', 'create-member', 'search', 'clear-search', 'update:searchQuery', 'update:customerFilter', 'update:filterOpen']);
 
 const searchModel = computed({
   get: () => props.searchQuery,

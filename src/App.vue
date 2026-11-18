@@ -4,6 +4,10 @@
     <!-- 顶部状态栏与大搜索框 (独立组件) -->
     <AppHeader
       :active-tab="activeTab"
+      v-model:customer-filter="customerFilter"
+      v-model:filter-open="filterOpen"
+      :notices="headerNotices"
+      @open-notices="openNotices"
       :store-name="storeProfile.name"
       :ledger-view="ledgerView"
       :cloud-locked="cloudLocked"
@@ -26,26 +30,13 @@
 
     <!-- 主视图容器 -->
     <main class="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-4 sm:py-4 space-y-3.5">
-      <!-- 异常提示条 -->
-      <div v-if="!isWeb && !cloudLocked && (cloudState.bindingRecovery || cloudState.binding && (cloudState.outbox.length || cloudState.status === 'conflict' || !cloudState.online))" class="sync-banner rounded-2xl p-3 border bg-white text-sm flex items-center justify-between gap-2">
-        <span v-if="cloudState.bindingRecovery">登录已恢复，请先核对并加载云端账本 · 暂停记账</span>
-        <span v-else>{{ cloudState.online ? '☁️ 已联网' : '📴 当前离线' }}<span v-if="cloudState.outbox.length"> · 待同步 {{ cloudState.outbox.length }} 笔</span><span v-if="cloudState.status === 'conflict'"> · 请核对冲突</span></span>
-        <button @click="openSettings('account')" class="font-bold text-indigo-700">同步设置</button>
-      </div>
-      <div v-if="isWeb && !cloudLocked && (cloudState.error || cloudState.pending)" class="rounded-2xl p-3 border bg-amber-50 text-sm" role="status">
-        <p>{{ cloudState.error || '上一笔操作的服务器结果尚未确认' }} · 暂停记账</p>
-        <button @click="openSettings('account')" class="font-bold text-indigo-700">账号与连接</button>
-      </div>
-      <div v-if="storageError" class="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-900">
-        <p class="font-black">当前账本无法读取，请从有效备份恢复。</p>
-        <p class="text-sm mt-2">{{ storageError }}。恢复前会保留当前原始数据。</p>
-        <button @click="openSettings('backup-files')" class="mt-3 font-black underline">打开备份恢复</button>
-      </div>
+      <NoticeCenter v-if="activeTab === 'notices' && !cloudLocked" :items="notices"
+        @back="backFromNotices" @navigate="navigateNotice" @act="handleNoticeAction" />
       
       <!-- 统一会员入口：快速扣款与会员档案共享一份列表。 -->
       <Customers v-if="activeTab === 'customers' && !cloudLocked"
         v-model:filter="customerFilter" :members="membersList" :ledgers="customerLedgers"
-        :query="searchQuery" :summary="dashboard"
+        :query="searchQuery"
         :can-consume="!storageError && canCloudWrite('consume')"
         :can-create="!storageError && canCloudWrite('createMember')"
         @select="selectMember" @consume="openConsumeModal" @create="openNewMemberModal" />
@@ -91,7 +82,7 @@
         <WebAccountSettings v-if="isWeb && (cloudLocked || settingsPage === 'account')" :ask-confirm="askConfirm" @logged-in="activeTab = 'customers'; settingsPath = []" />
         <CloudSettings v-else-if="cloudLocked || ['account', 'users', 'activity', 'update'].includes(settingsPage)"
           :section="cloudLocked ? 'account' : settingsPage" :show-title="cloudLocked" :recovery-required="Boolean(storageError)"
-          :available-update="availableUpdate" @navigate="openSettings" />
+          :available-update="availableUpdate" :check-update="checkUpdateManually" @navigate="openSettings" />
         <template v-if="!cloudLocked">
         <SettingsOverview
           v-if="settingsPage === 'overview' || settingsPage === 'backup'"
@@ -321,7 +312,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { Capacitor } from '@capacitor/core';
 import { App as CapacitorApp } from '@capacitor/app';
 import AppHeader from './components/AppHeader.vue';
@@ -349,6 +340,9 @@ import WebAccountSettings from './components/WebAccountSettings.vue';
 import WebBackupSettings from './components/WebBackupSettings.vue';
 import AppVoiceSettings from './components/AppVoiceSettings.vue';
 import Customers from './components/Customers.vue';
+import NoticeCenter from './components/NoticeCenter.vue';
+import { useNotices } from './composables/useNotices.js';
+import { systemNotices, debtNoticeVersion } from './notices.js';
 import { UsersRound, ReceiptText, Settings } from 'lucide-vue-next';
 import { cloudClient, copyToClipboard } from './cloud-device.js';
 import { appVoicePlayer, appVoiceContext } from './app-voice.js';
@@ -382,6 +376,11 @@ const dashboard = ref({});
 const membersList = ref([]);
 const customerLedgers = ref([]);
 const customerFilter = ref('recent');
+const filterOpen = ref(false);
+const debtVersion = ref('');
+const ledgerSnapshotScope = ref(null);
+const noticePreviousTab = ref('customers');
+watch(activeTab, () => { filterOpen.value = false; });
 const ledgersList = ref([]);
 const hairServices = ref([]);
 const rechargePlans = ref([]);
@@ -426,6 +425,41 @@ const {
   handleConfirmModalAccept,
   handleConfirmModalCancel
 } = useFeedback();
+
+const updateReady = ref(false);
+const { availableUpdate, checkManually: checkUpdateManually, checkOnOpen: checkUpdateOnOpen, onBackground: pauseUpdateCheck } = useAppUpdate({
+  state: cloudState, ready: updateReady, isNativeApp, promptAutomatically: false
+});
+const autoNotices = computed(() => systemNotices({ dashboard: dashboard.value, debtVersion: debtVersion.value,
+  state: cloudState.value, storageError: storageError.value, isWeb, availableUpdate: availableUpdate.value }));
+const ledgerScope = () => JSON.stringify([cloudState.value.serverUrl || 'local',
+  cloudState.value.binding?.storeId || cloudState.value.user?.storeId || 'local']);
+const noticeLedgerReady = computed(() => ledgerSnapshotScope.value === ledgerScope() && !storageError.value &&
+  !cloudState.value.bindingRecovery && !cloudState.value.cloudAdoption && (!isWeb || cloudState.value.status === 'synced'));
+const { scope: noticeScope, items: notices, headerItems: headerNotices, act: actOnNotice } = useNotices({
+  state: cloudState, systemItems: autoNotices, ledgerReady: noticeLedgerReady
+});
+function openNotices() {
+  if (activeTab.value !== 'notices') noticePreviousTab.value = activeTab.value;
+  activeTab.value = 'notices'; window.scrollTo?.(0, 0);
+}
+function backFromNotices() {
+  activeTab.value = noticePreviousTab.value;
+  void nextTick(() => document.querySelector('.notice-entry')?.focus());
+}
+function navigateNotice(action) {
+  if (action === 'debt') { activeTab.value = 'customers'; clearSearch(); customerFilter.value = 'debt'; }
+  else openSettings(action);
+  window.scrollTo?.(0, 0);
+}
+async function handleNoticeAction(item, action) {
+  const scope = noticeScope.value;
+  if (action === 'delete' && !await askConfirm({ title: '删除这条提醒？',
+    message: '从本机提醒列表移除，情况有新变化时会再次提醒。', confirmText: '删除提醒' })) return;
+  if (scope !== noticeScope.value || cloudLocked.value) return;
+  try { if (actOnNotice(item, action)) showToast(action === 'delete' ? '提醒已删除' : '已知晓，顶部不再提醒'); }
+  catch (error) { showToast('提醒处理失败：' + error.message); }
+}
 
 function broadcastTransaction(type, params) {
   return appVoicePlayer.broadcast(type, params, {
@@ -479,6 +513,7 @@ const {
 // 刷新全量数据
 function refreshAll() {
   currentDate.value = new Date();
+  const snapshotScope = ledgerScope();
   try {
     localDb.init();
     const nextMembers = localDb.getMembers(searchQuery.value);
@@ -486,10 +521,12 @@ function refreshAll() {
     const nextServices = localDb.getServices();
     const nextSettings = localDb.getRechargeSettings();
     const nextLedgers = localDb.getLedgers({ type: ledgerFilterType.value });
+    const nextCustomerLedgers = localDb.getLedgers();
 
     membersList.value = nextMembers;
     dashboard.value = nextDashboard;
-    customerLedgers.value = localDb.getLedgers();
+    debtVersion.value = debtNoticeVersion(localDb.getMembers(), nextCustomerLedgers);
+    customerLedgers.value = nextCustomerLedgers;
     ledgersList.value = nextLedgers;
     hairServices.value = nextServices;
     rechargeSettings.value = nextSettings;
@@ -499,11 +536,13 @@ function refreshAll() {
     if (consumingMember.value) consumingMember.value = localDb.getMemberById(consumingMember.value.id);
     if (rechargingMember.value) rechargingMember.value = localDb.getMemberById(rechargingMember.value.id);
     storageError.value = '';
+    ledgerSnapshotScope.value = snapshotScope;
 
     if (!rechargeSettingsDirty.value) {
       rechargeSettingsForm.value = { ...nextSettings };
     }
   } catch (error) {
+    ledgerSnapshotScope.value = null;
     storageError.value = error.message;
     if (activeTab.value !== 'settings' || settingsPage.value === 'overview') openSettings('backup-files');
     membersList.value = [];
@@ -770,16 +809,6 @@ function handleContextMenu(event) {
 }
 
 // 物理返回键与退出控制
-const updateReady = ref(false);
-const canPromptUpdate = computed(() => !cloudLocked.value && !cloudState.value.busy && !showDevicePrompt.value &&
-  !confirmModal.value && !feedbackModal.value && !receiptModal.value && !backupRestoreRequest.value &&
-  !showMemberModal.value && !showServiceModal.value && !consumingMember.value && !rechargingMember.value &&
-  !selectedMember.value && !(activeTab.value === 'settings' && settingsPage.value === 'update'));
-const { availableUpdate, checkOnOpen: checkUpdateOnOpen, onBackground: pauseUpdateCheck } = useAppUpdate({
-  state: cloudState, ready: updateReady, isNativeApp, canPrompt: canPromptUpdate, askConfirm,
-  onUpdate: () => openSettings('update')
-});
-
 const {
   resetExitSequence,
   closeTopLayer,
@@ -803,6 +832,8 @@ const {
   closeConsumeModal,
   selectedMember,
   activeTab,
+  filterOpen,
+  backFromNotices,
   settingsPath,
   cloudLocked,
   backInSettings

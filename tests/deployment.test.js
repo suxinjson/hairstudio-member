@@ -25,9 +25,9 @@ async function fixture(t) {
   return directory;
 }
 
-function run(script, cwd, env = {}) {
+function run(script, cwd, env = {}, timeout = 60000) {
   return spawnSync(bash, ['--noprofile', '--norc', '-c', script], {
-    cwd, env: { ...process.env, ...env }, encoding: 'utf8', timeout: 60000
+    cwd, env: { ...process.env, ...env }, encoding: 'utf8', timeout
   });
 }
 
@@ -281,8 +281,9 @@ test('the workflow deployment archive builds its Docker frontend without an Andr
   const dockerfile = await readFile(join(unpacked, 'Dockerfile'), 'utf8');
   const buildCommand = /^RUN (npm run build(?::web)?)$/m.exec(dockerfile)?.[1];
   assert.ok(buildCommand, 'Missing Docker frontend build instruction');
-  const built = run(buildCommand, unpacked);
-  assert.equal(built.status, 0, built.stdout + built.stderr);
+  // A production build competes with the other test files for CPU in CI.
+  const built = run(buildCommand, unpacked, {}, 120000);
+  assert.equal(built.status, 0, (built.error?.message || '') + built.stdout + built.stderr);
   const html = await readFile(join(unpacked, 'dist/index.html'), 'utf8');
   assert.match(html, /<script[^>]+src="\/assets\//);
 });
