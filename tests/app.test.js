@@ -938,6 +938,7 @@ test('a numeric ledger phone is rejected by the import screen and the current le
   await nextTick();
   document.querySelectorAll('nav button')[1].click();
   await nextTick();
+  document.querySelector('#ledger-transactions-tab').click(); await nextTick();
   assert.ok(document.body.textContent.includes('138 0000 1111'));
 });
 
@@ -947,7 +948,7 @@ async function assertDailySummary(date, recharge) {
     document.querySelector('#ledger-summary-tab').click(); await nextTick();
   }
   assert.ok(document.querySelector('header').textContent.includes(date));
-  const rechargeCard = document.querySelector('.dashboard-card .grid > div');
+  const rechargeCard = document.querySelector('.cash-metrics > div > strong');
   assert.match(rechargeCard.textContent, new RegExp(`¥\\s*${recharge.replace('.', '\\.')}\\b`));
 }
 
@@ -1226,7 +1227,7 @@ test('native identity recovery shows the ledger check and disables accounting un
   assert.ok(button('采用云端账本，放弃本机待同步变更'));
 });
 
-test('cashier starts with quick actions and the daily summary has a separate ledger tab', async () => {
+test('accounting opens on the daily overview and groups transactions and reports in named tabs', async () => {
   localDb.createMember({ name: '张姐', phone: '13800001111', initialBalance: 100 });
   await mount();
   assert.equal(document.querySelector('.dashboard-card'), null);
@@ -1234,22 +1235,33 @@ test('cashier starts with quick actions and the daily summary has a separate led
   assert.equal(document.querySelectorAll('nav button').length, 3);
   assert.ok(document.querySelector('.customer-open'));
   document.querySelectorAll('nav button')[1].click(); await nextTick();
-  assert.equal(document.querySelector('#ledger-transactions-tab').getAttribute('aria-selected'), 'true');
-  assert.equal(document.querySelector('.dashboard-card'), null);
-  document.querySelector('#ledger-summary-tab').click(); await nextTick();
   assert.equal(document.querySelector('#ledger-summary-tab').getAttribute('aria-selected'), 'true');
-  assert.ok(document.querySelector('.dashboard-card').textContent.includes('今日小店收银简报'));
+  assert.deepEqual([...document.querySelectorAll('.ledger-tabs button')].map(button => button.textContent), ['收银概览', '交易明细', '经营报表']);
+  assert.ok(document.querySelector('.dashboard-card').textContent.includes('今日收银概览'));
   assert.equal(document.querySelector('header input'), null);
   document.querySelector('#ledger-transactions-tab').click(); await nextTick();
   assert.ok(document.querySelector('header input'));
   assert.equal(document.querySelector('.dashboard-card'), null);
+  document.querySelector('#ledger-reports-tab').click(); await nextTick();
+  assert.ok(document.querySelector('#ledger-reports'));
+  assert.equal(document.querySelector('header input'), null);
+  document.querySelectorAll('nav button')[0].click(); await nextTick();
+  document.querySelectorAll('nav button')[1].click(); await nextTick();
+  assert.equal(document.querySelector('#ledger-summary-tab').getAttribute('aria-selected'), 'true');
+  const summaryTab = document.querySelector('#ledger-summary-tab'); summaryTab.focus();
+  summaryTab.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await nextTick();
+  assert.equal(document.activeElement.id, 'ledger-transactions-tab');
+  assert.equal(document.activeElement.getAttribute('aria-selected'), 'true');
+  document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'End', bubbles: true })); await nextTick();
+  assert.equal(document.activeElement.id, 'ledger-reports-tab');
+  assert.equal(document.activeElement.getAttribute('tabindex'), '0');
 });
 
 test('member and ledger fuzzy searches respond to input, blur, change and clear', async () => {
   localDb.createMember({ name: '张阿姨', phone: '13800001111', initialBalance: 100 });
   localDb.createMember({ name: '李大姐', phone: '13900002222', initialBalance: 200 });
   await mount();
-  const input = document.querySelector('header input');
+  let input = document.querySelector('header input');
   async function search(value, event) {
     input.value = value;
     input.dispatchEvent(new dom.window.Event(event, { bubbles: true }));
@@ -1266,6 +1278,8 @@ test('member and ledger fuzzy searches respond to input, blur, change and clear'
   document.querySelector('header .header-search button').click(); await nextTick();
   assert.equal(document.querySelectorAll('.customer-row').length, 2);
   document.querySelectorAll('nav button')[1].click(); await nextTick();
+  document.querySelector('#ledger-transactions-tab').click(); await nextTick();
+  input = document.querySelector('header input');
   await search('1111', 'input');
   assert.ok(document.querySelector('#ledger-transactions').textContent.includes('张阿姨'));
   assert.equal(document.querySelector('#ledger-transactions').textContent.includes('李大姐'), false);
@@ -1275,6 +1289,96 @@ test('member and ledger fuzzy searches respond to input, blur, change and clear'
   await search('储值', 'change');
   assert.ok(document.querySelector('#ledger-transactions').textContent.includes('张阿姨'));
   assert.ok(document.querySelector('#ledger-transactions').textContent.includes('李大姐'));
+});
+
+test('search descriptions stay separate from short placeholders and notifications have dedicated locations', async () => {
+  const member = localDb.createMember({ name: '提醒布局会员' });
+  localDb.consume({ memberId: member.id, amount: 38, allowDebt: true });
+  await mount();
+  const input = document.querySelector('.header-search input');
+  assert.equal(input.placeholder, '搜索会员');
+  assert.equal(input.getAttribute('aria-describedby'), 'header-search-hint');
+  assert.equal(document.getElementById('header-search-hint').textContent, '支持姓名、手机号、手机尾号或备注');
+  assert.equal(document.querySelector('.header-search-row #header-search-hint'), null);
+  assert.ok(document.querySelector('.header-actions .notice-entry'));
+  assert.equal(document.querySelector('.header-store-row .notice-entry'), null);
+  assert.equal(document.querySelector('header .notice-ticker'), null);
+  assert.ok(document.querySelector('main > .notice-ticker .notice-preview'));
+  assert.equal(document.querySelectorAll('.notice-count').length, 1);
+  document.querySelector('.notice-preview').click(); await nextTick();
+  assert.ok(document.querySelector('.notice-center')); assert.equal(document.querySelector('.notice-ticker'), null);
+  button('我知道了').click(); await nextTick();
+  document.querySelector('.notice-back').click(); await nextTick();
+  assert.equal(document.querySelector('.notice-ticker'), null);
+  assert.equal(document.activeElement, document.querySelector('.notice-entry'));
+});
+
+test('transaction actions are collapsed by default and type filtering and refund confirmation still work', async () => {
+  const member = localDb.createMember({ name: '交易操作会员', phone: '13800009999', initialBalance: 100 });
+  localDb.consume({ memberId: member.id, amount: 38 });
+  await mount();
+  document.querySelectorAll('nav button')[1].click(); await nextTick();
+  document.querySelector('#ledger-transactions-tab').click(); await nextTick();
+  assert.equal(document.querySelector('.ledger-item-details').open, false);
+  assert.ok(document.querySelector('details .ledger-refund'));
+  const type = document.querySelector('[aria-label="筛选交易类型"]');
+  type.value = 'CONSUME'; type.dispatchEvent(new window.Event('change', { bubbles: true })); await nextTick();
+  assert.equal(document.querySelectorAll('.ledger-item-card').length, 1);
+  const details = document.querySelector('.ledger-item-details'); details.querySelector('summary').click(); await nextTick();
+  assert.equal(details.open, true); assert.match(details.textContent, /138 0000 9999/);
+  details.querySelector('.ledger-refund').click(); await nextTick();
+  assert.ok(document.querySelector('.confirm-dialog'));
+  assert.equal(localDb.getMemberById(member.id).balance, 6200);
+  [...document.querySelectorAll('.confirm-dialog button')].find(button => button.textContent.includes('取消')).click(); await nextTick();
+  assert.equal(document.querySelector('.confirm-dialog'), null);
+  assert.equal(localDb.getMemberById(member.id).balance, 6200);
+});
+
+test('reports ignore customer search and transaction filters, validate custom dates and refresh after a reversal', async () => {
+  const a = localDb.createMember({ name: '报表甲', initialBalance: 100 });
+  const b = localDb.createMember({ name: '报表乙', initialBalance: 200 });
+  localDb.consume({ memberId: a.id, amount: 38 });
+  const spent = localDb.consume({ memberId: b.id, amount: 20 });
+  await mount();
+  const search = document.querySelector('.header-search input');
+  search.value = '报表甲'; search.dispatchEvent(new window.Event('input', { bubbles: true })); await nextTick();
+  assert.equal(document.querySelectorAll('.customer-row').length, 1);
+  document.querySelectorAll('nav button')[1].click(); await nextTick();
+  document.querySelector('#ledger-transactions-tab').click(); await nextTick();
+  const type = document.querySelector('[aria-label="筛选交易类型"]');
+  type.value = 'CONSUME'; type.dispatchEvent(new window.Event('change', { bubbles: true })); await nextTick();
+  document.querySelector('#ledger-reports-tab').click(); await nextTick();
+  assert.match(document.querySelectorAll('.report-kpis article')[0].textContent, /300\.00/);
+  assert.match(document.querySelectorAll('.report-kpis article')[1].textContent, /58\.00/);
+  assert.equal(document.querySelectorAll('.report-ranking li').length, 2);
+  assert.match(document.querySelector('.report-note').textContent, /不是现金收入/);
+  assert.ok(document.querySelector('svg.report-trend-chart'));
+  const cycle = document.querySelector('[aria-label="报表统计周期"]');
+  cycle.value = 'custom'; cycle.dispatchEvent(new window.Event('change', { bubbles: true })); await nextTick();
+  const start = document.querySelector('[aria-label="报表开始日期"]');
+  const end = document.querySelector('[aria-label="报表结束日期"]');
+  start.value = '2026-11-20'; start.dispatchEvent(new window.Event('input', { bubbles: true }));
+  end.value = '2026-11-19'; end.dispatchEvent(new window.Event('input', { bubbles: true })); await nextTick();
+  assert.match(document.querySelector('[role="alert"]').textContent, /开始日期不能晚于结束日期/);
+  assert.equal(document.querySelector('.report-kpis'), null);
+  cycle.value = 'today'; cycle.dispatchEvent(new window.Event('change', { bubbles: true })); await nextTick();
+  localDb.refundLedger(spent.ledgerId);
+  window.dispatchEvent(new window.Event('cloud-data-updated')); await nextTick();
+  assert.match(document.querySelectorAll('.report-kpis article')[0].textContent, /300\.00/);
+  assert.match(document.querySelectorAll('.report-kpis article')[1].textContent, /38\.00/);
+  assert.equal(document.querySelectorAll('.report-ranking li').length, 1);
+  assert.match(document.querySelector('.report-reconcile').textContent, /撤销冲正1 笔/);
+});
+
+test('browser accounting reports use the server ledger snapshot', async t => {
+  localDb.createMember({ name: '服务器报表会员', initialBalance: 123.45 });
+  const fixture = webFixture(t);
+  await mount(); await loginWeb();
+  document.querySelectorAll('nav button')[1].click(); await nextTick();
+  assert.match(document.querySelector('.cash-metrics').textContent, /123\.45/);
+  document.querySelector('#ledger-reports-tab').click(); await nextTick();
+  assert.match(document.querySelector('.report-kpis').textContent, /123\.45/);
+  assert.equal(fixture.requests.some(request => /report/.test(request.path)), false);
 });
 
 test('Chinese composition searches after committing the completed input', async () => {
@@ -1780,7 +1884,7 @@ test('unified customer navigation filters low balances and debts without duplica
   const debt = localDb.createMember({ name: '欠款客户甲', phone: '13800001003' });
   localDb.consume({ memberId: debt.id, amount: 38, allowDebt: true });
   await mount();
-  assert.deepEqual([...document.querySelectorAll('nav button')].map(b => b.textContent.trim()), ['会员', '流水', '设置']);
+  assert.deepEqual([...document.querySelectorAll('nav button')].map(b => b.textContent.trim()), ['会员', '账务', '设置']);
   assert.equal(document.querySelectorAll('.customer-row').length, 3);
   assert.ok(document.querySelector('.customer-row-debt').textContent.includes('−¥38.00'));
   assert.equal(document.querySelector('.customer-debt-summary'), null);

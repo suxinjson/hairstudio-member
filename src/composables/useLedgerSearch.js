@@ -23,7 +23,10 @@ export function useLedgerSearch({
   });
 
   const searchPlaceholder = computed(() =>
-    activeTab.value === 'ledgers' ? '搜索姓名、手机号、服务项目或备注…' : '姓名 / 手机号 / 手机尾号 / 备注'
+    activeTab.value === 'ledgers' ? '搜索交易' : '搜索会员'
+  );
+  const searchHint = computed(() =>
+    activeTab.value === 'ledgers' ? '支持姓名、手机号、服务项目或备注' : '支持姓名、手机号、手机尾号或备注'
   );
 
   const filteredLedgersList = computed(() => {
@@ -82,6 +85,7 @@ export function useLedgerSearch({
     ledgerFilterType,
     headerSearchQuery,
     searchPlaceholder,
+    searchHint,
     filteredLedgersList,
     handleSearch,
     clearSearch

@@ -22,6 +22,7 @@
       :compact-date-text="compactDateText"
       v-model:search-query="headerSearchQuery"
       :placeholder="searchPlaceholder"
+      :search-hint="searchHint"
       @open-account="openSettings('account')"
       @create-member="openNewMemberModal"
       @search="handleSearch"
@@ -30,6 +31,7 @@
 
     <!-- 主视图容器 -->
     <main class="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-4 sm:py-4 space-y-3.5">
+      <NoticeTicker v-if="!cloudLocked && activeTab !== 'notices'" :items="headerNotices" @open="openNotices" />
       <NoticeCenter v-if="activeTab === 'notices' && !cloudLocked" :items="notices"
         @back="backFromNotices" @navigate="navigateNotice" @act="handleNoticeAction" />
       
@@ -41,11 +43,12 @@
         :can-create="!storageError && canCloudWrite('createMember')"
         @select="selectMember" @consume="openConsumeModal" @create="openNewMemberModal" />
 
-      <!-- ==================== TAB 3: 流水明细与撤销冲正 ==================== -->
+      <!-- 账务中心：默认概览，按需查看交易明细与经营报表。 -->
       <div v-if="activeTab === 'ledgers' && !cloudLocked" class="space-y-3.5">
-        <div class="ledger-tabs" role="tablist" aria-label="账单流水视图">
-          <button id="ledger-transactions-tab" role="tab" :aria-selected="ledgerView === 'transactions'" aria-controls="ledger-transactions" @click="ledgerView = 'transactions'">流水明细</button>
-          <button id="ledger-summary-tab" role="tab" :aria-selected="ledgerView === 'summary'" aria-controls="ledger-summary" @click="ledgerView = 'summary'">收银简报</button>
+        <div class="ledger-tabs" role="tablist" aria-label="账务视图" @keydown="moveLedgerTab">
+          <button v-for="view in ledgerViews" :key="view.key" :id="`ledger-${view.key}-tab`" type="button" role="tab"
+            :aria-selected="ledgerView === view.key" :aria-controls="`ledger-${view.key}`" :tabindex="ledgerView === view.key ? 0 : -1"
+            @click="ledgerView = view.key">{{ view.label }}</button>
         </div>
         <LedgerTransactions
           v-if="ledgerView === 'transactions'"
@@ -62,7 +65,7 @@
           @copy="copyMemberField"
           @refund="confirmRefundLedger"
         />
-        <div v-else id="ledger-summary" role="tabpanel" aria-labelledby="ledger-summary-tab">
+        <div v-else-if="ledgerView === 'summary'" id="ledger-summary" role="tabpanel" aria-labelledby="ledger-summary-tab" class="space-y-3">
           <!-- 今日营业收支卡片 (独立组件) -->
           <DashboardSummary
             :dashboard="dashboard"
@@ -70,7 +73,12 @@
             :cloud-state="cloudState"
             :format-cent="formatCent"
           />
+          <div class="ledger-shortcuts">
+            <button type="button" @click="ledgerView = 'transactions'"><ReceiptText :size="19" aria-hidden="true" /><span>查看交易明细</span><ChevronRight :size="16" aria-hidden="true" /></button>
+            <button type="button" @click="ledgerView = 'reports'"><ChartNoAxesCombined :size="19" aria-hidden="true" /><span>查看经营报表</span><ChevronRight :size="16" aria-hidden="true" /></button>
+          </div>
         </div>
+        <BusinessReports v-else :ledgers="customerLedgers" :members="reportMembers" :now="currentDate" :format-cent="formatCent" />
       </div>
 
       <!-- ==================== TAB 4: 服务定价与备份安全 ==================== -->
@@ -163,11 +171,11 @@
     <!-- 三个主入口，统一会员列表与收银操作。 -->
     <nav v-if="!cloudLocked" class="app-nav fixed bottom-0 left-0 right-0 mx-auto bg-white/95 backdrop-blur-md z-30 pb-gesture-safe" aria-label="主导航">
       <div class="grid grid-cols-3 h-16">
-        <button @click="activeTab = 'customers'" :aria-current="activeTab === 'customers' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'customers' }" class="app-nav-item btn-press">
+        <button @click="openCustomerHome" :aria-current="activeTab === 'customers' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'customers' }" class="app-nav-item btn-press">
           <UsersRound :size="23" aria-hidden="true" /><span>会员</span>
         </button>
-        <button @click="activeTab = 'ledgers'" :aria-current="activeTab === 'ledgers' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'ledgers' }" class="app-nav-item btn-press">
-          <ReceiptText :size="23" aria-hidden="true" /><span>流水</span>
+        <button @click="openLedgerHome" :aria-current="activeTab === 'ledgers' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'ledgers' }" class="app-nav-item btn-press">
+          <ChartNoAxesCombined :size="23" aria-hidden="true" /><span>账务</span>
         </button>
         <button @click="openSettings()" :aria-current="activeTab === 'settings' ? 'page' : undefined" :class="{ 'nav-active': activeTab === 'settings' }" class="app-nav-item btn-press">
           <Settings :size="23" aria-hidden="true" /><span>设置</span>
@@ -327,6 +335,7 @@ import BackupSettings from './components/BackupSettings.vue';
 import SnapshotSettings from './components/SnapshotSettings.vue';
 import DashboardSummary from './components/DashboardSummary.vue';
 import LedgerTransactions from './components/LedgerTransactions.vue';
+import BusinessReports from './components/BusinessReports.vue';
 import BackupRestoreModal from './components/BackupRestoreModal.vue';
 import MemberDetailDrawer from './components/MemberDetailDrawer.vue';
 import ConsumeModal from './components/ConsumeModal.vue';
@@ -343,9 +352,10 @@ import WebBackupSettings from './components/WebBackupSettings.vue';
 import AppVoiceSettings from './components/AppVoiceSettings.vue';
 import Customers from './components/Customers.vue';
 import NoticeCenter from './components/NoticeCenter.vue';
+import NoticeTicker from './components/NoticeTicker.vue';
 import { useNotices } from './composables/useNotices.js';
 import { systemNotices, debtNoticeVersion } from './notices.js';
-import { UsersRound, ReceiptText, Settings } from 'lucide-vue-next';
+import { UsersRound, ReceiptText, Settings, ChartNoAxesCombined, ChevronRight } from 'lucide-vue-next';
 import { cloudClient, copyToClipboard } from './cloud-device.js';
 import { appVoicePlayer, appVoiceContext } from './app-voice.js';
 import { canWrite } from './sync-protocol.js';
@@ -371,13 +381,40 @@ const isWeb = localDb.webOnly === true;
 
 // 导航与页面状态
 const activeTab = ref('customers');
-const ledgerView = ref('transactions');
+const ledgerView = ref('summary');
+const ledgerViews = [
+  { key: 'summary', label: '收银概览' },
+  { key: 'transactions', label: '交易明细' },
+  { key: 'reports', label: '经营报表' }
+];
+function openCustomerHome() {
+  activeTab.value = 'customers';
+  void nextTick(() => window.scrollTo?.(0, 0));
+}
+function openLedgerHome() {
+  activeTab.value = 'ledgers';
+  ledgerView.value = 'summary';
+  void nextTick(() => window.scrollTo?.(0, 0));
+}
+function moveLedgerTab(event) {
+  const index = ledgerViews.findIndex(view => view.key === ledgerView.value);
+  let next;
+  if (event.key === 'ArrowRight') next = (index + 1) % ledgerViews.length;
+  if (event.key === 'ArrowLeft') next = (index + ledgerViews.length - 1) % ledgerViews.length;
+  if (event.key === 'Home') next = 0;
+  if (event.key === 'End') next = ledgerViews.length - 1;
+  if (next === undefined) return;
+  event.preventDefault();
+  ledgerView.value = ledgerViews[next].key;
+  event.currentTarget.querySelectorAll('[role=tab]')[next]?.focus();
+}
 const autoStartUpdateDownload = ref(false);
 const updateResumeToken = ref(0);
 
 // 核心数据模型
 const dashboard = ref({});
 const membersList = ref([]);
+const reportMembers = ref([]);
 const customerLedgers = ref([]);
 const customerFilter = ref('recent');
 const filterOpen = ref(false);
@@ -522,6 +559,7 @@ function refreshAll() {
   try {
     localDb.init();
     const nextMembers = localDb.getMembers(searchQuery.value);
+    const nextReportMembers = searchQuery.value.trim() ? localDb.getMembers() : nextMembers;
     const nextDashboard = localDb.getDashboard();
     const nextServices = localDb.getServices();
     const nextSettings = localDb.getRechargeSettings();
@@ -529,8 +567,9 @@ function refreshAll() {
     const nextCustomerLedgers = localDb.getLedgers();
 
     membersList.value = nextMembers;
+    reportMembers.value = nextReportMembers;
     dashboard.value = nextDashboard;
-    debtVersion.value = debtNoticeVersion(localDb.getMembers(), nextCustomerLedgers);
+    debtVersion.value = debtNoticeVersion(nextReportMembers, nextCustomerLedgers);
     customerLedgers.value = nextCustomerLedgers;
     ledgersList.value = nextLedgers;
     hairServices.value = nextServices;
@@ -551,6 +590,7 @@ function refreshAll() {
     storageError.value = error.message;
     if (activeTab.value !== 'settings' || settingsPage.value === 'overview') openSettings('backup-files');
     membersList.value = [];
+    reportMembers.value = [];
     customerLedgers.value = [];
     ledgersList.value = [];
     selectedMember.value = null;
@@ -569,6 +609,7 @@ const {
   ledgerFilterType,
   headerSearchQuery,
   searchPlaceholder,
+  searchHint,
   filteredLedgersList,
   handleSearch,
   clearSearch
