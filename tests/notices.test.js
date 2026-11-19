@@ -163,18 +163,74 @@ test('startup does not erase an acknowledged debt before the ledger is loaded', 
   } finally { mounted.app.unmount(); }
 });
 
-test('retrying a failed connection does not resolve its reminder until synchronization succeeds', async () => {
-  const state = ref({ ...identity('a'), binding: { storeId: 'store-a' }, syncStatus: 'error' });
-  const systemItems = computed(() => systemNotices({ state: state.value }));
-  const { app, center } = mount(state, systemItems);
-  try {
-    center.act(center.items.value[0], 'acknowledge');
-    state.value.syncStatus = 'checking'; await nextTick();
-    assert.equal(center.items.value.length, 0);
-    state.value.syncStatus = 'error'; await nextTick();
-    assert.equal(center.pending.value.length, 0);
-    state.value.syncStatus = 'confirmed'; await nextTick();
-    state.value.syncStatus = 'error'; await nextTick();
-    assert.equal(center.pending.value.length, 1);
-  } finally { app.unmount(); }
-});
+for (const action of ['acknowledge', 'delete']) {
+  test(`retrying an empty outbox preserves its ${action} receipt until synchronization succeeds`, async () => {
+    const state = ref({ ...identity('a'), binding: { storeId: 'store-a' }, syncStatus: 'error' });
+    const systemItems = computed(() => systemNotices({ state: state.value }));
+    const { app, center } = mount(state, systemItems);
+    try {
+      center.act(center.items.value[0], action);
+      state.value.syncStatus = 'checking'; await nextTick();
+      assert.equal(center.items.value.length, 0);
+      state.value.syncStatus = 'error'; await nextTick();
+      assert.equal(center.pending.value.length, 0);
+      state.value.syncStatus = 'confirmed'; await nextTick();
+      state.value.syncStatus = 'error'; await nextTick();
+      assert.equal(center.pending.value.length, 1);
+    } finally { app.unmount(); }
+  });
+
+  test(`sync retries and transport changes preserve a pending outbox's ${action} receipt across restarts`, async () => {
+    const state = ref({ ...identity('a'), binding: { storeId: 'store-a' },
+      outbox: [{ id: 'pending-a' }], syncStatus: 'error' });
+    const systemItems = computed(() => systemNotices({ state: state.value }));
+    let mounted = mount(state, systemItems);
+    try {
+      mounted.center.act(mounted.center.items.value[0], action);
+      for (const [online, syncStatus] of [[true, 'checking'], [true, 'error'], [true, 'pending'],
+        [false, 'error'], [true, 'checking'], [false, 'error']]) {
+        Object.assign(state.value, { online, syncStatus }); await nextTick();
+        assert.equal(mounted.center.pending.value.length, 0, `${online}:${syncStatus}`);
+        assert.equal(mounted.center.headerItems.value.length, 0);
+        assert.equal(mounted.center.items.value.length, action === 'delete' ? 0 : 1);
+      }
+      mounted.app.unmount(); mounted = mount(state, systemItems);
+      assert.equal(mounted.center.pending.value.length, 0);
+      state.value.outbox.push({ id: 'pending-b' }); await nextTick();
+      assert.equal(mounted.center.pending.value.length, 1);
+    } finally { mounted.app.unmount(); }
+  });
+
+  test(`a confirmed synchronization clears the ${action} receipt before another same-size outbox`, async () => {
+    const state = ref({ ...identity('a'), binding: { storeId: 'store-a' },
+      outbox: [{ id: 'pending-a' }], syncStatus: 'error' });
+    const systemItems = computed(() => systemNotices({ state: state.value }));
+    const { app, center } = mount(state, systemItems);
+    try {
+      center.act(center.items.value[0], action);
+      Object.assign(state.value, { outbox: [], syncStatus: 'checking' }); await nextTick();
+      assert.equal(center.items.value.length, 0);
+      state.value.syncStatus = 'confirmed'; await nextTick();
+      Object.assign(state.value, { outbox: [{ id: 'pending-b' }], syncStatus: 'pending' }); await nextTick();
+      assert.equal(center.pending.value.length, 1);
+    } finally { app.unmount(); }
+  });
+
+  test(`legacy sync ${action} receipts survive the new version format and still report login requirements`, async () => {
+    const state = ref({ ...identity('a'), binding: { storeId: 'store-a' },
+      outbox: [{ id: 'pending-a' }], syncStatus: 'checking', syncLoginRequired: false });
+    const key = 'member_notice_receipts_v1:' + JSON.stringify(['https://member.example', 'store-a', 'a']);
+    localStorage.setItem(key, JSON.stringify({ 'system:sync': {
+      version: '1:false:false:error', acknowledged: true, deleted: action === 'delete'
+    } }));
+    const systemItems = computed(() => systemNotices({ state: state.value }));
+    const { app, center } = mount(state, systemItems);
+    try {
+      assert.equal(center.pending.value.length, 0);
+      assert.equal(center.items.value.length, action === 'delete' ? 0 : 1);
+      state.value.syncLoginRequired = true; await nextTick();
+      assert.equal(center.pending.value.length, 1);
+      assert.equal(center.items.value[0].title, '请重新登录同步');
+    } finally { app.unmount(); }
+  });
+}

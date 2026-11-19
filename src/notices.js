@@ -35,7 +35,9 @@ export function systemNotices({ dashboard = {}, debtVersion = '', state = {}, st
     add('sync', 'reminder', state.syncLoginRequired ? '请重新登录同步' : pending ? pending + ' 笔记录待同步' : '连接需要留意',
       state.syncLoginRequired ? '登录已失效，请重新登录。本机账本与待同步记录仍保留。'
         : (state.online ? '请打开同步设置检查连接。' : '当前离线，联网后会继续同步。') + (pending ? '待同步 ' + pending + ' 笔，本机记录已保留。' : ''),
-      [pending, state.online, state.syncLoginRequired, state.syncStatus].join(':'), 'account', '同步设置');
+      // A retry can change both transport and sync status without changing the
+      // incident. Keep its receipt until the pending count or login need changes.
+      [pending, Boolean(state.syncLoginRequired)].join(':'), 'account', '同步设置');
   }
   if (dashboard.totalDebt > 0 && !storageError) add('debt', 'reminder', dashboard.debtMemberCount + ' 位会员尚有欠款',
     '待收回 ¥' + (dashboard.totalDebt / 100).toFixed(2) + '，可查看欠款会员并办理充值或还款。', debtVersion, 'debt', '查看欠款会员');

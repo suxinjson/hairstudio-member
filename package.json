@@ -12,7 +12,7 @@
     "dev": "vite",
     "build": "npm run build:web && npx cap sync android",
     "build:web": "vite build",
-    "test": "node --test",
+    "test": "node tools/test.mjs",
     "sync": "npx cap sync android",
     "open:android": "npx cap open android",
     "admin:dev": "npm --workspace=admin run dev",

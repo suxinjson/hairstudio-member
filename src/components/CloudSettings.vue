@@ -91,15 +91,17 @@
   </section>
 </template>
 <script setup>
-import { ref, computed, onUnmounted, inject, watch } from 'vue';
+import { ref, computed, onUnmounted, inject, watch, nextTick } from 'vue';
 import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import { cloudClient, checkForUpdate, downloadUpdate, installUpdate, copyToClipboard } from '../cloud-device.js';
 import { DEFAULT_CLOUD_SERVER_URL } from '../cloud-config.js';
 import { localDb } from '../storage.js';
 import { exportFile } from '../file-export.js';
 const props = defineProps({ recoveryRequired: { type: Boolean, default: false }, section: { type: String, default: 'account' }, showTitle: { type: Boolean, default: true },
-  availableUpdate: { type: Object, default: null }, checkUpdate: { type: Function, default: null } });
-const emit = defineEmits(['navigate']);
+  availableUpdate: { type: Object, default: null }, checkUpdate: { type: Function, default: null },
+  autoStartDownload: { type: Boolean, default: false }, updateResumeToken: { type: Number, default: 0 } });
+const emit = defineEmits(['navigate', 'auto-start-consumed']);
 const sectionTitles = { account: '☁️ 账号与同步', users: '账号管理', activity: '使用记录', update: '应用更新' };
 const isNativeApp = Capacitor.isNativePlatform();
 const roles = { owner: '店主', clerk: '店员', viewer: '只读' };
@@ -129,9 +131,62 @@ async function promptConfirm(options) {
   return window.confirm(typeof options === 'string' ? options : options.message);
 }
 const message = ref(''), users = ref(null), audit = ref(null), update = ref(props.availableUpdate), downloaded = ref(null), checkingUpdate = ref(false), downloading = ref(false), installing = ref(false), progress = ref(0);
+const PENDING_UPDATE_INSTALL_KEY = 'member.pending-update-install.v1';
+let updateResumeInFlight = null, resumeInstallerOnForeground = false;
+function clearSavedInstall() {
+  try { globalThis.localStorage?.removeItem(PENDING_UPDATE_INSTALL_KEY); } catch {}
+}
+function saveDownloadedInstall(file, manifest) {
+  if (!isNativeApp || file.browser || !/^[a-f0-9]{64}\.apk$/.test(file.fileName || '')) return;
+  try { globalThis.localStorage?.setItem(PENDING_UPDATE_INSTALL_KEY, JSON.stringify({ fileName: file.fileName,
+    versionCode: manifest.versionCode, sha256: manifest.sha256,
+    manifest: { versionCode: manifest.versionCode, versionName: manifest.versionName, notes: manifest.notes || '', sha256: manifest.sha256 },
+    awaitingInstall: resumeInstallerOnForeground })); } catch {}
+}
+function restoreDownloadedInstall(manifest) {
+  if (!isNativeApp) return false;
+  try {
+    const saved = JSON.parse(globalThis.localStorage?.getItem(PENDING_UPDATE_INSTALL_KEY) || 'null');
+    if (!saved) return false;
+    if (!/^[a-f0-9]{64}\.apk$/.test(saved.fileName || '') || saved.fileName !== saved.sha256 + '.apk' ||
+        !Number.isSafeInteger(saved.versionCode) || saved.versionCode < 1 ||
+        saved.manifest && (saved.manifest.sha256 !== saved.sha256 || saved.manifest.versionCode !== saved.versionCode)) {
+      clearSavedInstall(); downloaded.value = null;
+      return false;
+    }
+    update.value = saved.manifest || (manifest?.sha256 === saved.sha256 && manifest?.versionCode === saved.versionCode
+      ? manifest : { versionCode: saved.versionCode, versionName: String(saved.versionCode), notes: '', sha256: saved.sha256 });
+    if (downloaded.value?.fileName !== saved.fileName) {
+      downloaded.value = { fileName: saved.fileName, verified: true };
+      resumeInstallerOnForeground = saved.awaitingInstall === true;
+    }
+    message.value = '已下载并校验更新包，返回后可继续安装，无需再次下载。';
+    return true;
+  } catch {
+    clearSavedInstall(); downloaded.value = null;
+    return false;
+  }
+}
 watch(() => props.availableUpdate, value => {
+  if (restoreDownloadedInstall(value)) return;
   if ((!checkingUpdate.value || !value) && !downloading.value && !installing.value && !downloaded.value) update.value = value;
-});
+}, { immediate: true });
+watch(() => [props.autoStartDownload, props.section, props.availableUpdate], ([requested, section, manifest]) => {
+  const target = manifest || update.value;
+  if (!requested || section !== 'update' || !target || checkingUpdate.value || downloading.value || installing.value) return;
+  emit('auto-start-consumed');
+  const cachedMatches = downloaded.value && downloaded.value.fileName === target.sha256 + '.apk' &&
+    update.value?.versionCode === target.versionCode && update.value?.sha256 === target.sha256;
+  if (!cachedMatches && downloaded.value) {
+    downloaded.value = null; clearSavedInstall(); resumeInstallerOnForeground = false;
+  }
+  update.value = target;
+  void nextTick(() => {
+    if (cachedMatches && resumeInstallerOnForeground) void resumePendingInstall();
+    else if (cachedMatches && downloaded.value && !downloaded.value.browser) void perform(openInstaller);
+    else void download();
+  });
+}, { immediate: true });
 const resolutionMessage = computed(() => {
   if (state.value.cloudAdoption?.mode === 'upload') return '正在核对原待办，未提交的交易会取消，核对完成后上传本机完整恢复账本。期间暂停记账和自动同步；断网或重启后请继续核对并上传，本机账本和原待办仍保留。';
   if (state.value.cloudAdoption) return '正在逐笔核对原待办：已提交的交易会保留，尚未提交的交易会取消。核对完成前已暂停记账和自动同步；断网或重启后请继续核对。本机账本与原待办仍保留。';
@@ -223,36 +278,82 @@ async function checkUpdate() {
   try {
     const manifest = await (props.checkUpdate || checkForUpdate)();
     if (!current()) return;
-    update.value = manifest; downloaded.value = null;
+    const sameDownloadedUpdate = Boolean(downloaded.value && manifest && update.value &&
+      manifest.versionCode === update.value.versionCode && manifest.sha256 === update.value.sha256);
+    if (!sameDownloadedUpdate) { downloaded.value = null; clearSavedInstall(); resumeInstallerOnForeground = false; }
+    update.value = manifest;
     if (!manifest) message.value = '当前没有可用的新版本';
   } catch (error) {
     if (current()) message.value = error.message;
   } finally { checkingUpdate.value = false; }
 }
 async function download() {
-  if (checkingUpdate.value || downloading.value || installing.value) return;
+  if (checkingUpdate.value || downloading.value || installing.value || !update.value) return;
   downloading.value = true; progress.value = 0;
   try {
     await perform(async () => {
       await cloudClient.sync();
       if (state.value.outbox.length || state.value.status === 'conflict') throw new Error('请先同步或处理待办记录，再下载更新');
       downloaded.value = await downloadUpdate(update.value, value => { progress.value = value; });
-      if (!downloaded.value.browser) await openInstaller();
+      if (!downloaded.value.browser) {
+        saveDownloadedInstall(downloaded.value, update.value);
+        await openInstaller();
+      }
     });
   } finally { downloading.value = false; }
 }
 async function openInstaller() {
+  if (installing.value) return;
   installing.value = true;
   message.value = '正在准备安装。如系统要求授权，请允许后返回，安装会自动继续。';
+  resumeInstallerOnForeground = true;
+  saveDownloadedInstall(downloaded.value, update.value);
   try {
     const result = await installUpdate(downloaded.value, update.value);
+    resumeInstallerOnForeground = result.status === 'installer-opened';
+    saveDownloadedInstall(downloaded.value, update.value);
     message.value = result.status === 'permission-required'
       ? '尚未允许安装。安装包已保留，点击“继续安装更新”可重新授权，无需再次下载。'
       : '已打开系统安装界面，请确认安装。更新时无需卸载会员管家。';
+    return result;
+  } catch (error) {
+    resumeInstallerOnForeground = false;
+    saveDownloadedInstall(downloaded.value, update.value);
+    if (/^(请先下载|安装包|更新版本号|此更新)/.test(error.message || '')) {
+      downloaded.value = null; clearSavedInstall();
+      message.value = '本机缓存中没有可用安装包，请重新下载更新。';
+    }
+    throw error;
   } finally { installing.value = false; }
 }
 async function install() {
   if (checkingUpdate.value || downloading.value || installing.value || !downloaded.value || downloaded.value.browser) return;
   await perform(openInstaller);
 }
+async function resumePendingInstall() {
+  if (!isNativeApp || props.section !== 'update' || !active || !resumeInstallerOnForeground ||
+      !downloaded.value || !update.value || downloading.value || installing.value) return;
+  if (updateResumeInFlight) return updateResumeInFlight;
+  resumeInstallerOnForeground = false;
+  updateResumeInFlight = (async () => {
+    let installed;
+    try { installed = await CapacitorApp.getInfo(); }
+    catch (error) {
+      resumeInstallerOnForeground = true;
+      saveDownloadedInstall(downloaded.value, update.value);
+      throw error;
+    }
+    if (Number(installed.build) >= Number(update.value.versionCode)) {
+      clearSavedInstall(); downloaded.value = null; update.value = null;
+      message.value = '更新已完成。';
+      return;
+    }
+    await openInstaller();
+  })().catch(error => { message.value = error.message || '无法继续打开更新安装包'; })
+    .finally(() => { updateResumeInFlight = null; });
+  return updateResumeInFlight;
+}
+watch(() => props.updateResumeToken, () => {
+  if (!props.autoStartDownload) void resumePendingInstall();
+}, { immediate: true });
 </script>

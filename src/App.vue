@@ -82,7 +82,9 @@
         <WebAccountSettings v-if="isWeb && (cloudLocked || settingsPage === 'account')" :ask-confirm="askConfirm" @logged-in="activeTab = 'customers'; settingsPath = []" />
         <CloudSettings v-else-if="cloudLocked || ['account', 'users', 'activity', 'update'].includes(settingsPage)"
           :section="cloudLocked ? 'account' : settingsPage" :show-title="cloudLocked" :recovery-required="Boolean(storageError)"
-          :available-update="availableUpdate" :check-update="checkUpdateManually" @navigate="openSettings" />
+          :available-update="availableUpdate" :check-update="checkUpdateManually"
+          :auto-start-download="autoStartUpdateDownload" :update-resume-token="updateResumeToken"
+          @auto-start-consumed="autoStartUpdateDownload = false" @navigate="openSettings" />
         <template v-if="!cloudLocked">
         <SettingsOverview
           v-if="settingsPage === 'overview' || settingsPage === 'backup'"
@@ -370,6 +372,8 @@ const isWeb = localDb.webOnly === true;
 // 导航与页面状态
 const activeTab = ref('customers');
 const ledgerView = ref('transactions');
+const autoStartUpdateDownload = ref(false);
+const updateResumeToken = ref(0);
 
 // 核心数据模型
 const dashboard = ref({});
@@ -449,6 +453,7 @@ function backFromNotices() {
 }
 function navigateNotice(action) {
   if (action === 'debt') { activeTab.value = 'customers'; clearSearch(); customerFilter.value = 'debt'; }
+  else if (action === 'update') { autoStartUpdateDownload.value = true; openSettings('update'); }
   else openSettings(action);
   window.scrollTo?.(0, 0);
 }
@@ -897,7 +902,7 @@ onMounted(async () => {
   if (isNativeApp) {
     try {
       const listener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-        if (isActive) refreshOnResume();
+        if (isActive) { updateResumeToken.value++; refreshOnResume(); }
         else pauseUpdateCheck();
       });
       if (isUnmounted) listener.remove();

@@ -1,5 +1,14 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 
+function normalizeSyncReceiptVersion(version) {
+  // Earlier receipts also included online and syncStatus. Preserve those
+  // acknowledgements when upgrading to the stable incident version.
+  const fields = version.split(':');
+  if (fields.length !== 4 || !/^\d+$/.test(fields[0]) ||
+    !['', 'true', 'false'].includes(fields[1]) || !['', 'true', 'false'].includes(fields[2])) return version;
+  return [fields[0], fields[2] === 'true'].join(':');
+}
+
 // Reminders use the data already held by the app. Only local receipts are stored;
 // no server client or polling lifecycle participates in this module.
 export function useNotices({ state, systemItems, ledgerReady = ref(true) }) {
@@ -12,7 +21,8 @@ export function useNotices({ state, systemItems, ledgerReady = ref(true) }) {
       const data = JSON.parse(localStorage.getItem(storageKey()) || '{}');
       receipts.value = data && typeof data === 'object' && !Array.isArray(data)
         ? Object.fromEntries(Object.entries(data).filter(([id, receipt]) => id.startsWith('system:') &&
-          receipt && typeof receipt.version === 'string' && typeof receipt.acknowledged === 'boolean' && typeof receipt.deleted === 'boolean')) : {};
+          receipt && typeof receipt.version === 'string' && typeof receipt.acknowledged === 'boolean' && typeof receipt.deleted === 'boolean')
+          .map(([id, receipt]) => [id, id === 'system:sync' ? { ...receipt, version: normalizeSyncReceiptVersion(receipt.version) } : receipt])) : {};
     } catch { receipts.value = {}; }
   }
   const items = computed(() => systemItems.value.map(item => {

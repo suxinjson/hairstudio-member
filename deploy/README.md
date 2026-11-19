@@ -145,6 +145,8 @@ docker compose exec -T db pg_dump -U member -d member -Fc > backups/member.dump
 
 本地安装 Node.js 20 以上，运行 `npm ci`、`npm test`、`npm run build` 和 `npm audit --registry=https://registry.npmjs.org`。云端集成测试默认使用 PGlite 内嵌 PostgreSQL，不要求本机安装数据库或 Docker；生产使用 PostgreSQL 17。它验证 SQL 事务、权限、重试、断网和冲突；真实 PostgreSQL 多连接锁竞争可按下面的方式验证，Caddy 证书申请仍需在部署环境检查。
 
+`npm test` 只递归运行 `tests/` 和 `server/tests/` 中的正式测试，避免将 `tmp/` 中部署包的测试副本重复执行。测试入口会保留 Node.js 测试参数与失败退出码。
+
 可连接到专用 PostgreSQL 17 测试实例，设置 `MEMBER_TEST_DATABASE_URL` 后运行 `npm test`，切换云端集成测试至真实多连接 PostgreSQL，并启用同会员并发消费、不同会员并发消费、原请求与取消竞争、恢复与消费竞争四项验证。并发登录额度测试也在同一模式运行。测试在随机生成的独立 schema 中创建表，完成后删除该 schema；连接账号需有创建 schema 权限。未设置此变量时四项账本锁竞争检查跳过，其他测试继续使用 PGlite；Linux `flock` 部署并发检查需在 Linux 执行。
 
 如需真实数据库角色验证，同时设置 `MEMBER_TEST_ADMIN_DATABASE_URL` 指向专用、可丢弃的临时 PostgreSQL 集群；账号需要创建数据库/角色权限，集群不能存在 `member_app`。该测试创建独立数据库并配置固定名称的运行角色，完成后清理。不要连接生产或共享集群。默认角色测试使用独立 PGlite 实例。

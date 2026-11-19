@@ -198,6 +198,18 @@ public class CloudDevicePlugin extends Plugin {
                 long expectedSize = call.getData().optLong("size", -1);
                 if (!expectedHash.matches("[a-f0-9]{64}") || expectedVersion < 1 || expectedSize <= 0 || expectedSize > 250L * 1024 * 1024) throw new Exception("更新清单无效");
                 File target = updateFile(expectedHash + ".apk");
+                if (target.exists()) {
+                    try {
+                        if (target.isFile()) {
+                            verifyApk(target, expectedHash, expectedVersion);
+                            call.resolve(new JSObject().put("fileName", target.getName()).put("verified", true));
+                            return;
+                        }
+                    } catch (Exception invalidCache) {
+                        // An incomplete or stale cache must never block a clean retry.
+                    }
+                    if (!target.delete()) throw new Exception("无法清理无效更新缓存，请检查设备存储空间");
+                }
                 temporary = new File(target.getParentFile(), UUID.randomUUID() + ".part");
                 connection = (HttpsURLConnection) url.openConnection();
                 connection.setInstanceFollowRedirects(false); connection.setConnectTimeout(15000); connection.setReadTimeout(30000);
@@ -232,7 +244,8 @@ public class CloudDevicePlugin extends Plugin {
                 String hash = call.getString("sha256", ""); long expectedVersion = call.getData().optLong("versionCode", -1);
                 File apk = updateFile(call.getString("fileName"));
                 if (!hash.matches("[a-f0-9]{64}") || expectedVersion < 1 || !apk.isFile()) throw new Exception("请先下载并校验更新");
-                verifyApk(apk, hash, expectedVersion);
+                try { verifyApk(apk, hash, expectedVersion); }
+                catch (Exception invalidApk) { apk.delete(); throw invalidApk; }
                 getActivity().runOnUiThread(() -> {
                     try {
                         if (Build.VERSION.SDK_INT >= 26 && !getContext().getPackageManager().canRequestPackageInstalls()) {
