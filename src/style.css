@@ -5,6 +5,8 @@ html {
   font-size: 16px;
   text-size-adjust: 100%;
   -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 /* 移动端与水滴屏/挖孔屏专属安全区与字体规范 */
@@ -40,10 +42,15 @@ body {
   -webkit-text-size-adjust: 100%;
   overflow-wrap: break-word;
   word-break: break-word;
+  overflow-x: hidden;
+  max-width: 100%;
+  width: 100%;
 }
 
 #app {
   max-width: 880px;
+  width: 100%;
+  overflow-x: hidden;
   min-height: 100vh;
   margin: 0 auto;
   background-color: var(--app-canvas);

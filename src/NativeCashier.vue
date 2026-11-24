@@ -21,8 +21,16 @@
             {{ notices.headerItems.value.length }}
           </span>
         </button>
-        <button type="button" class="h-9 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 btn-press" :disabled="accountBusy || workspace.state.busy" @click="signOut">
-          退出
+        <button
+          v-if="canWrite"
+          type="button"
+          aria-label="新增会员"
+          :disabled="workspace.state.busy || workspace.state.pending || !workspace.state.book"
+          class="register-member h-9 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 text-white text-xs font-black rounded-xl shadow-md shadow-emerald-950/40 flex items-center gap-1 btn-press transition-all shrink-0"
+          @click="openNewMember"
+        >
+          <span class="text-sm font-black leading-none">+</span>
+          <span>登记会员</span>
         </button>
       </div>
     </header>
@@ -106,7 +114,7 @@ import VoiceSettings from './components/VoiceSettings.vue';
 const session = createRelationalNativeSession(), state = session.state;
 const workspace = createNativeWorkspace(session), archive = createNativeArchiveController(workspace), updateApi = createNativeUpdate(session);
 const standalone = computed(() => state.binding?.mode === 'standalone');
-const unlocked = computed(() => Boolean(state.user && state.deviceAccess.allowed));
+const unlocked = computed(() => Boolean(state.user && (!state.deviceAccess.disabled || state.deviceAccess.allowed)));
 const owner = computed(() => state.user?.role === 'owner');
 const canWrite = computed(() => state.user?.role !== 'viewer' && workspace.state.replicaReady && !workspace.state.blockedEpoch && !state.busy);
 const identity = computed(() => JSON.stringify([state.user?.storeId, state.user?.id, state.generation]));
@@ -148,6 +156,7 @@ function noticeAction(action) {
 }
 function finishConfirm(accept) { const ask = confirmation.value; confirmation.value = null; ask?.resolve(accept); }
 function openUpdate() { workbench.value?.openAccount(); autoStartDownload.value = true; }
+function openNewMember() { workbench.value?.openCreateMember(); }
 async function beforeInstall() {
   if (!unlocked.value || standalone.value || workspace.state.status !== 'ready' || workspace.state.busy) throw new Error('请先打开账本并完成当前操作');
   if (workspace.state.pendingCount && state.online) await workspace.sync();
@@ -174,8 +183,10 @@ async function resume() {
     session.publishAccess();
     try { await session.heartbeat(); } catch {}
     if (!live) return;
-    if (unlocked.value && !workspace.state.book && workspace.state.status !== 'loading') await workspace.connect();
-    await workspace.sync();
+    try {
+      if (unlocked.value && !workspace.state.book && workspace.state.status !== 'loading') await workspace.connect();
+      await workspace.sync();
+    } catch {}
   })().finally(() => { reconnecting = null; });
   return reconnecting;
 }

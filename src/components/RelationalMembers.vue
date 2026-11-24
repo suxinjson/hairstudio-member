@@ -2,17 +2,29 @@
   <section class="customers-page space-y-3.5" aria-label="会员档案">
     <!-- 顶部统计与提示 -->
     <div class="customer-list-heading flex items-center justify-between px-1" aria-live="polite">
-      <h2 class="text-base font-extrabold text-slate-800">
-        {{ query.trim() ? '搜索 · ' : '' }}{{ currentFilterLabel }}
-        <span class="text-xs font-bold text-slate-500 bg-slate-200/80 px-2 py-0.5 rounded-full ml-1">{{ page.rows.value.length }} 人</span>
+      <h2 class="text-base font-extrabold text-slate-800 flex items-center gap-1.5">
+        <span>{{ query.trim() ? '搜索 · ' : '' }}{{ currentFilterLabel }}</span>
+        <span class="text-xs font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+          <template v-if="!query.trim() && balance === 'all' && totalCount !== null">
+            共 {{ totalCount }} 人
+          </template>
+          <template v-else-if="!query.trim() && balance === 'recent'">
+            最近 {{ page.rows.value.length }} 人
+          </template>
+          <template v-else>
+            {{ page.rows.value.length }} 人
+          </template>
+        </span>
       </h2>
-      <span class="text-xs text-slate-500">{{ balance === 'low' ? '余额 0–50 元' : '点会员查看档案' }}</span>
+      <span class="text-xs text-slate-500 font-medium">
+        {{ balance === 'low' ? '余额 0–50 元' : balance === 'recent' ? '按最近消费时间排序' : balance === 'debt' ? '查看待还款会员' : '点会员查看档案' }}
+      </span>
     </div>
 
     <!-- 搜索与快捷操作栏 -->
     <div class="bg-white rounded-2xl p-3 border border-slate-200 shadow-sm space-y-2.5">
       <div class="header-search-row flex items-center gap-2">
-        <label class="header-search relative flex-1 m-0">
+        <label class="header-search relative flex-1 m-0 min-w-0">
           <span style="display: none;">搜索会员</span>
           <input
             v-model.trim="query"
@@ -36,7 +48,7 @@
           type="button"
           :disabled="!workspace.state.book"
           aria-label="查询"
-          class="h-11 px-4 bg-slate-800 text-white rounded-xl font-bold text-sm btn-press active:bg-slate-900"
+          class="h-11 px-3.5 bg-slate-800 text-white rounded-xl font-bold text-sm shrink-0 btn-press active:bg-slate-900"
           @click="search"
         >
           查询
@@ -46,7 +58,7 @@
           type="button"
           :disabled="blocked"
           aria-label="新增会员"
-          class="register-member h-11 px-3.5 bg-emerald-700 text-white rounded-xl font-bold text-sm btn-press active:bg-emerald-800 flex items-center gap-1 shadow-sm"
+          class="register-member h-11 px-3 bg-emerald-700 text-white rounded-xl font-bold text-sm shrink-0 btn-press active:bg-emerald-800 flex items-center gap-1 shadow-sm"
           @click="create"
         >
           <span class="text-base font-black">+</span>
@@ -55,18 +67,18 @@
       </div>
 
       <!-- 快捷筛选胶囊栏 -->
-      <div class="filter-tabs-row flex gap-1.5 overflow-x-auto pb-0.5" role="tablist" aria-label="会员范围筛选">
+      <div class="filter-tabs-row flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar" role="tablist" aria-label="会员范围筛选">
         <button
           v-for="item in filterOptions"
           :key="item.value"
           type="button"
           role="tab"
-          class="filter-tab-pill whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition-colors"
-          :class="balance === item.value ? 'bg-emerald-700 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+          class="filter-tab-pill whitespace-nowrap px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all btn-press shrink-0 flex items-center gap-1"
+          :class="balance === item.value ? 'bg-emerald-800 text-white shadow-xs font-black' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900'"
           :aria-selected="balance === item.value"
           @click="balance = item.value; search()"
         >
-          {{ item.label }}
+          <span>{{ item.label }}</span>
         </button>
       </div>
       <!-- 隐藏兼容测试 select -->
@@ -81,11 +93,14 @@
       <div class="text-2xl animate-spin inline-block">⏳</div>
       <p class="text-sm text-slate-500 mt-2 font-medium">正在读取会员资料…</p>
     </div>
-    <div v-else-if="!page.rows.value.length" class="customer-empty">
+    <div v-else-if="!page.rows.value.length" class="customer-empty bg-white rounded-2xl p-8 border border-slate-200 text-center">
       <UsersRound :size="36" class="text-slate-400 mx-auto" aria-hidden="true" />
-      <h3 class="text-base font-bold text-slate-800 mt-2">{{ query.trim() ? '未找到符合条件的会员' : '还没有会员档案' }}</h3>
+      <h3 class="text-base font-bold text-slate-800 mt-2">{{ query.trim() ? '未找到符合条件的会员' : balance === 'debt' ? '目前没有欠款会员' : balance === 'low' ? '目前没有低余额会员' : '还没有会员档案' }}</h3>
       <p class="text-xs text-slate-500 mt-1">{{ query.trim() ? '试试姓名、手机号、手机尾号或备注' : '登记会员后即可扣款、充值和记录档案' }}</p>
-      <button v-if="canEdit" type="button" class="customer-empty-primary mt-3" :disabled="blocked" aria-label="新增会员" @click="create">＋ 登记新会员</button>
+      <div class="flex items-center justify-center gap-2 mt-3">
+        <button v-if="balance !== 'all'" type="button" class="h-10 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold btn-press" @click="balance = 'all'; search()">查看全部会员</button>
+        <button v-if="canEdit" type="button" class="customer-empty-primary h-10 px-4 bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-sm btn-press" :disabled="blocked" aria-label="新增会员" @click="create">＋ 登记新会员</button>
+      </div>
     </div>
     <div v-else class="customer-list bg-white rounded-2xl border border-slate-200 shadow-sm divide-y divide-slate-100 overflow-hidden">
       <article
@@ -130,13 +145,22 @@
       </article>
     </div>
 
-    <!-- 底部翻页 -->
-    <div class="flex items-center justify-between pt-1 px-1">
-      <div class="flex gap-2">
-        <button v-if="page.cursor.value" type="button" class="h-8 px-3 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-bold" @click="page.load()">回到第一页</button>
-        <button v-if="page.next.value" type="button" class="h-8 px-3 bg-white border border-slate-200 text-slate-700 rounded-lg text-xs font-bold" @click="page.load(page.next.value)">下一页</button>
+    <!-- 底部滚动自动加载与翻页状态 -->
+    <div ref="sentinel" class="customer-pagination-area py-3 text-center space-y-1">
+      <div v-if="page.busy.value" class="text-xs text-slate-500 font-bold flex items-center justify-center gap-1.5 py-1">
+        <span class="inline-block animate-spin">⏳</span>
+        <span>正在加载更多会员…</span>
       </div>
-      <span class="book-muted text-xs text-slate-500">本页 {{ page.rows.value.length }} 条</span>
+      <div v-else-if="!page.next.value && page.rows.value.length" class="text-xs text-slate-400 font-medium py-1">
+        已加载全部会员（共 {{ page.rows.value.length }} 人）
+      </div>
+      <!-- 兼容测试状态文本与辅助翻页 -->
+      <div class="flex items-center justify-between text-xs text-slate-400 px-1 pt-1">
+        <span class="book-muted">本页 {{ page.rows.value.length }} 条</span>
+        <button v-if="page.next.value && !page.busy.value" type="button" class="text-xs text-emerald-700 font-bold hover:underline" @click="page.loadMore()">
+          加载更多会员 ↓
+        </button>
+      </div>
     </div>
 
     <!-- ======================================================== -->
@@ -305,11 +329,11 @@
 </template>
 
 <script setup>
-import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue';
+import { computed, onMounted, onScopeDispose, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { Search, UsersRound, Scissors, CreditCard } from 'lucide-vue-next';
 import RelationalSale from './RelationalSale.vue';
 import { useRelationalPage } from '../composables/useRelationalPage.js';
-import { displayCents } from '../relational-presentation.js';
+import { displayCents, todayBusiness, businessDays } from '../relational-presentation.js';
 import { canonicalJSON } from '../canonical-json.js';
 import { MEMBER_IDENTITY_ADVICE, memberIdentitySignature } from '../member-identity.js';
 
@@ -322,15 +346,17 @@ defineEmits(['history']);
 const filterOptions = [
   { value: 'all', label: '全部会员' },
   { value: 'recent', label: '最近来店' },
-  { value: 'positive', label: '有储值' },
-  { value: 'low', label: '余额 0–50 元' },
-  { value: 'debt', label: '欠款' },
+  { value: 'debt', label: '欠款会员' },
+  { value: 'low', label: '低余额' },
+  { value: 'positive', label: '储值会员' },
   { value: 'archived', label: '已归档' }
 ];
 
 const query = ref(''), balance = ref(props.balanceFilter), detail = shallowRef(null), detailScope = shallowRef(null);
 const editor = ref(null), sale = shallowRef(null), error = ref(''), receipt = ref(''), loadingDetail = ref(false);
-const duplicate = shallowRef(null), savingProfile = ref(false);
+const duplicate = shallowRef(null), savingProfile = ref(false), totalCount = ref(null);
+const sentinel = ref(null);
+let observer = null;
 const saleForm = ref(null), hasOpenAction = computed(() => Boolean(sale.value || editor.value || loadingDetail.value));
 const canEdit = computed(() => props.writable && props.feature('members'));
 const canCashier = computed(() => (props.cashierWritable ?? props.writable) && props.feature('cashier'));
@@ -341,6 +367,40 @@ const currentFilterLabel = computed(() => filterOptions.find(item => item.value 
 let criteria = { search: '', balance: balance.value }, sequence = 0, alive = true;
 const page = useRelationalPage(cursor => props.workspace.read('listMembers', { ...criteria, cursor, limit: 25 }));
 onScopeDispose(() => { alive = false; sequence++; });
+
+async function refreshTotalCount() {
+  if (!props.workspace.state.book) return;
+  try {
+    const today = todayBusiness();
+    const report = await props.workspace.read('reportBusiness', businessDays(today, today));
+    if (report?.balances?.memberCount !== undefined) {
+      totalCount.value = Number(report.balances.memberCount);
+    }
+  } catch {}
+}
+
+onMounted(() => {
+  void refreshTotalCount();
+  if (typeof IntersectionObserver !== 'undefined') {
+    observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting && page.next.value && !page.busy.value) {
+        void page.loadMore();
+      }
+    }, { rootMargin: '200px' });
+    if (sentinel.value) observer.observe(sentinel.value);
+  }
+});
+
+onUnmounted(() => {
+  if (observer) observer.disconnect();
+});
+
+watch(sentinel, el => {
+  if (observer) {
+    observer.disconnect();
+    if (el) observer.observe(el);
+  }
+});
 
 function formatPhone(val) {
   if (!val) return '';
@@ -356,12 +416,17 @@ function goBack() {
   if (!detail.value && !loadingDetail.value) return false;
   closeDetail(); return true;
 }
-defineExpose({ goBack, hasOpenAction });
+defineExpose({ goBack, hasOpenAction, create });
 
 function search() { closeDetail(); criteria = { search: query.value, balance: balance.value }; void page.load(); }
 watch(() => props.balanceFilter, filter => { balance.value = filter; query.value = ''; search(); });
 watch(editor, () => { duplicate.value = null; }, { deep: true, flush: 'sync' });
-watch(() => props.workspace.state.revision, () => { if (props.workspace.state.book) void page.load(); }, { immediate: true });
+watch(() => props.workspace.state.revision, () => {
+  if (props.workspace.state.book) {
+    void page.load();
+    void refreshTotalCount();
+  }
+}, { immediate: true });
 const sameScope = scope => Boolean(scope && canonicalJSON(scope) === canonicalJSON(props.workspace.getScope()));
 
 async function perform(action, completion = () => {}) {

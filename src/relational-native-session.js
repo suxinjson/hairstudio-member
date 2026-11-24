@@ -63,7 +63,7 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
   }
   async function revoked(error, generation) {
     if (generation !== state.generation) return;
-    if (error.network) { unavailable = true; access.disconnect(); publishAccess(); return; }
+    if (error.network) { unavailable = true; publishAccess(); return; }
     if (denied.has(error.code) || error.status === 401) {
       accessToken = ''; refreshToken = ''; unsavedSession = false; state.user = null; state.syncLoginRequired = true; state.generation++;
       const ending = state.generation;
@@ -244,7 +244,7 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
     },
     async heartbeat() {
       if (heartbeat) return heartbeat;
-      if (!isOnline()) { unavailable = true; access.disconnect(); publishAccess(); return; }
+      if (!isOnline()) { unavailable = true; publishAccess(); return; }
       if (state.binding?.mode !== 'cloud' || !state.user || mutation) { publishAccess(); return; }
       const generation = state.generation, original = state.user;
       heartbeat = (async () => {

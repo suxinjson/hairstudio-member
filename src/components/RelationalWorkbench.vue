@@ -1,5 +1,5 @@
 <template>
-  <main class="book-stack pb-24" :key="bookKey">
+  <main class="book-stack pb-24 max-w-full overflow-x-hidden" :key="bookKey">
     <RelationalPending v-if="workspace.state.book" :workspace="workspace" />
     <slot name="connection" />
 
@@ -281,6 +281,10 @@ defineExpose({
   hasOpenAction,
   openAccount: () => openPage('account'),
   openBackup: () => openPage('backup'),
+  openCreateMember: () => {
+    active.value = 'members';
+    memberPage.value?.create();
+  },
   openMembers: filter => {
     if (openPage('members')) memberFilter.value = filter;
   },

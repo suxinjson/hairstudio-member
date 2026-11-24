@@ -1,5 +1,5 @@
 <template>
-  <section class="book-panel book-stack" aria-label="本机同步">
+  <section v-if="showSyncCard" class="book-panel book-stack" aria-label="本机同步">
     <div class="book-actions book-between">
       <p role="status">{{ label }}<template v-if="workspace.state.pendingCount"> · {{ workspace.state.pendingCount }} 笔待核对</template></p>
       <button type="button" :disabled="workspace.state.syncStatus === 'syncing' || workspace.state.blockedEpoch" @click="$emit('reconnect')">检查连接并同步</button>
@@ -60,6 +60,10 @@ const target = computed(() => props.workspace.state.rebuildTarget);
 const crossEpoch = computed(() => target.value && target.value.ledgerEpoch !== props.workspace.state.book?.ledgerEpoch);
 const canRebuild = computed(() => props.owner && (crossEpoch.value || props.workspace.state.syncError === 'CURSOR_HISTORY_INCOMPLETE'));
 const cursorBlocked = computed(() => ['CURSOR_AHEAD', 'CURSOR_HISTORY_INCOMPLETE'].includes(props.workspace.state.syncError));
+const showSyncCard = computed(() => {
+  const s = props.workspace.state;
+  return Boolean(s.blockedEpoch || s.syncError || s.pendingCount || s.pendingRows?.length || !props.online || s.syncStatus === 'conflict');
+});
 watch(() => target.value?.ledgerEpoch, () => { confirmed.value = false; for (const id of Object.keys(decisions)) delete decisions[id]; });
 const blockedMessage = computed(() => cursorBlocked.value
   ? '云端同步历史与本机水位不一致。' : '云端账本归属或代际已变化。');

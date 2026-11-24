@@ -15,11 +15,19 @@
         </div>
       </div>
       <div v-if="user && !locked" class="flex items-center gap-2 shrink-0">
+        <button
+          v-if="writable"
+          type="button"
+          aria-label="新增会员"
+          :disabled="workspace.state.busy || workspace.state.pending || !workspace.state.book"
+          class="register-member h-9 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 text-white text-xs font-black rounded-xl shadow-md shadow-emerald-950/40 flex items-center gap-1 btn-press transition-all shrink-0"
+          @click="openNewMember"
+        >
+          <span class="text-sm font-black leading-none">+</span>
+          <span>登记会员</span>
+        </button>
         <button type="button" class="h-9 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 btn-press" @click="locked = true">
           锁屏
-        </button>
-        <button type="button" class="h-9 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 btn-press" :disabled="busy" @click="signOut">
-          退出
         </button>
       </div>
     </header>
@@ -34,7 +42,7 @@
         <button v-if="locked" type="button" :disabled="busy" @click="signOut">切换账号</button>
       </div>
     </form>
-    <RelationalWorkbench v-else :workspace="workspace" :owner="owner" :writable="writable" :profile-writable="writable"
+    <RelationalWorkbench v-else ref="workbench" :workspace="workspace" :owner="owner" :writable="writable" :profile-writable="writable"
       :feature="feature" :identity="identity" :announce="announce" :backup="archive">
       <div class="book-panel book-stack">
         <h2>账号与设置</h2><p>当前账号 {{ user.displayName }}。网页版在线读写门店账本。</p>
@@ -64,8 +72,9 @@ const user = adminApi.user, locked = adminApi.isLocked;
 const owner = computed(() => user.value?.role === 'owner'), writable = computed(() => Boolean(user.value && user.value.role !== 'viewer'));
 const identity = computed(() => JSON.stringify([user.value?.storeId, user.value?.id, user.value?.role]));
 const feature = name => !adminApi.entitlements.value || allowsFeature(adminApi.entitlements.value.features, name);
-const username = ref(''), password = ref(''), notice = ref(''), busy = ref(false);
+const username = ref(''), password = ref(''), notice = ref(''), busy = ref(false), workbench = ref(null);
 const announce = (...args) => { if (feature('voice')) return announceRelationalSale(voicePlayer, ...args); };
+function openNewMember() { workbench.value?.openCreateMember(); }
 useAutoLock(adminApi);
 watch([identity, locked], () => { password.value = ''; notice.value = ''; voicePlayer.stop(); }, { flush: 'sync' });
 onMounted(() => { if (user.value && !locked.value) void workspace.connect(); });
