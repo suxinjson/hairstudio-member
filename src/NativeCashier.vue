@@ -1,41 +1,22 @@
 <template>
   <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none pb-28 max-w-full overflow-x-hidden">
-    <!-- 现代化黑金/深空灰全宽贴顶状态栏与品牌头 -->
-    <header class="app-header w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white px-3.5 py-3 sm:px-6 sticky top-0 z-30 shadow-md border-b border-slate-800">
-      <div class="max-w-4xl mx-auto flex items-center justify-between gap-2.5">
-        <div class="flex items-center gap-2.5 min-w-0 flex-1">
-          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center font-black text-lg shadow-md shrink-0" aria-hidden="true">
-            💳
-          </div>
-          <div class="min-w-0 flex-1">
-            <h1 class="text-base font-black text-white tracking-tight m-0 truncate leading-tight">会员管家</h1>
-            <p v-if="unlocked" class="m-0 text-xs text-slate-300 font-medium flex items-center gap-1.5 mt-0.5 truncate">
-              <span class="w-2 h-2 rounded-full shrink-0" :class="state.online ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></span>
-              <span class="truncate">{{ state.storeProfile.name }} · {{ state.user.displayName }}</span>
-            </p>
-          </div>
-        </div>
-        <div v-if="unlocked" class="flex items-center gap-2 shrink-0">
-          <button type="button" aria-label="提醒中心" class="relative w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center border border-slate-700 btn-press shrink-0" @click="noticesOpen = !noticesOpen">
-            <Bell :size="18" aria-hidden="true" />
-            <span v-if="notices.headerItems.value.length" class="absolute -top-1 -right-1 px-1.5 py-0.2 bg-rose-600 text-white text-[10px] font-black rounded-full shadow-xs">
-              {{ notices.headerItems.value.length }}
-            </span>
-          </button>
-          <button
-            v-if="canWrite && workspace.state.book"
-            type="button"
-            aria-label="新增会员"
-            :disabled="workspace.state.busy || workspace.state.pending || !workspace.state.book"
-            class="register-member h-9 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 text-white text-xs font-black rounded-xl shadow-md shadow-emerald-950/40 flex items-center gap-1 btn-press transition-all shrink-0"
-            @click="openNewMember"
-          >
-            <span class="text-sm font-black leading-none">+</span>
-            <span>登记会员</span>
-          </button>
-        </div>
-      </div>
-    </header>
+    <!-- 顶部状态栏与大搜索框 (AppHeader 经典复刻) -->
+    <AppHeader
+      :active-tab="workbench?.activeTab || 'members'"
+      v-model:customer-filter="headerCustomerFilter"
+      v-model:filter-open="headerFilterOpen"
+      :notices="notices.headerItems.value"
+      :store-name="state.storeProfile.name"
+      :connection-label="state.user ? state.user.displayName + ' · ' + (standalone ? '独立离线账本' : (state.online ? '云端已连接 · 本机 SQLite' : '离线运行 · 本机 SQLite')) : (standalone ? '独立离线账本' : '云端账本')"
+      :cloud-locked="!unlocked"
+      :cloud-online="Boolean(state.online)"
+      :has-storage-error="Boolean(workspace.state.error)"
+      :can-create-member="canWrite && Boolean(workspace.state.book) && !workspace.state.busy && !workspace.state.pending"
+      v-model:search-query="headerSearchQuery"
+      @open-notices="noticesOpen = true"
+      @create-member="openNewMember"
+      @clear-search="headerSearchQuery = ''"
+    />
 
     <main class="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-4 sm:py-4 space-y-3.5 flex-1 min-w-0">
       <p v-if="message || state.error" class="book-panel book-alert" role="alert">{{ message || state.error }}</p>
@@ -64,7 +45,8 @@
         <NoticeTicker v-else :items="notices.headerItems.value" @open="noticesOpen = true" />
         <div v-show="!noticesOpen" class="book-stack">
           <RelationalWorkbench ref="workbench" :workspace="workspace" :identity="identity" :owner="owner" :writable="canWrite"
-            :profile-writable="canWrite && (standalone || state.online)" :feature="feature" :announce="announce" :backup="standalone ? archive : null">
+            :profile-writable="canWrite && (standalone || state.online)" :feature="feature" :announce="announce" :backup="standalone ? archive : null"
+            v-model:search-query="headerSearchQuery" v-model:balance-filter="headerCustomerFilter">
             <template #connection>
               <RelationalNativeSync v-if="workspace.state.book && !standalone" :workspace="workspace" :online="state.online" :owner="owner" @reconnect="resume" />
             </template>
@@ -106,6 +88,7 @@ import { useNotices } from './composables/useNotices.js';
 import { useAppUpdate } from './composables/useAppUpdate.js';
 import { systemNotices } from './notices.js';
 import { VoicePlayer } from './voice-player.js';
+import AppHeader from './components/AppHeader.vue';
 import ConfirmModal from './components/ConfirmModal.vue';
 import NativeUpdate from './components/NativeUpdate.vue';
 import NoticeCenter from './components/NoticeCenter.vue';
@@ -126,6 +109,7 @@ const identity = computed(() => JSON.stringify([state.user?.storeId, state.user?
 const feature = name => allowsFeature(state.deviceAccess.features, name);
 const copyText = text => cloudDeviceBridge.copyText({ text });
 const workbench = ref(null), noticesOpen = ref(false), message = ref('');
+const headerSearchQuery = ref(''), headerCustomerFilter = ref('all'), headerFilterOpen = ref(false);
 const accountBusy = ref(false), origin = ref(DEFAULT_CLOUD_SERVER_URL), username = ref(''), password = ref('');
 const foregroundToken = ref(0), autoStartDownload = ref(false), confirmation = shallowRef(null);
 const voice = new VoicePlayer({ api: session, context: () => identity.value,

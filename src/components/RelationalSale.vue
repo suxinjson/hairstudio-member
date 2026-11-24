@@ -1,239 +1,387 @@
 <template>
-  <div class="app-modal-backdrop fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs" @click.self="$emit('close')">
-    <form class="app-modal-surface bg-white rounded-t-[32px] max-h-[92vh] overflow-y-auto max-w-lg mx-auto w-full animate-slide-up shadow-2xl flex flex-col p-4 sm:p-5"
-      @submit.prevent="review">
-      <!-- 弹窗顶部手柄 -->
-      <div class="w-12 h-1 bg-slate-300 rounded-full mx-auto mb-2 shrink-0"></div>
+  <div class="app-modal-backdrop fixed inset-0 bg-black/60 z-50 flex flex-col justify-end animate-fade-in backdrop-blur-xs" @click.self="onBackdropClick">
+    <!-- ======================================================== -->
+    <!-- 1. 消费扣款抽屉 (ConsumeModal 经典复刻)                   -->
+    <!-- ======================================================== -->
+    <form 
+      v-if="type === 'consume'"
+      class="app-modal-surface consume-sheet bg-white animate-slide-up flex flex-col max-w-lg mx-auto w-full max-h-[92vh] rounded-t-[28px] overflow-hidden shadow-2xl"
+      :class="{ 'consume-sheet-debt': isConsumeDebt }"
+      role="dialog" 
+      aria-modal="true" 
+      aria-labelledby="consume-sheet-title"
+      @submit.prevent="review"
+    >
+      <!-- 弹窗手柄 -->
+      <div class="w-12 h-1 bg-slate-300 rounded-full mx-auto mt-2 mb-1 shrink-0"></div>
 
-      <!-- 头部：会员信息与关闭按钮 -->
-      <header class="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
-        <div class="flex items-center gap-3 min-w-0">
-          <div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-700 to-slate-900 text-white flex items-center justify-center font-black text-lg shadow-xs shrink-0" aria-hidden="true">
-            {{ currentMember.name.charAt(0) }}
-          </div>
-          <div class="min-w-0">
-            <h2 class="text-base sm:text-lg font-black text-slate-900 flex items-center gap-1.5 truncate">
-              <span>{{ type === 'consume' ? '消费扣款' : type === 'recharge' ? '会员充值' : '账务冲正' }}</span>
-              <span class="text-emerald-800">· {{ currentMember.name }}</span>
-            </h2>
-            <p class="text-xs text-slate-500 font-medium mt-0.5">
-              核对余额：<strong :class="BigInt(currentMember.balanceCents) < 0n ? 'text-rose-600' : 'text-slate-900'">¥{{ displayCents(currentMember.balanceCents) }}</strong>
-              {{ currentMember.phone ? ' · 手机尾号 ' + currentMember.phone.slice(-4) : ' · 未留手机号' }}
-            </p>
-          </div>
+      <header class="consume-header flex items-center justify-between px-4 py-2 border-b border-slate-100 shrink-0">
+        <div class="consume-header-copy min-w-0">
+          <h2 id="consume-sheet-title" class="modal-title text-base sm:text-lg font-black text-slate-900 flex items-center gap-1.5 m-0 truncate">
+            <span>消费扣款</span>
+            <span class="text-emerald-800">· {{ currentMember.name }}</span>
+          </h2>
+          <p class="text-xs text-slate-500 font-medium mt-0.5 m-0">
+            {{ BigInt(currentMember.balanceCents) < 0n ? '当前欠款' : '可用余额' }}
+            <strong :class="BigInt(currentMember.balanceCents) < 0n ? 'text-rose-600' : 'text-slate-900'">¥{{ displayCents(currentMember.balanceCents) }}</strong>
+            {{ currentMember.phone ? ' · 手机尾号 ' + currentMember.phone.slice(-4) : ' · 未留手机号' }}
+          </p>
         </div>
-        <button type="button" aria-label="关闭" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center text-sm font-bold btn-press shrink-0"
-          :disabled="busy" @click="$emit('close')">✕</button>
+        <button type="button" @click="$emit('close')" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center text-sm font-bold btn-press shrink-0" aria-label="关闭消费扣款">✕</button>
       </header>
 
-      <div class="space-y-3.5 pt-3">
-        <!-- 会员偏好备注提醒 -->
-        <p v-if="currentMember.notes" class="p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-amber-950 text-xs font-bold leading-relaxed break-words">
+      <p v-if="error" class="mx-3.5 mt-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold" role="alert">{{ error }}</p>
+
+      <!-- 醒目金额面板 -->
+      <div class="consume-amount-panel mx-3.5 my-2 p-3 rounded-2xl bg-slate-50 border border-slate-200" :class="{ 'bg-rose-50 border-rose-200 text-rose-900': isConsumeDebt }">
+        <div class="flex items-center justify-between text-xs font-bold text-slate-500 mb-0.5">
+          <span>本次扣款金额</span>
+          <button v-if="form.pay" type="button" @click="clearConsumeAmount" class="text-rose-600 hover:underline cursor-pointer" aria-label="清空扣款金额">清空</button>
+        </div>
+        <div class="text-3xl sm:text-4xl font-black tracking-tight my-0.5 flex items-baseline gap-1" :class="isConsumeDebt ? 'text-rose-600' : 'text-slate-900'">
+          <span class="text-xl sm:text-2xl text-emerald-800">¥</span>
+          <span>{{ form.pay || '0.00' }}</span>
+        </div>
+        <div v-if="isConsumeDebt" class="text-xs font-bold text-rose-700 mt-1 flex items-center gap-1">
+          <span>⚠️ 余额不足以扣除，将产生欠款记录</span>
+        </div>
+      </div>
+
+      <!-- 可滚动区域：常用项目与备注 -->
+      <div class="consume-content flex-1 overflow-y-auto px-3.5 space-y-2.5">
+        <p v-if="currentMember.notes" class="p-2 bg-amber-50 rounded-xl border border-amber-200 text-amber-950 text-xs font-bold leading-relaxed break-words m-0">
           💇 会员偏好：{{ currentMember.notes }}
         </p>
 
-        <!-- ==================== 1. 消费扣款模式 ==================== -->
-        <template v-if="type === 'consume'">
-          <!-- 醒目金额面板 -->
-          <div class="consume-amount-panel rounded-2xl p-3.5 bg-slate-50 border border-slate-200 flex flex-col items-center justify-center text-center">
-            <div class="flex items-center justify-between w-full text-xs font-bold text-slate-500 mb-1">
-              <span>本次扣款金额</span>
-              <button v-if="form.pay" type="button" @click="clearConsumeAmount" class="text-rose-600 hover:underline">清空</button>
-            </div>
-            <div class="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight my-1 flex items-baseline gap-1">
-              <span class="text-xl sm:text-2xl text-emerald-800">¥</span>
-              <span>{{ form.pay || '0.00' }}</span>
-            </div>
-            <!-- 欠款警告 -->
-            <div v-if="isConsumeDebt" class="w-full mt-2 p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold text-left">
-              <span>⚠️ 余额不足以扣除，将产生欠款记录</span>
-            </div>
+        <!-- 常用项目快捷选择 -->
+        <div v-if="currentConfiguration?.services?.length" class="space-y-1">
+          <div class="flex items-center justify-between text-xs font-bold text-slate-600">
+            <span>常用项目</span>
+            <span class="text-[11px] text-slate-400">点选自动填入金额</span>
           </div>
-
-          <!-- 常用服务快捷芯片（选项目自动带入金额） -->
-          <div v-if="currentConfiguration?.services?.length" class="space-y-1.5">
-            <div class="flex items-center justify-between text-xs font-bold text-slate-600">
-              <span>常用项目一键带入</span>
-              <span class="text-[11px] text-slate-400">点选自动填入金额</span>
-            </div>
-            <div class="chip-group flex flex-wrap gap-1.5">
-              <button v-for="item in currentConfiguration.services" :key="item.id" type="button"
-                class="chip-btn text-xs py-1.5 px-3 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-800 font-bold active:bg-emerald-600 active:text-white transition-all btn-press"
-                @click="applyServicePreset(item)">
-                {{ item.name }} · ¥{{ displayCents(item.priceCents) }}
-              </button>
-            </div>
+          <div class="grid grid-cols-3 gap-1.5">
+            <button
+              v-for="item in currentConfiguration.services"
+              :key="item.id"
+              type="button"
+              class="p-2 rounded-xl border text-left transition-all btn-press"
+              :class="form.note === item.name && form.pay === displayCents(item.priceCents) ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs' : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'"
+              @click="applyServicePreset(item)"
+            >
+              <div class="text-xs font-bold truncate leading-tight">{{ item.name }}</div>
+              <div class="text-xs font-black mt-0.5 tabular-nums">¥{{ displayCents(item.priceCents) }}</div>
+            </button>
           </div>
+        </div>
 
-          <!-- 消费说明/备注 -->
-          <div class="space-y-1">
-            <label class="block text-xs font-bold text-slate-600">服务项目与补充说明</label>
-            <input v-model.trim="form.note" type="text" maxlength="512" placeholder="填写服务项目或补充说明"
-              class="w-full h-11 px-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-600 outline-none" />
+        <label class="block space-y-1">
+          <span class="text-xs font-bold text-slate-600">服务项目与补充说明</span>
+          <input
+            v-model.trim="form.note"
+            type="text"
+            maxlength="512"
+            placeholder="填写服务项目或补充说明"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-600 outline-none"
+          />
+        </label>
+      </div>
+
+      <!-- 底部固定触控键盘 -->
+      <footer class="consume-footer border-t border-slate-100 bg-white p-2 pb-gesture-safe shrink-0">
+        <Keypad
+          v-model="form.pay"
+          :confirm-text="isConsumeDebt ? '核对欠款' : '确认扣款'"
+          :theme="isConsumeDebt ? 'danger' : 'primary'"
+          :disabled="busy || blocked"
+          @confirm="review"
+        />
+      </footer>
+    </form>
+
+    <!-- ======================================================== -->
+    <!-- 2. 会员充值抽屉 (RechargeModal 经典复刻)                   -->
+    <!-- ======================================================== -->
+    <form 
+      v-else-if="type === 'recharge' && currentConfiguration"
+      class="app-modal-surface recharge-sheet bg-white animate-slide-up flex flex-col max-w-lg mx-auto w-full max-h-[92vh] rounded-t-[28px] overflow-hidden shadow-2xl"
+      role="dialog" 
+      aria-modal="true" 
+      aria-labelledby="recharge-sheet-title"
+      @submit.prevent="review"
+    >
+      <!-- 弹窗手柄 -->
+      <div class="w-12 h-1 bg-slate-300 rounded-full mx-auto mt-2 mb-1 shrink-0"></div>
+
+      <header class="recharge-header flex items-center justify-between px-4 py-2 border-b border-slate-100 shrink-0">
+        <div class="recharge-header-copy min-w-0">
+          <h2 id="recharge-sheet-title" class="modal-title text-base sm:text-lg font-black text-slate-900 flex items-center gap-1.5 m-0 truncate">
+            <span>会员充值</span>
+            <span class="text-emerald-800">· {{ currentMember.name }}</span>
+          </h2>
+          <p class="text-xs text-slate-500 font-medium mt-0.5 m-0">
+            {{ BigInt(currentMember.balanceCents) < 0n ? '当前欠款' : '可用余额' }}
+            <strong :class="BigInt(currentMember.balanceCents) < 0n ? 'text-rose-600' : 'text-slate-900'">¥{{ displayCents(currentMember.balanceCents) }}</strong>
+            {{ currentMember.phone ? ' · 手机尾号 ' + currentMember.phone.slice(-4) : ' · 未留手机号' }}
+          </p>
+        </div>
+        <button type="button" @click="$emit('close')" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center text-sm font-bold btn-press shrink-0" aria-label="关闭会员充值">✕</button>
+      </header>
+
+      <p v-if="error" class="mx-4 mt-2 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold" role="alert">{{ error }}</p>
+
+      <div class="recharge-content flex-1 overflow-y-auto p-4 space-y-3">
+        <p v-if="currentMember.notes" class="p-2 bg-amber-50 rounded-xl border border-amber-200 text-amber-950 text-xs font-bold leading-relaxed break-words m-0">
+          💇 会员偏好：{{ currentMember.notes }}
+        </p>
+        <div v-if="BigInt(currentMember.balanceCents) < 0n" class="p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold">
+          充值将优先抵扣欠款，结清后剩余金额转为可用余额。
+        </div>
+
+        <!-- 快捷充值套餐 -->
+        <div v-if="currentConfiguration.rechargePlans?.length" class="space-y-1.5">
+          <div class="flex items-center justify-between text-xs font-bold text-slate-600">
+            <span>快捷充值</span>
+            <span class="text-[11px] text-slate-400">点选自动计算</span>
           </div>
-
-          <!-- 欠款允许复选框 -->
-          <label class="flex items-center gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 cursor-pointer">
-            <input v-model="form.allowDebt" type="checkbox" class="w-4 h-4 rounded text-amber-700">
-            <span class="text-xs font-bold">确认允许本次交易产生欠款</span>
-          </label>
-
-          <!-- 兼容测试表单隐藏/绑定字段 -->
-          <input v-model.trim="form.pay" inputmode="decimal" type="text" class="sr-only" required />
-
-          <!-- 触控数字键盘 (Tactile Keypad) -->
-          <div class="pt-1">
-            <Keypad v-model="form.pay" :confirm-text="preview ? '确认扣款' : (isConsumeDebt ? '核对欠款' : '核对金额')"
-              :theme="isConsumeDebt ? 'danger' : 'primary'"
-              :disabled="busy || blocked" @confirm="onKeypadConfirm" />
+          <div class="grid grid-cols-3 gap-1.5">
+            <button
+              v-for="plan in currentConfiguration.rechargePlans"
+              :key="plan.id"
+              type="button"
+              class="p-2.5 rounded-xl border text-left transition-all btn-press"
+              :class="form.planId === plan.id ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs' : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'"
+              @click="togglePlan(plan)"
+            >
+              <div class="text-sm font-black tabular-nums">¥{{ displayCents(plan.payCents) }}</div>
+              <div class="text-[11px] mt-0.5 opacity-90">送 ¥{{ displayCents(plan.giftCents) }}</div>
+            </button>
           </div>
-        </template>
+        </div>
 
-        <!-- ==================== 2. 会员充值模式 ==================== -->
-        <template v-else-if="type === 'recharge' && currentConfiguration">
-          <!-- 快捷套餐选择 -->
-          <div v-if="currentConfiguration.rechargePlans?.length" class="space-y-1.5">
-            <span class="text-xs font-bold text-slate-600">快捷充值套餐</span>
-            <div class="chip-group flex flex-wrap gap-1.5">
-              <button type="button" class="chip-btn text-xs py-1.5 px-3 rounded-xl border font-bold transition-all btn-press"
-                :class="form.planId === '' ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-slate-50 text-slate-700 border-slate-200'"
-                @click="form.planId = ''; selectPlan()">
-                自定义金额
-              </button>
-              <button v-for="plan in currentConfiguration.rechargePlans" :key="plan.id" type="button"
-                class="chip-btn text-xs py-1.5 px-3 rounded-xl border font-bold transition-all btn-press"
-                :class="form.planId === plan.id ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-slate-50 text-slate-700 border-slate-200'"
-                @click="form.planId = plan.id; selectPlan()">
-                充 ¥{{ displayCents(plan.payCents) }} 送 ¥{{ displayCents(plan.giftCents) }}
-              </button>
-            </div>
-          </div>
-
-          <!-- 实收金额与赠送金额 -->
-          <div class="grid grid-cols-2 gap-2.5">
-            <label class="space-y-1 block">
-              <span class="text-xs font-bold text-slate-700">实收（元）</span>
-              <div class="relative">
-                <span class="absolute left-3 top-2.5 text-slate-400 font-bold text-base">¥</span>
-                <input v-model.trim="form.pay" inputmode="decimal" :readonly="Boolean(form.planId)" placeholder="0.00" required
-                  class="w-full h-11 pl-8 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:bg-white focus:border-emerald-600 outline-none" />
-              </div>
-            </label>
-
-            <label v-if="currentConfiguration.rechargeSettings?.giftEnabled" class="space-y-1 block">
-              <span class="text-xs font-bold text-slate-700">赠送（元）</span>
-              <div class="relative">
-                <span class="absolute left-3 top-2.5 text-slate-400 font-bold text-base">¥</span>
-                <input v-model.trim="form.gift" inputmode="decimal" :readonly="Boolean(form.planId)" placeholder="按配置计算"
-                  class="w-full h-11 pl-8 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-emerald-800 focus:bg-white focus:border-emerald-600 outline-none" />
-              </div>
-            </label>
-          </div>
-
-          <!-- 付款方式芯片选择 -->
-          <div class="space-y-1">
-            <span class="text-xs font-bold text-slate-600">收款方式</span>
-            <div class="grid grid-cols-4 gap-1.5">
-              <button v-for="method in ['微信', '支付宝', '现金', '银行卡']" :key="method" type="button"
-                class="h-10 rounded-xl border text-xs font-bold transition-all btn-press"
-                :class="form.payment === method ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-slate-50 text-slate-700 border-slate-200'"
-                @click="form.payment = method">
-                {{ method }}
-              </button>
-            </div>
-          </div>
-
+        <!-- 实收金额与赠送金额 -->
+        <div class="grid grid-cols-2 gap-2.5">
           <label class="space-y-1 block">
-            <span class="text-xs font-bold text-slate-600">充值备注（选填）</span>
-            <input v-model.trim="form.note" type="text" maxlength="512" placeholder="补充活动或收款说明"
-              class="w-full h-11 px-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-600 outline-none" />
+            <span class="text-xs font-bold text-slate-700">实收（元）</span>
+            <div class="relative">
+              <span class="absolute left-3 top-2.5 text-slate-400 font-bold text-base">¥</span>
+              <input
+                v-model.trim="form.pay"
+                inputmode="decimal"
+                :readonly="Boolean(form.planId)"
+                placeholder="0.00"
+                required
+                class="w-full h-11 pl-8 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:bg-white focus:border-emerald-600 outline-none"
+              />
+            </div>
           </label>
-        </template>
 
-        <!-- ==================== 3. 冲正模式 ==================== -->
-        <div v-else-if="type === 'reverse'" class="p-3 bg-purple-50 rounded-xl border border-purple-200 text-purple-900 text-xs font-bold space-y-1">
-          <p>原单号 {{ entry.id }}，变动 ¥{{ displayCents(entry.deltaCents) }}。冲正只调整账务，实际退款需另行处理。</p>
-          <label class="space-y-1 block pt-2">
-            <span class="text-xs font-bold text-slate-700">冲正原因</span>
-            <input v-model.trim="form.note" maxlength="1000" placeholder="填写冲正原因"
-              class="w-full h-11 px-3 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-900 outline-none" />
+          <label v-if="currentConfiguration.rechargeSettings?.giftEnabled" class="space-y-1 block">
+            <span class="text-xs font-bold text-slate-700">赠送（元）</span>
+            <div class="relative">
+              <span class="absolute left-3 top-2.5 text-slate-400 font-bold text-base">¥</span>
+              <input
+                v-model.trim="form.gift"
+                inputmode="decimal"
+                :readonly="Boolean(form.planId)"
+                placeholder="0.00"
+                class="w-full h-11 pl-8 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-emerald-800 focus:bg-white focus:border-emerald-600 outline-none"
+              />
+            </div>
           </label>
         </div>
 
-        <!-- 错误提示 -->
-        <p v-if="error" class="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold" role="alert">
-          {{ error }}
+        <!-- 收款方式 -->
+        <div class="space-y-1">
+          <span class="text-xs font-bold text-slate-600">收款方式</span>
+          <div class="grid grid-cols-4 gap-1.5">
+            <button
+              v-for="method in ['微信', '支付宝', '现金', '银行卡']"
+              :key="method"
+              type="button"
+              class="h-10 rounded-xl border text-xs font-bold transition-all btn-press"
+              :class="form.payment === method ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'"
+              @click="form.payment = method"
+            >
+              {{ method }}
+            </button>
+          </div>
+        </div>
+
+        <label class="space-y-1 block">
+          <span class="text-xs font-bold text-slate-600">充值备注（选填）</span>
+          <input
+            v-model.trim="form.note"
+            type="text"
+            maxlength="512"
+            placeholder="补充活动或收款说明"
+            class="w-full h-11 px-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-600 outline-none"
+          />
+        </label>
+      </div>
+
+      <!-- 底部核对操作栏 -->
+      <footer class="recharge-footer border-t border-slate-100 bg-white p-3.5 pb-gesture-safe shrink-0">
+        <button
+          type="submit"
+          :disabled="busy || blocked || !form.pay"
+          class="w-full h-12 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center btn-press disabled:opacity-50"
+          aria-label="核对金额"
+        >
+          核对金额
+        </button>
+      </footer>
+    </form>
+
+    <!-- ======================================================== -->
+    <!-- 3. 冲正模式 (Reversal)                                   -->
+    <!-- ======================================================== -->
+    <section 
+      v-else-if="type === 'reverse'"
+      class="app-modal-surface bg-white animate-slide-up flex flex-col max-w-lg mx-auto w-full p-4 rounded-t-[28px] shadow-2xl"
+    >
+      <header class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="text-base font-black text-slate-900 m-0">账务冲正</h3>
+        <button type="button" @click="$emit('close')" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 font-bold">✕</button>
+      </header>
+      <div class="py-3 space-y-2 text-xs">
+        <p>原单号 {{ entry?.id }}，变动 ¥{{ displayCents(entry?.deltaCents) }}。冲正只调整账务，实际退款需另行处理。</p>
+        <label class="block space-y-1">
+          <span class="font-bold text-slate-700">冲正原因</span>
+          <input v-model.trim="form.note" maxlength="1000" placeholder="填写冲正原因" class="w-full h-10 px-3 border border-slate-200 rounded-xl outline-none" />
+        </label>
+      </div>
+      <div class="grid grid-cols-2 gap-2 pt-2">
+        <button type="button" class="h-11 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs" @click="$emit('close')">取消</button>
+        <button type="button" class="h-11 rounded-xl bg-purple-700 text-white font-black text-xs" :disabled="busy" @click="review">核对冲正</button>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- 4. 二次防误触金额核对弹窗 (Confirmation Modal)             -->
+    <!-- ======================================================== -->
+    <div
+      v-if="preview"
+      class="app-modal-backdrop feedback-backdrop fixed inset-0 z-[60] flex items-center justify-center p-4 animate-fade-in backdrop-blur-xs"
+      @click.self="preview = null"
+    >
+      <section 
+        class="app-modal-surface feedback-dialog w-full max-w-sm bg-white rounded-3xl p-5 text-center shadow-2xl animate-scale-up"
+        :class="{ 'border-2 border-rose-500': isPreviewDebt }"
+        role="dialog" 
+        aria-modal="true" 
+        aria-labelledby="confirm-modal-title"
+      >
+        <div class="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center font-black text-2xl shadow-xs"
+          :class="isPreviewDebt ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-700'">
+          {{ isPreviewDebt ? '⚠️' : '💳' }}
+        </div>
+
+        <h3 id="confirm-modal-title" class="mt-3 text-lg font-black text-slate-900 m-0">
+          {{ isPreviewDebt ? '注意：本次交易将产生欠款' : type === 'consume' ? '请核对扣款金额' : type === 'recharge' ? '请核对充值信息' : '请核对冲正信息' }}
+        </h3>
+        <p class="mt-1 text-xs text-slate-500 m-0">
+          {{ isPreviewDebt ? '确认后将记录欠款账目，请仔细核对。' : `确认后将立即为 ${currentMember.name} 入账。` }}
         </p>
 
-        <!-- 试算核对预览区域 -->
-        <div v-if="preview" class="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 space-y-1" role="status">
-          <p class="text-sm font-black">
-            本次变动 ¥{{ displayCents(preview.financial.deltaCents) }}；确认后余额 <strong>¥{{ displayCents(preview.financial.balanceAfterCents) }}</strong>。
-          </p>
-          <p v-if="debtIncrease" class="text-xs text-rose-700 font-bold">
-            本次新增欠款 ¥{{ displayCents(debtIncrease) }}；总欠款 ¥{{ displayCents((-BigInt(preview.financial.balanceAfterCents)).toString()) }}。
-          </p>
-          <p v-if="type === 'recharge'" class="text-xs text-emerald-800 font-semibold">
-            实收 ¥{{ displayCents(preview.draft.actualPayCents) }}，赠送 ¥{{ displayCents(preview.draft.giftCents) }}。
-          </p>
+        <div class="feedback-amount mt-3.5 rounded-2xl bg-slate-50 p-3.5 text-left text-xs space-y-2 border border-slate-200">
+          <div class="flex justify-between items-center text-slate-600">
+            <span>会员姓名</span>
+            <strong class="text-slate-900 font-extrabold text-sm">{{ currentMember.name }}</strong>
+          </div>
+          <div class="flex justify-between items-center text-slate-600">
+            <span>手机号码</span>
+            <strong class="font-mono text-slate-800">{{ formatPhone(currentMember.phone) || '未留手机号' }}</strong>
+          </div>
+          <div v-if="form.note" class="flex justify-between items-center text-slate-600">
+            <span>项目说明</span>
+            <strong class="text-slate-800 truncate max-w-[170px]">{{ form.note }}</strong>
+          </div>
+          <div class="flex justify-between items-center text-slate-600">
+            <span>当前余额</span>
+            <strong :class="BigInt(currentMember.balanceCents) < 0n ? 'text-rose-600' : 'text-slate-800'">¥{{ displayCents(currentMember.balanceCents) }}</strong>
+          </div>
+          <div class="pt-2 border-t border-slate-200 flex justify-between items-baseline">
+            <span class="text-slate-700 font-bold">{{ type === 'consume' ? '扣款金额' : type === 'recharge' ? '实收金额' : '冲正变动' }}</span>
+            <strong class="text-xl font-black tabular-nums" :class="type === 'consume' ? 'text-rose-600' : 'text-emerald-700'">
+              ¥{{ type === 'recharge' ? displayCents(preview.draft.actualPayCents) : form.pay }}
+            </strong>
+          </div>
+          <div v-if="type === 'recharge' && BigInt(preview.draft.giftCents || 0) > 0n" class="flex justify-between items-center text-emerald-800 font-semibold">
+            <span>赠送额度</span>
+            <strong>¥{{ displayCents(preview.draft.giftCents) }}</strong>
+          </div>
+          <div class="pt-1.5 border-t border-dashed border-slate-200 flex justify-between items-center font-bold">
+            <span class="text-slate-600">{{ isPreviewDebt ? '交易后累计欠款' : '交易后可用余额' }}</span>
+            <strong class="text-sm font-black tabular-nums" :class="isPreviewDebt ? 'text-rose-600' : 'text-slate-900'">
+              ¥{{ displayCents(preview.financial.balanceAfterCents) }}
+            </strong>
+          </div>
         </div>
 
-        <!-- 底部提交操作栏 (除消费模式已有Keypad快捷操作外，提供标准按钮) -->
-        <div class="grid grid-cols-2 gap-2 pt-1" v-if="type !== 'consume' || preview">
-          <button v-if="!preview" type="submit" :disabled="busy || blocked"
-            aria-label="核对金额" class="h-12 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-black text-sm shadow-md btn-press disabled:opacity-50">
-            核对金额
+        <div v-if="isPreviewDebt" class="mt-3 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-left">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input v-model="form.allowDebt" type="checkbox" class="w-4 h-4 rounded text-rose-600 accent-rose-600" />
+            <span class="text-xs font-black text-rose-800">我已知晓并同意记录本次欠款</span>
+          </label>
+        </div>
+
+        <div class="mt-4 grid grid-cols-2 gap-2.5">
+          <button 
+            type="button" 
+            class="h-12 rounded-xl border border-slate-200 text-sm font-bold text-slate-700 hover:bg-slate-50 btn-press"
+            @click="preview = null"
+          >
+            返回修改
           </button>
-          <button v-else type="button" :disabled="busy || blocked"
-            :aria-label="type === 'consume' ? '确认扣款' : type === 'recharge' ? '确认充值' : '确认冲正'"
-            class="h-12 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-black text-sm shadow-md btn-press disabled:opacity-50"
-            @click="commit">
-            确认{{ type === 'consume' ? '扣款' : type === 'recharge' ? '充值' : '冲正' }}
-          </button>
-          <button type="button" :disabled="busy" aria-label="关闭" class="h-12 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-sm btn-press"
-            @click="$emit('close')">
-            {{ preview ? '返回修改' : '取消关闭' }}
+          <button 
+            type="button" 
+            :disabled="busy || blocked || (isPreviewDebt && !form.allowDebt)"
+            class="h-12 rounded-xl text-white font-black text-sm shadow-md btn-press disabled:opacity-50 flex items-center justify-center gap-1"
+            :class="type === 'consume' ? 'bg-gradient-to-r from-rose-600 to-rose-700' : 'bg-gradient-to-r from-emerald-600 to-emerald-700'"
+            @click="commit"
+          >
+            <span v-if="busy">提交中…</span>
+            <span v-else>{{ type === 'consume' ? '确认扣款' : type === 'recharge' ? '确认充值' : '确认冲正' }}</span>
           </button>
         </div>
-      </div>
-    </form>
+      </section>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { reactive, ref, shallowRef, watch, computed, onScopeDispose } from 'vue';
+import { computed, onScopeDispose, reactive, ref, shallowRef, watch } from 'vue';
 import { displayCents, suggestedGift, yuanCents } from '../relational-presentation.js';
-import { createRecharge, createConsumption, createReversal, applyFinancialCommand, centsString } from '../ledger-domain.js';
+import { createRecharge, createConsumption, createReversal, applyFinancialCommand } from '../ledger-domain.js';
 import { prepareSale } from '../relational-sales.js';
 import Keypad from './Keypad.vue';
 
 const props = defineProps({
-  workspace: Object,
+  workspace: { type: Object, required: true },
   scope: Object,
-  type: String,
-  member: Object,
-  configuration: Object,
+  type: { type: String, default: 'consume' },
+  member: { type: Object, required: true },
+  configuration: { type: Object, required: true },
   entry: Object
 });
+
 const emit = defineEmits(['close', 'done']);
 
-const line = () => ({ id: '', name: '', price: '', quantity: 1 });
+const currentMember = shallowRef(props.member);
+const currentConfiguration = shallowRef(props.configuration);
+const busy = ref(false);
+const error = ref('');
+const preview = ref(null);
+
 const form = reactive({
   planId: '',
   pay: '',
   gift: '',
   note: '',
   allowDebt: false,
-  payment: '微信',
-  payments: [{ method: '微信', amount: '' }],
-  lines: [line()]
+  payment: '微信'
 });
 
-const preview = ref(null);
-const busy = ref(false);
-const error = ref('');
-const currentMember = shallowRef(props.member);
-const currentConfiguration = shallowRef(props.configuration);
 let alive = true;
 onScopeDispose(() => { alive = false; });
 
@@ -250,28 +398,45 @@ const isConsumeDebt = computed(() => {
   }
 });
 
-const debtIncrease = computed(() => {
-  if (!preview.value || props.type === 'recharge') return null;
-  const before = BigInt(currentMember.value.balanceCents), after = BigInt(preview.value.financial.balanceAfterCents);
-  return after < (before < 0n ? before : 0n) ? ((before < 0n ? before : 0n) - after).toString() : null;
+const isPreviewDebt = computed(() => {
+  if (!preview.value) return false;
+  return BigInt(preview.value.financial.balanceAfterCents) < 0n;
 });
 
-watch(form, () => {
-  preview.value = null;
-  error.value = '';
-}, { deep: true, flush: 'sync' });
-
-function onKeypadConfirm() {
-  if (preview.value) {
-    commit();
-  } else {
-    review();
-  }
-}
+const formatPhone = value => {
+  if (!value) return '';
+  const digits = value.replace(/\D/g, '');
+  if (digits.length === 11) return digits.replace(/(\d{3})(\d{4})(\d{4})/, '$1 $2 $3');
+  return value;
+};
 
 function clearConsumeAmount() {
   form.pay = '';
-  form.lines[0].price = '';
+}
+
+function applyServicePreset(item) {
+  form.pay = displayCents(item.priceCents);
+  form.note = item.name;
+}
+
+function togglePlan(plan) {
+  if (form.planId === plan.id) {
+    form.planId = '';
+    form.pay = '';
+    form.gift = '';
+  } else {
+    form.planId = plan.id;
+    form.pay = displayCents(plan.payCents);
+    form.gift = displayCents(plan.giftCents);
+  }
+}
+
+function onBackdropClick() {
+  if (preview.value) {
+    preview.value = null;
+  } else {
+    emit('close');
+  }
 }
 
 function goBack() {
@@ -283,20 +448,8 @@ function goBack() {
     emit('close');
   }
 }
+
 defineExpose({ goBack });
-
-function selectPlan() {
-  const plan = currentConfiguration.value.rechargePlans.find(row => row.id === form.planId);
-  form.pay = plan ? displayCents(plan.payCents) : '';
-  form.gift = plan ? displayCents(plan.giftCents) : '';
-}
-
-function applyServicePreset(item) {
-  const price = displayCents(item.priceCents);
-  form.pay = price;
-  form.note = item.name;
-  form.lines = [{ id: item.id, name: item.name, price, quantity: 1 }];
-}
 
 function review() {
   if (busy.value || blocked.value) return;
@@ -306,30 +459,29 @@ function review() {
     if (type !== 'reverse' && member.archivedAt) throw new Error('会员已归档，请重新打开档案核对。');
     const base = { memberId: member.id, type, expectedAccountVersion: member.accountVersion, expectedProfileVersion: member.version };
     let draft, financial;
+
     if (type === 'recharge') {
+      if (!form.pay) throw new Error('请输入充值金额');
       const actualPayCents = yuanCents(form.pay, { positive: true });
-      const giftCents = !configuration.rechargeSettings.giftEnabled ? '0' : form.gift ? yuanCents(form.gift) : suggestedGift(actualPayCents, configuration.rechargeSettings);
+      const giftCents = !configuration.rechargeSettings?.giftEnabled ? '0' : form.gift ? yuanCents(form.gift) : suggestedGift(actualPayCents, configuration.rechargeSettings);
       draft = {
-        ...base, actualPayCents, giftCents, configurationVersion: configuration.version, remark: form.note,
+        ...base,
+        actualPayCents,
+        giftCents,
+        configurationVersion: configuration.version,
+        remark: form.note,
         ...(form.planId ? { planId: form.planId } : {}),
-        ...(form.payment === '组合支付' ? { payments: form.payments.map(row => ({ method: row.method, amountCents: yuanCents(row.amount, { positive: true }) })) } : { payMethod: form.payment })
+        payMethod: form.payment
       };
       financial = applyFinancialCommand(member.balanceCents, createRecharge(draft));
     } else if (type === 'consume') {
-      const payAmount = form.pay || form.lines[0]?.price;
-      if (!payAmount) throw new Error('请输入扣款金额');
-      const unitPriceCents = yuanCents(payAmount, { positive: true });
-      const serviceName = form.note || form.lines[0]?.name || '消费扣款';
-      const items = [{
-        ...(form.lines[0]?.id ? { serviceId: form.lines[0].id } : {}),
-        name: serviceName,
-        unitPriceCents,
-        quantity: 1
-      }];
+      if (!form.pay) throw new Error('请输入扣款金额');
+      const unitPriceCents = yuanCents(form.pay, { positive: true });
+      const serviceName = form.note || '消费扣款';
       draft = {
         ...base,
         amountCents: unitPriceCents,
-        items,
+        items: [{ name: serviceName, unitPriceCents, quantity: 1 }],
         itemsSummary: serviceName.slice(0, 128),
         configurationVersion: configuration.version,
         remark: form.note,
@@ -340,21 +492,26 @@ function review() {
       draft = { ...base, originalEntryId: entry.id, reason: form.note || '店主手工冲正', allowDebt: form.allowDebt };
       financial = createReversal({ originalKind: entry.type, originalDeltaCents: entry.deltaCents, currentBalanceCents: member.balanceCents, allowDebt: form.allowDebt });
     }
+
     prepareSale(draft, configuration);
     preview.value = { draft, financial };
-  } catch (cause) { error.value = cause.message; }
+  } catch (cause) {
+    error.value = cause.message;
+  }
 }
 
 async function commit() {
   if (!preview.value || busy.value || blocked.value) return;
   const reviewed = preview.value, { draft } = reviewed;
-  busy.value = true; error.value = '';
+  busy.value = true;
+  error.value = '';
   try {
     const result = await props.workspace.submit('command', draft, props.scope);
     if (alive) emit('done', result, draft, currentMember.value);
   } catch (cause) {
     if (!alive) return;
-    preview.value = null; form.allowDebt = false;
+    preview.value = null;
+    form.allowDebt = false;
     try {
       if (['MEMBER_VERSION_CHANGED', 'ACCOUNT_VERSION_CHANGED', 'WRITE_MEMBER_ARCHIVED', 'MEMBER_ARCHIVED'].includes(cause.code)) {
         const member = await props.workspace.read('getMember', currentMember.value.id);
@@ -370,11 +527,14 @@ async function commit() {
           form.gift = '';
           error.value = '成交规则已变化，请按最新价格和赠送规则重新确认。';
         }
-      } else error.value = cause.message;
+      } else {
+        error.value = cause.message;
+      }
     } catch (refreshError) {
       if (alive) error.value = cause.message + '。未能读取最新数据：' + refreshError.message;
     }
+  } finally {
+    busy.value = false;
   }
-  finally { busy.value = false; }
 }
 </script>

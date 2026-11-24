@@ -18,7 +18,10 @@
       :cashier-writable="writable" 
       :feature="feature" 
       :announce="announce" 
-      :balance-filter="memberFilter" 
+      :balance-filter="balanceFilter || memberFilter" 
+      :search-query="searchQuery"
+      @update:balance-filter="memberFilter = $event; $emit('update:balanceFilter', $event)"
+      @update:search-query="$emit('update:searchQuery', $event)"
       @history="openHistory" 
     />
 
@@ -189,8 +192,12 @@ const props = defineProps({
   feature: { type: Function, required: true },
   announce: Function,
   backup: Object,
-  identity: String
+  identity: String,
+  searchQuery: { type: String, default: '' },
+  balanceFilter: { type: String, default: 'all' }
 });
+
+const emit = defineEmits(['update:searchQuery', 'update:balanceFilter']);
 
 const active = ref('members');
 const history = ref({});
@@ -277,7 +284,14 @@ function openPage(id) {
   return false;
 }
 
+watch(() => props.balanceFilter, (val) => {
+  if (val && val !== memberFilter.value) {
+    memberFilter.value = val;
+  }
+});
+
 defineExpose({
+  activeTab: active,
   hasOpenAction,
   openAccount: () => openPage('account'),
   openBackup: () => openPage('backup'),
@@ -286,7 +300,10 @@ defineExpose({
     memberPage.value?.create();
   },
   openMembers: filter => {
-    if (openPage('members')) memberFilter.value = filter;
+    if (openPage('members')) {
+      memberFilter.value = filter;
+      emit('update:balanceFilter', filter);
+    }
   },
   goHome: () => {
     if (props.workspace.state.busy || memberPage.value?.goBack() || ledgerPage.value?.goBack()) {
