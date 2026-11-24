@@ -872,6 +872,26 @@ body {
 .recharge-pay-input > span { font-size: 24px; font-weight: 700; }
 .recharge-sheet input { min-width: 0; width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid #ccdcd2; border-radius: 10px; background: white; color: #253b30; outline: none; font-size: 16px; }
 .recharge-sheet input:focus { border-color: #167c68; box-shadow: 0 0 0 2px #dcefe6; }
+.recharge-sheet input.recharge-currency-input,
+.recharge-input-box input {
+  min-width: 0 !important;
+  width: 100% !important;
+  height: 44px !important;
+  min-height: 44px !important;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+  font-size: 18px !important;
+  font-weight: 800 !important;
+  font-variant-numeric: tabular-nums !important;
+}
+.recharge-sheet input.recharge-currency-input:focus,
+.recharge-input-box input:focus {
+  border: none !important;
+  box-shadow: none !important;
+}
 .recharge-pay-input input { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .recharge-gift-field { margin-top: 12px; }
 .recharge-gift-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 3px 8px; margin-bottom: 6px; }

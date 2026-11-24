@@ -153,38 +153,43 @@
               @click="togglePlan(plan)"
             >
               <div class="text-sm font-black tabular-nums">¥{{ displayCents(plan.payCents) }}</div>
-              <div class="text-[11px] mt-0.5 opacity-90">送 ¥{{ displayCents(plan.giftCents) }}</div>
+              <div
+                v-if="currentConfiguration.rechargeSettings?.giftEnabled && BigInt(plan.giftCents || 0) > 0n"
+                class="text-[11px] mt-0.5 opacity-90"
+              >
+                送 ¥{{ displayCents(plan.giftCents) }}
+              </div>
             </button>
           </div>
         </div>
 
         <!-- 实收金额与赠送金额 -->
-        <div class="grid grid-cols-2 gap-2.5">
+        <div :class="currentConfiguration.rechargeSettings?.giftEnabled ? 'grid grid-cols-2 gap-2.5' : 'space-y-1'">
           <label class="space-y-1 block">
             <span class="text-xs font-bold text-slate-700">实收（元）</span>
-            <div class="relative">
-              <span class="absolute left-3 top-2.5 text-slate-400 font-bold text-base">¥</span>
+            <div class="recharge-input-box flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 focus-within:bg-white focus-within:border-emerald-600 focus-within:ring-1 focus-within:ring-emerald-600 transition-colors">
+              <span class="text-slate-500 font-bold text-base mr-1.5 select-none shrink-0" aria-hidden="true">¥</span>
               <input
                 v-model.trim="form.pay"
                 inputmode="decimal"
                 :readonly="Boolean(form.planId)"
                 placeholder="0.00"
                 required
-                class="w-full h-11 pl-8 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-slate-900 focus:bg-white focus:border-emerald-600 outline-none"
+                class="recharge-currency-input flex-1 min-w-0 h-11 bg-transparent border-0 outline-none text-base font-black text-slate-900 focus:ring-0 shadow-none"
               />
             </div>
           </label>
 
           <label v-if="currentConfiguration.rechargeSettings?.giftEnabled" class="space-y-1 block">
             <span class="text-xs font-bold text-slate-700">赠送（元）</span>
-            <div class="relative">
-              <span class="absolute left-3 top-2.5 text-slate-400 font-bold text-base">¥</span>
+            <div class="recharge-input-box flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 focus-within:bg-white focus-within:border-emerald-600 focus-within:ring-1 focus-within:ring-emerald-600 transition-colors">
+              <span class="text-emerald-700 font-bold text-base mr-1.5 select-none shrink-0" aria-hidden="true">¥</span>
               <input
                 v-model.trim="form.gift"
                 inputmode="decimal"
                 :readonly="Boolean(form.planId)"
                 placeholder="0.00"
-                class="w-full h-11 pl-8 pr-3 bg-slate-50 border border-slate-200 rounded-xl text-base font-black text-emerald-800 focus:bg-white focus:border-emerald-600 outline-none"
+                class="recharge-currency-input flex-1 min-w-0 h-11 bg-transparent border-0 outline-none text-base font-black text-emerald-800 focus:ring-0 shadow-none"
               />
             </div>
           </label>
@@ -306,7 +311,7 @@
               ¥{{ type === 'recharge' ? displayCents(preview.draft.actualPayCents) : form.pay }}
             </strong>
           </div>
-          <div v-if="type === 'recharge' && BigInt(preview.draft.giftCents || 0) > 0n" class="flex justify-between items-center text-emerald-800 font-semibold">
+          <div v-if="type === 'recharge' && currentConfiguration.rechargeSettings?.giftEnabled && BigInt(preview.draft.giftCents || 0) > 0n" class="flex justify-between items-center text-emerald-800 font-semibold">
             <span>赠送额度</span>
             <strong>¥{{ displayCents(preview.draft.giftCents) }}</strong>
           </div>
@@ -427,7 +432,7 @@ function togglePlan(plan) {
   } else {
     form.planId = plan.id;
     form.pay = displayCents(plan.payCents);
-    form.gift = displayCents(plan.giftCents);
+    form.gift = currentConfiguration.value?.rechargeSettings?.giftEnabled ? displayCents(plan.giftCents) : '';
   }
 }
 
