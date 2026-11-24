@@ -114,10 +114,7 @@ body {
 .app-toast > span:first-child { flex-shrink: 0; }
 
 .app-header {
-  background: #fff !important;
-  color: var(--app-ink);
-  border-color: var(--app-border) !important;
-  box-shadow: 0 2px 12px rgb(24 39 43 / 5%) !important;
+  color: inherit;
 }
 
 .app-header .text-indigo-300 {
@@ -802,10 +799,23 @@ body {
 .debt-acknowledgement { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 8px 0; color: #852317; font-size: 16px; font-weight: 800; }
 .debt-acknowledgement input { width: 23px; height: 23px; flex: none; accent-color: #b42318; }
 .recharge-debt-preview { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #c5ddd1; font-size: 16px; }
-.member-balance-panel { background: #e2f1ea; color: #164f40; border: 1px solid #c2dfd2; }
-.member-balance-panel .text-slate-400 { color: #426b5d; }
-.member-balance-debt { background: #fff0ea; color: #a12a1d; border-color: #eea799; }
-.member-balance-debt .text-slate-400 { color: #995747; }
+.member-balance-panel {
+  background: linear-gradient(145deg, #1e293b, #0f172a);
+  color: #f8fafc;
+  border: 1px solid #334155;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.2);
+}
+.member-balance-panel .text-slate-400 {
+  color: #94a3b8;
+}
+.member-balance-debt {
+  background: linear-gradient(145deg, #4c0519, #1e293b);
+  color: #ffe4e6;
+  border-color: #9f1239;
+}
+.member-balance-debt .text-slate-400 {
+  color: #fda4af;
+}
 .app-shell .debt-tag { color: #a72a22; background: #ffdfd6; }
 .debt-dashboard-line { padding-top: 8px; color: #a72a22; font-size: 16px; }
 @media (max-width: 380px) {

@@ -83,8 +83,9 @@
 
           <!-- 触控数字键盘 (Tactile Keypad) -->
           <div class="pt-1">
-            <Keypad v-model="form.pay" :confirm-text="isConsumeDebt ? '核对欠款' : '核对金额'"
-              :disabled="busy || blocked" @confirm="review" />
+            <Keypad v-model="form.pay" :confirm-text="preview ? '确认扣款' : (isConsumeDebt ? '核对欠款' : '核对金额')"
+              :theme="isConsumeDebt ? 'danger' : 'primary'"
+              :disabled="busy || blocked" @confirm="onKeypadConfirm" />
           </div>
         </template>
 
@@ -259,6 +260,14 @@ watch(form, () => {
   preview.value = null;
   error.value = '';
 }, { deep: true, flush: 'sync' });
+
+function onKeypadConfirm() {
+  if (preview.value) {
+    commit();
+  } else {
+    review();
+  }
+}
 
 function clearConsumeAmount() {
   form.pay = '';
