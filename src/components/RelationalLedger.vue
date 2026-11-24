@@ -1,102 +1,157 @@
 <template>
-  <section class="book-stack" aria-label="财务流水">
-    <!-- 搜索与筛选面板 -->
-    <form class="book-panel book-stack" role="search" @submit.prevent="search" style="padding: 0.875rem 1rem;">
-      <div style="position: relative;">
-        <input v-model.trim="query" maxlength="128" placeholder="会员、手机号、项目或单号"
-          style="width: 100%; height: 2.75rem; padding-left: 2.25rem; border-radius: 0.75rem; background: #f8fafc; border: 1px solid #cbd5e1;">
-        <Search :size="17" aria-hidden="true" style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: #94a3b8; pointer-events: none;" />
+  <section class="book-stack space-y-3" aria-label="财务流水">
+    <!-- 聚合筛选与多条件面板 -->
+    <div class="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs space-y-2.5">
+      <!-- 会员指定筛选横幅 -->
+      <div v-if="memberId" class="flex items-center justify-between p-2 bg-emerald-50/80 rounded-xl border border-emerald-200/60 text-xs">
+        <span class="text-emerald-900 font-bold flex items-center gap-1.5">
+          <span>👤</span>
+          <span>当前筛选会员：<strong>{{ memberName || memberId }}</strong></span>
+        </span>
+        <button
+          type="button"
+          class="px-2.5 py-1 bg-white border border-emerald-300 text-emerald-800 rounded-lg font-bold text-xs hover:bg-emerald-50 btn-press"
+          @click="$emit('all-members')"
+        >
+          查看全部
+        </button>
       </div>
 
-      <div class="book-fields" style="grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));">
-        <label>流水类型
-          <select v-model="kind">
-            <option value="">全部类型</option>
-            <option value="recharge">充值</option>
-            <option value="consume">消费</option>
-            <option value="reversal">冲正</option>
-          </select>
-        </label>
-        <label>起始日<input v-model="from" type="date"></label>
-        <label>结束日<input v-model="to" type="date"></label>
-      </div>
-
-      <div class="book-actions book-between" style="margin-top: 0.25rem;">
-        <div class="book-actions" style="margin: 0; gap: 0.5rem;">
-          <button type="submit" class="book-primary" style="min-height: 2.5rem; padding: 0.35rem 1rem;">查询</button>
-          <button v-if="memberId" type="button" class="book-btn" @click="$emit('all-members')" style="min-height: 2.5rem;">查看全部会员</button>
+      <!-- 流水类型快捷切换 -->
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-xs font-bold text-slate-500 shrink-0">类型：</span>
+        <div class="flex gap-1 overflow-x-auto no-scrollbar flex-1" role="tablist" aria-label="流水类型筛选">
+          <button
+            v-for="t in typeOptions"
+            :key="t.value"
+            type="button"
+            class="px-2.5 py-1 rounded-xl text-xs font-bold transition-all shrink-0"
+            :class="kind === t.value ? 'bg-slate-900 text-white shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'"
+            @click="selectKind(t.value)"
+          >
+            {{ t.label }}
+          </button>
         </div>
-        <p v-if="memberId" role="status" style="margin: 0; font-size: 0.875rem; color: #155f4d; font-weight: 600;">
-          当前筛选：{{ memberName }}
-        </p>
       </div>
-    </form>
+
+      <!-- 时间周期快捷切换 -->
+      <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+        <span class="text-xs font-bold text-slate-500 shrink-0">时间：</span>
+        <div class="flex gap-1 overflow-x-auto no-scrollbar flex-1" role="tablist" aria-label="时间周期筛选">
+          <button
+            v-for="p in periodOptions"
+            :key="p.value"
+            type="button"
+            class="px-2.5 py-1 rounded-xl text-xs font-bold transition-all shrink-0"
+            :class="period === p.value ? 'bg-emerald-700 text-white shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'"
+            @click="selectPeriod(p.value)"
+          >
+            {{ p.label }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 自选起止日期面板 -->
+      <form v-if="period === 'custom'" class="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2" @submit.prevent="search">
+        <label class="text-xs font-bold text-slate-600 flex items-center gap-1">
+          起<input v-model="from" type="date" class="text-xs p-1.5 border border-slate-200 rounded-lg bg-slate-50 font-medium" />
+        </label>
+        <label class="text-xs font-bold text-slate-600 flex items-center gap-1">
+          止<input v-model="to" type="date" class="text-xs p-1.5 border border-slate-200 rounded-lg bg-slate-50 font-medium" />
+        </label>
+        <button type="submit" class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-xs font-bold btn-press">
+          查询
+        </button>
+      </form>
+    </div>
 
     <p v-if="error" class="book-panel book-alert" role="alert">{{ error }}</p>
-    <p v-if="receipt" class="book-panel" style="background: #f0fdf4; border-color: #bbf7d0; color: #166534;" role="status">{{ receipt }}</p>
+    <p v-if="receipt" class="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs font-bold text-emerald-800" role="status">{{ receipt }}</p>
 
     <!-- 冲正弹窗 -->
     <RelationalSale v-if="reversing" ref="saleForm" v-bind="reversing" :key="reversing.entry.id" :workspace="workspace" type="reverse" @close="reversing = null" @done="reversed" />
 
     <p v-if="page.error.value" class="book-panel book-alert" role="alert">{{ page.error.value }}</p>
-    <div v-else-if="page.busy.value" class="book-panel book-stack" style="text-align: center; padding: 2rem 1rem;" role="status">
-      <div style="font-size: 1.5rem; animation: spin 1s linear infinite; display: inline-block;">⏳</div>
-      <p style="margin: 0.5rem 0 0; color: #64748b;">正在查询流水记录…</p>
+    <div v-else-if="page.busy.value" class="bg-white border border-slate-200 rounded-2xl p-8 text-center" role="status">
+      <div class="text-2xl animate-spin inline-block">⏳</div>
+      <p class="text-xs text-slate-500 font-medium mt-2">正在查询流水记录…</p>
     </div>
-    <div v-else class="book-panel book-stack" style="padding: 0.875rem 1rem;">
-      <p v-if="!page.rows.value.length" style="text-align: center; color: #64748b; padding: 2rem 0; margin: 0;">没有符合条件的流水记录。</p>
-      
+    <div v-else class="space-y-2.5">
+      <div v-if="!page.rows.value.length" class="bg-white border border-slate-200/90 rounded-2xl p-8 text-center">
+        <p class="text-xs text-slate-400 font-medium m-0">没有符合条件的交易流水记录</p>
+      </div>
+
       <!-- 现代化流水卡片列表 -->
-      <ul v-else class="book-list book-ledger-list">
-        <li v-for="entry in page.rows.value" :key="entry.id" style="border-radius: 1rem; border: 1px solid #e7ecea; background: #ffffff; padding: 0.875rem 1rem; box-shadow: 0 1px 4px rgba(0,0,0,0.02);">
-          <div class="book-inline book-between" style="border-bottom: 1px solid #f8fafc; padding-bottom: 0.5rem;">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <span :style="{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '28px', height: '28px', borderRadius: '8px',
-                fontSize: '0.75rem', fontWeight: '750',
-                background: entry.type === 'recharge' ? '#f0fdf4' : entry.type === 'consume' ? '#fef3c7' : '#faf5ff',
-                color: entry.type === 'recharge' ? '#15803d' : entry.type === 'consume' ? '#b45309' : '#7e22ce'
-              }">
-                {{ labels[entry.type] }}
+      <ul v-else class="space-y-2 p-0 m-0 list-none">
+        <li
+          v-for="entry in page.rows.value"
+          :key="entry.id"
+          class="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs transition-shadow hover:shadow-sm"
+        >
+          <!-- 首行：徽章、会员姓名与变动金额 -->
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              <span
+                class="w-7 h-7 rounded-lg text-xs font-black flex items-center justify-center shrink-0"
+                :class="entry.type === 'recharge' ? 'bg-emerald-100 text-emerald-800' : entry.type === 'consume' ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-purple-800'"
+              >
+                {{ labels[entry.type] || '记录' }}
               </span>
-              <strong style="font-size: 1rem; color: #1e293b;">{{ entry.memberName || memberName || entry.memberId }}</strong>
+              <strong class="text-sm font-bold text-slate-900 truncate">
+                {{ entry.memberName || memberName || entry.memberId }}
+              </strong>
             </div>
-            <strong :style="{
-              fontSize: '1.15rem', fontWeight: '850',
-              color: entry.type === 'recharge' ? '#15803d' : entry.type === 'consume' ? '#e11d48' : '#7e22ce'
-            }">
-              {{ BigInt(entry.deltaCents) > 0n ? '+' : '' }}¥{{ displayCents(entry.deltaCents) }}
+
+            <!-- 金额变化 -->
+            <strong
+              class="text-base font-black shrink-0"
+              :class="entry.type === 'recharge' ? 'text-emerald-700' : entry.type === 'consume' ? 'text-rose-600' : 'text-purple-700'"
+            >
+              {{ BigInt(entry.deltaCents || 0) > 0n ? '+' : '' }}¥{{ displayCents(entry.deltaCents) }}
             </strong>
           </div>
 
-          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8125rem; color: #64748b; padding-top: 0.25rem;">
-            <span>{{ timestamp(entry.confirmedAt || entry.occurredAt) }} · 变动后余额 ¥{{ displayCents(entry.balanceAfterCents) }}</span>
-            <span v-if="entry.reversed" style="color: #dc2626; font-weight: 600;">已冲正</span>
-            <span v-else-if="workspace.mode === 'cloud' && !entry.confirmedAt" style="color: #d97706;">本地未确认</span>
+          <!-- 次行：时间、变动后余额与状态 -->
+          <div class="flex items-center justify-between text-xs text-slate-400 font-medium mt-1.5">
+            <time :datetime="entry.occurredAt">{{ timestamp(entry.confirmedAt || entry.occurredAt) }}</time>
+            <div class="flex items-center gap-2">
+              <span class="text-slate-500 font-semibold">变动后 ¥{{ displayCents(entry.balanceAfterCents) }}</span>
+              <span v-if="entry.reversed" class="text-rose-600 font-black">已冲正</span>
+              <span v-else-if="workspace.mode === 'cloud' && !entry.confirmedAt" class="text-amber-600 font-black">待确认</span>
+            </div>
           </div>
 
-          <details style="margin-top: 0.35rem; font-size: 0.8125rem; color: #475569; background: #f8fafc; padding: 0.5rem 0.75rem; border-radius: 0.625rem;">
-            <summary style="cursor: pointer; font-weight: 600; color: #167c68; user-select: none;">查看成交明细与单号</summary>
-            <div style="margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.2rem;">
-              <p class="book-break" style="margin: 0;">单号：{{ entry.id }}</p>
-              <p v-if="entry.originalEntryId" class="book-break" style="margin: 0;">原单：{{ entry.originalEntryId }}</p>
-              <p v-if="entry.reversalEntryId" class="book-break" style="margin: 0; color: #dc2626;">冲正单：{{ entry.reversalEntryId }}</p>
-              <p v-if="entry.remark" class="book-break" style="margin: 0;">备注：{{ entry.remark }}</p>
-              <p v-for="(item, index) in entry.items" :key="'i' + index" style="margin: 0;">
-                {{ item.name }} × {{ item.quantity }}，合计 ¥{{ displayCents(item.lineTotalCents) }}
+          <!-- 展开详细信息折叠框 -->
+          <details class="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-600">
+            <summary class="cursor-pointer font-bold text-emerald-800 hover:text-emerald-900 select-none py-0.5">
+              查看单号与明细 ›
+            </summary>
+            <div class="mt-2 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-[11px] font-medium text-slate-600">
+              <p class="m-0 break-all">流水单号：{{ entry.id }}</p>
+              <p v-if="entry.originalEntryId" class="m-0 break-all text-slate-500">原单号：{{ entry.originalEntryId }}</p>
+              <p v-if="entry.reversalEntryId" class="m-0 break-all text-rose-600">冲正单号：{{ entry.reversalEntryId }}</p>
+              <p v-if="entry.remark" class="m-0 font-bold text-slate-800">服务备注：{{ entry.remark }}</p>
+              <p v-for="(item, idx) in entry.items" :key="'it' + idx" class="m-0">
+                • {{ item.name }} × {{ item.quantity }} = ¥{{ displayCents(item.lineTotalCents) }}
               </p>
-              <p v-for="(payment, index) in entry.payments" :key="'p' + index" style="margin: 0;">
-                {{ payment.method }}：¥{{ displayCents(payment.amountCents) }}
+              <p v-for="(pay, idx) in entry.payments" :key="'pa' + idx" class="m-0">
+                • 支付方式：{{ pay.method }} ¥{{ displayCents(pay.amountCents) }}
               </p>
-              <p v-if="entry.recharge" style="margin: 0; color: #15803d;">
-                实收 ¥{{ displayCents(entry.recharge.actualPayCents) }}，赠送 ¥{{ displayCents(entry.recharge.giftCents) }}
+              <p v-if="entry.recharge" class="m-0 text-emerald-700 font-bold">
+                • 实收 ¥{{ displayCents(entry.recharge.actualPayCents) }}，赠送 ¥{{ displayCents(entry.recharge.giftCents) }}
               </p>
             </div>
           </details>
 
-          <div v-if="owner && entry.type !== 'reversal' && !entry.reversed" class="book-actions" style="margin-top: 0.35rem; justify-content: flex-end;">
-            <button type="button" class="book-btn" :disabled="blocked" aria-label="账务冲正" @click="reverse(entry)"
-              style="min-height: 2rem; padding: 0.2rem 0.625rem; font-size: 0.75rem; color: #dc2626; border-color: #fecdd3; background: #fff5f5;">
+          <!-- 冲正撤销按钮 (仅店主且未冲正单) -->
+          <div v-if="owner && entry.type !== 'reversal' && !entry.reversed" class="flex justify-end mt-2">
+            <button
+              type="button"
+              class="px-2.5 py-1 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg btn-press transition-colors"
+              :disabled="blocked"
+              aria-label="账务冲正"
+              @click="reverse(entry)"
+            >
               账务冲正
             </button>
           </div>
@@ -104,12 +159,16 @@
       </ul>
 
       <!-- 分页控制 -->
-      <div class="book-actions book-between" style="border-top: 1px solid #f1f5f9; padding-top: 0.75rem; margin-top: 0.25rem;">
-        <div class="book-actions" style="margin: 0; gap: 0.5rem;">
-          <button v-if="page.cursor.value" type="button" class="book-btn" aria-label="回到第一页" @click="page.load()">回到第一页</button>
-          <button v-if="page.next.value" type="button" class="book-btn" aria-label="下一页" @click="page.load(page.next.value)">下一页</button>
+      <div class="flex items-center justify-between p-3 bg-white border border-slate-200/90 rounded-2xl text-xs font-bold text-slate-600 shadow-xs">
+        <div class="flex items-center gap-2">
+          <button v-if="page.cursor.value" type="button" class="text-emerald-800 hover:text-emerald-900" aria-label="回到第一页" @click="page.load()">
+            首页
+          </button>
+          <button v-if="page.next.value" type="button" class="text-emerald-800 hover:text-emerald-900" aria-label="下一页" @click="page.load(page.next.value)">
+            下一页 ›
+          </button>
         </div>
-        <span class="book-muted">本页 {{ page.rows.value.length }} 条 · 营业日 UTC+8</span>
+        <span class="text-[11px] text-slate-400">本页 {{ page.rows.value.length }} 条 · 营业日 UTC+8</span>
       </div>
     </div>
   </section>
@@ -117,16 +176,46 @@
 
 <script setup>
 import { ref, shallowRef, computed, watch, onScopeDispose } from 'vue';
-import { Search } from 'lucide-vue-next';
 import { useRelationalPage } from '../composables/useRelationalPage.js';
-import { displayCents, businessDays } from '../relational-presentation.js';
+import { displayCents, businessDays, todayBusiness } from '../relational-presentation.js';
 import RelationalSale from './RelationalSale.vue';
 
-const props = defineProps({ workspace: Object, owner: Boolean, memberId: String, memberName: String });
+const props = defineProps({
+  workspace: Object,
+  owner: Boolean,
+  memberId: String,
+  memberName: String,
+  searchQuery: { type: String, default: '' }
+});
 defineEmits(['all-members']);
 
-const query = ref(''), kind = ref(''), from = ref(''), to = ref(''), error = ref(''), receipt = ref(''), reversing = shallowRef(null), loading = ref(false);
-const saleForm = ref(null), hasOpenAction = computed(() => Boolean(reversing.value || loading.value));
+const typeOptions = [
+  { value: '', label: '全部' },
+  { value: 'consume', label: '消费扣款' },
+  { value: 'recharge', label: '充值入账' },
+  { value: 'reversal', label: '撤销冲正' }
+];
+
+const periodOptions = [
+  { value: 'all', label: '全部时间' },
+  { value: 'today', label: '今天' },
+  { value: 'week', label: '近7天' },
+  { value: 'month', label: '本月' },
+  { value: 'custom', label: '自选' }
+];
+
+const query = ref(props.searchQuery || '');
+const kind = ref('');
+const period = ref('all');
+const from = ref('');
+const to = ref('');
+const error = ref('');
+const receipt = ref('');
+const reversing = shallowRef(null);
+const loading = ref(false);
+const saleForm = ref(null);
+
+const hasOpenAction = computed(() => Boolean(reversing.value || loading.value));
 const blocked = computed(() => loading.value || !props.workspace.state.book || props.workspace.state.pending || props.workspace.state.pendingError || props.workspace.state.busy);
 const labels = { consume: '消费', recharge: '充值', reversal: '冲正' };
 const timestamp = value => new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Shanghai' }).format(new Date(value));
@@ -143,16 +232,63 @@ defineExpose({
   }
 });
 
-watch(() => [props.workspace.state.revision, props.memberId], () => { if (props.workspace.state.book) void page.load(); }, { immediate: true });
+function selectKind(val) {
+  kind.value = val;
+  search();
+}
+
+function selectPeriod(val) {
+  period.value = val;
+  const today = todayBusiness();
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+  if (val === 'all') {
+    from.value = '';
+    to.value = '';
+    search();
+  } else if (val === 'today') {
+    from.value = today;
+    to.value = today;
+    search();
+  } else if (val === 'week') {
+    const w = new Date(now.getTime() - 6 * 86400000);
+    from.value = fmt(w);
+    to.value = today;
+    search();
+  } else if (val === 'month') {
+    from.value = today.slice(0, 7) + '-01';
+    to.value = today;
+    search();
+  }
+}
 
 function search() {
-  criteria = { search: query.value, kind: kind.value, ...(from.value && to.value ? businessDays(from.value, to.value) : {}) };
+  criteria = {
+    search: query.value,
+    kind: kind.value,
+    ...(from.value && to.value ? businessDays(from.value, to.value) : {})
+  };
   void page.load();
 }
 
+watch(() => props.searchQuery, val => {
+  if (val !== undefined && val !== query.value) {
+    query.value = val;
+    search();
+  }
+});
+
+watch(() => [props.workspace.state.revision, props.memberId], () => {
+  if (props.workspace.state.book) void page.load();
+}, { immediate: true });
+
 async function reverse(entry) {
   if (blocked.value) return;
-  error.value = ''; receipt.value = ''; loading.value = true;
+  error.value = '';
+  receipt.value = '';
+  loading.value = true;
   try {
     const member = await props.workspace.read('getMember', entry.memberId);
     if (!alive) return;

@@ -121,7 +121,10 @@ body {
 .app-toast > span:first-child { flex-shrink: 0; }
 
 .app-header {
-  color: inherit;
+  background: #fff !important;
+  color: var(--app-ink);
+  border-color: var(--app-border) !important;
+  box-shadow: 0 2px 12px rgb(24 39 43 / 5%) !important;
 }
 
 .app-header .text-indigo-300 {

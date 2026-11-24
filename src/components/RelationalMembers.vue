@@ -23,38 +23,6 @@
       </span>
     </div>
 
-    <!-- 紧凑搜索框与查询按钮 (满足即时搜索与回车/按钮查询) -->
-    <div class="header-search-row flex items-center gap-2">
-      <label class="header-search relative flex-1 m-0 min-w-0">
-        <span style="display: none;">搜索会员</span>
-        <input
-          v-model.trim="query"
-          maxlength="128"
-          placeholder="姓名、电话或备注"
-          class="header-search-input pl-10 pr-9 text-sm w-full h-10 bg-white border border-slate-200 rounded-xl font-medium focus:border-emerald-600 outline-none"
-          @keyup.enter="search"
-        />
-        <Search :size="17" class="absolute left-3 top-2.5 text-slate-400 pointer-events-none" aria-hidden="true" />
-        <button
-          v-if="query"
-          type="button"
-          aria-label="清空搜索"
-          class="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs w-6 h-6 flex items-center justify-center rounded-full bg-slate-100"
-          @click="query = ''; search()"
-        >
-          ✕
-        </button>
-      </label>
-      <button
-        type="button"
-        :disabled="!workspace.state.book"
-        aria-label="查询"
-        class="h-10 px-4 bg-slate-800 text-white rounded-xl font-bold text-xs shrink-0 btn-press active:bg-slate-900"
-        @click="search"
-      >
-        查询
-      </button>
-    </div>
 
     <!-- 快捷聚合筛选胶囊栏 (全部会员、最近来店、低余额、欠款会员) -->
     <div class="filter-tabs-row flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar" role="tablist" aria-label="会员范围筛选">
@@ -375,7 +343,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue';
-import { UsersRound, Search } from 'lucide-vue-next';
+import { UsersRound } from 'lucide-vue-next';
 import { displayCents } from '../relational-presentation.js';
 import { useRelationalPage } from '../composables/useRelationalPage.js';
 import { memberIdentitySignature } from '../member-identity.js';

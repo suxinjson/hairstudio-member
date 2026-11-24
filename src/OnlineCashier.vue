@@ -31,12 +31,31 @@
       <RelationalWorkbench v-else ref="workbench" :workspace="workspace" :owner="owner" :writable="writable" :profile-writable="writable"
         :feature="feature" :identity="identity" :announce="announce" :backup="archive"
         v-model:search-query="headerSearchQuery" v-model:balance-filter="headerCustomerFilter">
-        <div class="book-panel book-stack">
-          <h2>账号与设置</h2><p>当前账号 {{ user.displayName }}。网页版在线读写门店账本。</p>
-          <a href="/admin/">打开商家后台管理设备、员工和设置</a>
-        </div>
-        <StoreSettingsView v-if="feature('settings')" />
-        <VoiceSettingsView v-if="feature('voice') && owner" />
+        <template #account>
+          <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h2 class="text-base font-black text-slate-900 m-0">账号与连接</h2>
+                <p class="text-xs text-slate-500 m-0 mt-0.5">当前登录账号：<strong class="text-slate-800">{{ user.displayName }}</strong>（{{ user.role === 'owner' ? '店主' : '收银员' }}）</p>
+              </div>
+              <button type="button" @click="adminApi.logout()" class="px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-xl btn-press">
+                退出登录
+              </button>
+            </div>
+            <p class="text-xs text-slate-600 m-0 pt-2 border-t border-slate-100">网页在线版实时连接云端数据库，数据自动持久化入库。</p>
+            <div class="pt-2">
+              <a href="/admin/" target="_blank" class="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:text-emerald-800">
+                打开电脑端商家管理后台（管理设备、员工与高级报表） ›
+              </a>
+            </div>
+          </div>
+        </template>
+        <template #store>
+          <StoreSettingsView v-if="feature('settings')" />
+        </template>
+        <template #voice>
+          <VoiceSettingsView v-if="feature('voice') && owner" />
+        </template>
       </RelationalWorkbench>
     </main>
   </div>

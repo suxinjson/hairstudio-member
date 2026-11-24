@@ -80,6 +80,7 @@
         :owner="owner && writable" 
         :member-id="history.id"
         :member-name="history.name" 
+        :search-query="searchQuery"
         @all-members="history = {}" 
       />
 
@@ -90,41 +91,78 @@
       />
     </div>
 
-    <!-- 3. 设置中心主视图 (服务定价、批量资料、备份安全、账号管理) -->
+    <!-- 3. 设置中心主视图 (分类聚合概览与独立二级页面) -->
     <div v-else-if="active === 'settings'" class="space-y-3.5">
-      <!-- 设置子分类胶囊导航 -->
-      <div class="flex gap-1.5 overflow-x-auto p-1 bg-slate-200/80 rounded-2xl" role="tablist" aria-label="设置项目">
-        <button 
-          v-for="tab in settingsTabs" 
-          :key="tab.id" 
-          type="button" 
-          role="tab"
-          class="flex-1 whitespace-nowrap py-2 px-3 rounded-xl text-xs font-bold transition-all text-center"
-          :class="settingsSubTab === tab.id ? 'bg-white text-emerald-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'"
-          :aria-selected="settingsSubTab === tab.id"
-          @click="settingsSubTab = tab.id"
-        >
-          {{ tab.label }}
-        </button>
-      </div>
+      <!-- 概览主视图：分类聚合菜单 -->
+      <SettingsOverview
+        v-if="settingsSubTab === 'overview'"
+        :groups="settingsGroups"
+        :store-name="workspace.state.storeProfile?.name || '我的门店'"
+        :connection-label="workspace.state.user?.displayName || ''"
+        :cloud-online="Boolean(workspace.state.book)"
+        @navigate="settingsSubTab = $event"
+      />
 
-      <RelationalConfiguration 
-        v-if="settingsSubTab === 'configuration'" 
-        :workspace="workspace" 
-        :owner="owner && profileWritable" 
-      />
-      <RelationalBatches 
-        v-else-if="settingsSubTab === 'batches'" 
-        :workspace="workspace" 
-        :writable="profileWritable" 
-      />
-      <RelationalBackup 
-        v-else-if="settingsSubTab === 'backup'" 
-        :workspace="workspace" 
-        :controller="backup" 
-      />
+      <!-- 二级设置项主视图 (带顶部返回条) -->
       <div v-else class="space-y-3">
-        <slot />
+        <div class="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-200/90 shadow-xs mb-3">
+          <button
+            type="button"
+            class="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl btn-press"
+            @click="settingsSubTab = 'overview'"
+          >
+            <ChevronLeft :size="16" aria-hidden="true" />
+            <span>返回设置</span>
+          </button>
+          <h2 class="text-sm font-black text-slate-800 m-0">{{ currentSettingsTitle }}</h2>
+          <span class="w-16"></span>
+        </div>
+
+        <RelationalConfiguration
+          v-if="settingsSubTab === 'configuration'"
+          :workspace="workspace"
+          :owner="owner && profileWritable"
+        />
+
+        <RelationalBatches
+          v-else-if="settingsSubTab === 'batches'"
+          :workspace="workspace"
+          :writable="profileWritable"
+        />
+
+        <RelationalBackup
+          v-else-if="settingsSubTab === 'backup'"
+          :workspace="workspace"
+          :controller="backup"
+        />
+
+        <div v-else-if="settingsSubTab === 'store'">
+          <slot name="store"><slot /></slot>
+        </div>
+
+        <div v-else-if="settingsSubTab === 'voice'">
+          <slot name="voice"><slot /></slot>
+        </div>
+
+        <div v-else-if="settingsSubTab === 'account' || settingsSubTab === 'update'">
+          <slot name="account" />
+          <slot name="update" />
+          <slot />
+        </div>
+
+        <div v-else-if="settingsSubTab === 'help'" class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-3">
+          <h3 class="text-base font-black text-slate-900 m-0">💡 使用帮助与说明</h3>
+          <div class="space-y-2.5 text-xs text-slate-600 leading-relaxed">
+            <p class="m-0"><strong>离线与云端双模：</strong>本机具备独立离线账本，断网时仍可顺畅记账扣款；联网后自动与云端服务器比对同步。</p>
+            <p class="m-0"><strong>数据安全与冲正：</strong>每笔消费与充值皆生成唯一单号，已入账记录支持店主安全冲正撤回，不留坏账死账。</p>
+            <p class="m-0"><strong>备份与防丢失：</strong>建议定期在【数据安全 → 数据备份与恢复】中导出账本或保存本地快照，确保数据永久高可用。</p>
+            <p class="m-0"><strong>语音播报：</strong>收银结算后支持高保真语音播报提示，并支持外接智能音箱播报。</p>
+          </div>
+        </div>
+
+        <div v-else class="space-y-3">
+          <slot />
+        </div>
       </div>
     </div>
   </div>
@@ -158,7 +196,7 @@
 
       <button 
         type="button" 
-        @click="active = 'settings'" 
+        @click="active = 'settings'; settingsSubTab = 'overview'" 
         :aria-current="active === 'settings' ? 'page' : undefined" 
         aria-label="账号与设置" 
         :class="{ 'nav-active': active === 'settings' }" 
@@ -173,7 +211,7 @@
 
 <script setup>
 import { computed, ref, shallowRef, watch } from 'vue';
-import { UsersRound, ChartNoAxesCombined, Settings, Receipt, BarChart3 } from 'lucide-vue-next';
+import { UsersRound, ChartNoAxesCombined, Settings, Receipt, BarChart3, ChevronLeft } from 'lucide-vue-next';
 import RelationalMembers from './RelationalMembers.vue';
 import RelationalLedger from './RelationalLedger.vue';
 import RelationalReports from './RelationalReports.vue';
@@ -182,6 +220,7 @@ import RelationalPending from './RelationalPending.vue';
 import RelationalBatches from './RelationalBatches.vue';
 import RelationalBackup from './RelationalBackup.vue';
 import DashboardSummary from './DashboardSummary.vue';
+import SettingsOverview from './SettingsOverview.vue';
 import { todayBusiness, businessDays } from '../relational-presentation.js';
 
 const props = defineProps({
@@ -203,7 +242,7 @@ const active = ref('members');
 const history = ref({});
 const memberFilter = ref('all');
 const ledgerView = ref('summary');
-const settingsSubTab = ref('account');
+const settingsSubTab = ref('overview');
 
 const memberPage = ref(null);
 const ledgerPage = ref(null);
@@ -214,12 +253,49 @@ const ledgerViews = computed(() => [
   ...(props.feature('reports') ? [{ key: 'reports', label: '经营报表' }] : [])
 ]);
 
-const settingsTabs = computed(() => [
-  ...(props.feature('settings') ? [{ id: 'configuration', label: '服务与价格' }] : []),
-  ...(props.workspace.batch && props.feature('members') ? [{ id: 'batches', label: '批量资料' }] : []),
-  ...(props.owner && props.backup && props.feature('backup') ? [{ id: 'backup', label: '备份与恢复' }] : []),
-  { id: 'account', label: '账号与设置' }
-]);
+const settingsGroups = computed(() => [
+  {
+    title: '日常经营',
+    items: [
+      ...(props.feature('settings') ? [{ page: 'configuration', title: '服务与价格', description: '管理常用项目定价与充值套餐规则', icon: '🛍️' }] : []),
+      ...(props.feature('settings') ? [{ page: 'store', title: '门店设置', description: '门店名称、联系方式与小票通知', icon: '🏪' }] : []),
+      ...(props.feature('voice') ? [{ page: 'voice', title: '语音播报设置', description: '播报开关、音色调节与测试播报', icon: '📢' }] : [])
+    ]
+  },
+  {
+    title: '账号与云端',
+    items: [
+      { page: 'account', title: '账号与连接', description: '当前店员账号、云端连接状态与设备', icon: '☁️' }
+    ]
+  },
+  {
+    title: '数据安全',
+    items: [
+      ...(props.owner && props.backup && props.feature('backup') ? [{ page: 'backup', title: '数据备份与恢复', description: '导出完整账本、本地快照与恢复数据', icon: '🛡️' }] : []),
+      ...(props.workspace.batch && props.feature('members') ? [{ page: 'batches', title: '批量资料管理', description: '批量导入会员档案与历史任务', icon: '📁' }] : [])
+    ]
+  },
+  {
+    title: '系统与帮助',
+    items: [
+      { page: 'update', title: '检查更新', description: '检查并安装最新客户端版本', icon: '⬆️' },
+      { page: 'help', title: '使用帮助', description: '离线模式、账本同步与常见问题说明', icon: '💡' }
+    ]
+  }
+].filter(g => g.items.length > 0));
+
+const settingsTitles = {
+  configuration: '服务与价格',
+  store: '门店设置',
+  voice: '语音播报设置',
+  account: '账号与连接',
+  backup: '数据备份与恢复',
+  batches: '批量资料管理',
+  update: '检查更新',
+  help: '使用帮助'
+};
+
+const currentSettingsTitle = computed(() => settingsTitles[settingsSubTab.value] || '设置');
 
 const businessDailySummary = shallowRef({});
 const businessDailyBalances = shallowRef({});
@@ -253,7 +329,7 @@ watch(() => props.identity, () => {
   active.value = 'members';
   memberFilter.value = 'all';
   ledgerView.value = 'summary';
-  settingsSubTab.value = 'account';
+  settingsSubTab.value = 'overview';
 });
 
 watch(bookKey, () => {
@@ -276,7 +352,7 @@ function openPage(id) {
     active.value = id;
     return true;
   }
-  if (['configuration', 'batches', 'backup', 'account'].includes(id)) {
+  if (['configuration', 'batches', 'backup', 'account', 'store', 'voice', 'update', 'help'].includes(id)) {
     active.value = 'settings';
     settingsSubTab.value = id;
     return true;
@@ -312,6 +388,10 @@ defineExpose({
     if (active.value === 'ledger' && history.value.id) {
       history.value = {};
       active.value = 'members';
+      return true;
+    }
+    if (active.value === 'settings' && settingsSubTab.value !== 'overview') {
+      settingsSubTab.value = 'overview';
       return true;
     }
     if (active.value !== 'members') {

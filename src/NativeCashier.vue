@@ -50,21 +50,43 @@
             <template #connection>
               <RelationalNativeSync v-if="workspace.state.book && !standalone" :workspace="workspace" :online="state.online" :owner="owner" @reconnect="resume" />
             </template>
-            <section class="book-panel book-stack">
-              <h3>账号与设备</h3>
-              <p>{{ standalone ? '独立离线账本' : '云端绑定 · 本机 SQLite' }} · {{ state.user.displayName }}</p>
-              <label>设备标识<input :value="state.deviceId" readonly></label>
-              <button type="button" @click="copyDevice">复制设备标识</button>
-              <p v-if="state.deviceAccess.authorizedUntil">授权到期 {{ new Date(state.deviceAccess.authorizedUntil).toLocaleString() }}</p>
-              <a v-if="!standalone && state.online" :href="state.serverUrl + '/admin/'" target="_blank" rel="noopener noreferrer">商家后台 · 员工、设备、审计和云端备份</a>
-            </section>
-            <StoreSettings v-if="feature('settings')" :profile="state.storeProfile" :can-edit="owner && !standalone && state.online"
-              :load-profile="standalone ? undefined : session.loadStoreProfile" :save-profile="session.saveStoreProfile" />
-            <VoiceSettings v-if="feature('voice') && !standalone && state.online" :api="session" :player="voice"
-              :user="state.user" :server-url="state.serverUrl" :copy-text="copyText" @saved="voice.stop()" />
-            <NativeUpdate v-if="!standalone" :api="updateApi" :origin="state.serverUrl" :can-check="state.online" :check-update="updateCheck.checkManually"
-              :before-install="beforeInstall" :available-update="updateCheck.availableUpdate.value" :update-resume-token="foregroundToken"
-              :auto-start-download="autoStartDownload" @auto-start-consumed="autoStartDownload = false" />
+            <template #account>
+              <section class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-3">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-base font-black text-slate-900 m-0">账号与设备</h3>
+                  <span class="px-2.5 py-0.5 rounded-full text-xs font-bold" :class="state.online ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'">
+                    {{ standalone ? '独立离线账本' : state.online ? '云端已连接' : '离线可用' }}
+                  </span>
+                </div>
+                <p class="text-xs text-slate-600 m-0">店员：<strong>{{ state.user.displayName }}</strong>（{{ owner ? '店主' : '收银员' }}）</p>
+                <div class="pt-2">
+                  <label class="text-xs font-bold text-slate-500 block mb-1">设备标识</label>
+                  <div class="flex items-center gap-2">
+                    <input :value="state.deviceId" readonly class="text-xs font-mono p-2 bg-slate-50 border border-slate-200 rounded-xl flex-1 text-slate-700" />
+                    <button type="button" @click="copyDevice" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold shrink-0 btn-press">复制</button>
+                  </div>
+                </div>
+                <p v-if="state.deviceAccess.authorizedUntil" class="text-xs text-slate-500 m-0">授权有效期至：{{ new Date(state.deviceAccess.authorizedUntil).toLocaleString() }}</p>
+                <div class="pt-2 border-t border-slate-100">
+                  <a v-if="!standalone && state.online" :href="state.serverUrl + '/admin/'" target="_blank" rel="noopener noreferrer" class="text-xs font-bold text-emerald-700 hover:text-emerald-800 block">
+                    打开电脑端商家后台（员工、设备、审计和云端备份） ›
+                  </a>
+                </div>
+              </section>
+            </template>
+            <template #store>
+              <StoreSettings v-if="feature('settings')" :profile="state.storeProfile" :can-edit="owner && !standalone && state.online"
+                :load-profile="standalone ? undefined : session.loadStoreProfile" :save-profile="session.saveStoreProfile" />
+            </template>
+            <template #voice>
+              <VoiceSettings v-if="feature('voice') && !standalone && state.online" :api="session" :player="voice"
+                :user="state.user" :server-url="state.serverUrl" :copy-text="copyText" @saved="voice.stop()" />
+            </template>
+            <template #update>
+              <NativeUpdate v-if="!standalone" :api="updateApi" :origin="state.serverUrl" :can-check="state.online" :check-update="updateCheck.checkManually"
+                :before-install="beforeInstall" :available-update="updateCheck.availableUpdate.value" :update-resume-token="foregroundToken"
+                :auto-start-download="autoStartDownload" @auto-start-consumed="autoStartDownload = false" />
+            </template>
           </RelationalWorkbench>
         </div>
       </template>
