@@ -1,10 +1,19 @@
 <template>
   <div class="book-cashier book-stack">
-    <header class="book-panel book-actions book-between">
-      <div><h1>会员管家 · 网页收银</h1><p v-if="user && !locked">{{ adminApi.storeProfile.value.name }} · {{ user.displayName }}</p></div>
-      <div v-if="user && !locked" class="book-actions">
-        <button type="button" @click="locked = true">锁屏</button>
-        <button type="button" :disabled="busy" @click="signOut">退出</button>
+    <header class="book-panel book-actions book-between" style="border-radius: 1.125rem; padding: 0.875rem 1.125rem;">
+      <div style="display: flex; align-items: center; gap: 0.625rem;">
+        <span style="font-size: 1.6rem; line-height: 1;" aria-hidden="true">💇</span>
+        <div>
+          <h1 style="font-size: 1.15rem; font-weight: 800; color: #123c32; margin: 0;">会员管家 · 网页收银</h1>
+          <p v-if="user && !locked" style="margin: 0.1rem 0 0; font-size: 0.8125rem; color: #64748b; display: flex; align-items: center; gap: 0.35rem;">
+            <span style="display: inline-block; width: '7px'; height: '7px'; border-radius: '50%'; background: '#10b981';"></span>
+            <span>{{ adminApi.storeProfile.value.name }} · {{ user.displayName }}</span>
+          </p>
+        </div>
+      </div>
+      <div v-if="user && !locked" class="book-actions" style="margin: 0; gap: 0.5rem;">
+        <button type="button" class="book-btn" @click="locked = true" style="min-height: 2.25rem; padding: 0.25rem 0.625rem; font-size: 0.8125rem;">锁屏</button>
+        <button type="button" class="book-btn" :disabled="busy" @click="signOut" style="min-height: 2.25rem; padding: 0.25rem 0.625rem; font-size: 0.8125rem;">退出</button>
       </div>
     </header>
     <p v-if="notice" class="book-panel book-alert" role="alert">{{ notice }}</p>

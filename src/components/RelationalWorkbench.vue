@@ -1,7 +1,10 @@
 <template>
-  <nav class="book-panel book-actions" aria-label="收银菜单">
-    <button v-for="item in pages" :key="item.id" type="button" :aria-current="active === item.id ? 'page' : undefined"
-      :class="{ 'book-primary': active === item.id }" @click="active = item.id">{{ item.label }}</button>
+  <nav class="book-panel book-actions book-nav-bar" aria-label="收银菜单">
+    <button v-for="item in pages" :key="item.id" type="button" :aria-label="item.label" :aria-current="active === item.id ? 'page' : undefined"
+      :class="{ 'book-primary': active === item.id }" @click="active = item.id">
+      <component :is="item.icon" :size="18" aria-hidden="true" />
+      <span>{{ item.label }}</span>
+    </button>
   </nav>
   <main class="book-stack" :key="bookKey">
     <RelationalPending v-if="workspace.state.book" :workspace="workspace" />
@@ -24,6 +27,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue';
+import { Users, Receipt, BarChart3, Tag, Files, HardDrive, Settings } from 'lucide-vue-next';
 import RelationalMembers from './RelationalMembers.vue';
 import RelationalLedger from './RelationalLedger.vue';
 import RelationalReports from './RelationalReports.vue';
@@ -35,13 +39,13 @@ import RelationalBackup from './RelationalBackup.vue';
 const props = defineProps({ workspace: { type: Object, required: true }, owner: Boolean, profileWritable: Boolean,
   writable: Boolean, feature: { type: Function, required: true }, announce: Function, backup: Object, identity: String });
 const pages = computed(() => [
-  { id: 'members', label: '会员收银', feature: 'members' },
-  { id: 'ledger', label: '财务流水', feature: 'cashier' },
-  { id: 'reports', label: '经营报表', feature: 'reports' },
-  { id: 'configuration', label: '服务与价格', feature: 'settings' },
-  ...(props.workspace.batch ? [{ id: 'batches', label: '批量资料', feature: 'members' }] : []),
-  ...(props.owner && props.backup ? [{ id: 'backup', label: '备份与恢复', feature: 'backup' }] : []),
-  { id: 'account', label: '账号与设置' }
+  { id: 'members', label: '会员收银', icon: Users, feature: 'members' },
+  { id: 'ledger', label: '财务流水', icon: Receipt, feature: 'cashier' },
+  { id: 'reports', label: '经营报表', icon: BarChart3, feature: 'reports' },
+  { id: 'configuration', label: '服务与价格', icon: Tag, feature: 'settings' },
+  ...(props.workspace.batch ? [{ id: 'batches', label: '批量资料', icon: Files, feature: 'members' }] : []),
+  ...(props.owner && props.backup ? [{ id: 'backup', label: '备份与恢复', icon: HardDrive, feature: 'backup' }] : []),
+  { id: 'account', label: '账号与设置', icon: Settings }
 ].filter(item => !item.feature || props.feature(item.feature)));
 const active = ref(pages.value[0].id), history = ref({}), memberFilter = ref('all');
 const memberPage = ref(null), ledgerPage = ref(null);

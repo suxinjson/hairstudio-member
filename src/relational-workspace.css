@@ -1,127 +1,674 @@
-/* ── 会员管家 · 收银设计系统 ──
-   简约高级 · 老年人友好：大字体、大触控区、高对比度、充足留白 */
+/* ==========================================================================
+   Relational Workspace - 现代化高级移动端与收银工作台样式体系
+   基于 Tailwind 规范、安全区适配与触控工效学打磨
+   ========================================================================== */
 
-/* 基础间距与布局 */
-.book-stack { display: grid; gap: 1rem; min-width: 0; }
-.book-cashier { padding: 1rem 1rem calc(1.25rem + var(--safe-bottom, 0px)); }
-
-/* 标题：更大更醒目 */
-.book-cashier h1 { font-weight: 800; color: #0d3a2f; font-size: 1.5rem; letter-spacing: -0.01em; }
-.book-cashier h2 { font-weight: 800; color: #0d3a2f; font-size: 1.25rem; }
-.book-cashier a { color: #155f4d; text-decoration: underline; text-underline-offset: 3px; }
-
-/* 面板卡片：更圆润、更通透 */
-.book-panel {
-  border: 1px solid #d8e3de;
-  border-radius: 1.125rem;
-  padding: 1.25rem;
-  background: #fff;
-  min-width: 0;
-  box-shadow: 0 1px 4px rgb(34 52 57 / 4%);
+:root {
+  --app-accent: #167c68;
+  --app-accent-dark: #116252;
+  --app-accent-light: #e6f4f1;
+  --app-ink: #1e293b;
+  --app-ink-secondary: #475569;
+  --app-ink-muted: #64748b;
+  --app-border: #e2e8f0;
+  --app-card-border: #e6ecea;
+  --app-canvas: #f4f7f6;
+  --app-danger: #e11d48;
+  --app-danger-bg: #fff1f2;
+  --app-danger-border: #fecdd3;
+  --app-success: #15803d;
+  --app-success-bg: #f0fdf4;
+  --app-success-border: #bbf7d0;
+  --app-warning: #d97706;
+  --app-warning-bg: #fffbeb;
+  --app-warning-border: #fef3c7;
+  --app-card-shadow: 0 2px 10px -2px rgba(18, 60, 50, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03);
+  --app-elevated-shadow: 0 10px 25px -5px rgba(18, 60, 50, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
 }
-.book-panel h3, .book-panel legend { color: #0d3a2f; font-weight: 800; font-size: 1.0625rem; }
 
-/* 行内布局 */
-.book-inline, .book-actions { display: flex; flex-wrap: wrap; gap: .625rem 1rem; align-items: center; }
-.book-actions { align-items: end; }
-.book-between { justify-content: space-between; }
+/* 核心布局容器 */
+.book-cashier {
+  max-width: 768px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 0.75rem 0.875rem calc(5.5rem + var(--safe-bottom, 16px));
+  box-sizing: border-box;
+}
 
-/* 提示与警示 */
-.book-alert { background: #fff4e0; color: #7a3500; overflow-wrap: anywhere; border-radius: .75rem; padding: .75rem 1rem; }
-.book-alert p { margin: .25rem 0 .5rem; }
+.book-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  min-width: 0;
+  width: 100%;
+}
 
-/* 表单字段组 */
-.book-fields { display: flex; flex-wrap: wrap; gap: .625rem 1rem; align-items: end; }
+/* 顶部与标题排版 */
+.book-cashier h1 {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #123c32;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
 
-/* 标签：从 14px → 16px，更高对比度 */
-.book-panel label { display: grid; gap: .375rem; font-weight: 600; font-size: 1rem; color: #2d3a36; }
-.book-panel label.book-inline { display: flex; }
+.book-cashier h2 {
+  font-size: 1.125rem;
+  font-weight: 750;
+  color: #123c32;
+  margin: 0 0 0.5rem;
+}
 
-/* 按钮：从 44px → 50px 触控高度，更清晰 */
-.book-panel button, .book-stack > button {
-  border: 1px solid #b4c8c0;
-  border-radius: .75rem;
-  min-height: 3.125rem;
-  padding: .5rem 1rem;
+.book-cashier a {
+  color: #155f4d;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 600;
+  transition: color 0.15s ease;
+}
+
+.book-cashier a:hover {
+  color: #0b4537;
+}
+
+/* 面板与卡片系统 */
+.book-panel {
+  border: 1px solid var(--app-card-border);
+  border-radius: 1.125rem;
+  padding: 1rem 1.125rem;
+  background: #ffffff;
+  min-width: 0;
+  box-shadow: var(--app-card-shadow);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.book-panel h3, .book-panel legend {
+  color: #123c32;
+  font-size: 1rem;
+  font-weight: 750;
+  margin: 0 0 0.375rem;
+}
+
+/* 弹性排列工具 */
+.book-inline, .book-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+}
+
+.book-between {
+  justify-content: space-between;
+}
+
+/* 警告与通知面板 */
+.book-alert {
+  background: #fffbf0;
+  border-color: #fce8b3;
+  color: #7a3e00;
+  border-radius: 1rem;
+  padding: 0.875rem 1rem;
+  overflow-wrap: anywhere;
+  box-shadow: 0 2px 6px rgba(217, 119, 6, 0.06);
+}
+
+.book-alert p {
+  margin: 0.25rem 0 0.375rem;
+  line-height: 1.45;
+}
+
+.book-alert p:last-child {
+  margin-bottom: 0;
+}
+
+.book-alert code {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.375rem;
+  font-size: 0.875em;
+  font-family: ui-monospace, monospace;
+}
+
+/* 表单字段排布 */
+.book-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.book-panel label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: #334155;
+}
+
+.book-panel label.book-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+/* 按钮通用质感 */
+.book-panel button, .book-stack > button, .book-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: #1e293b;
+  background: #ffffff;
   text-align: center;
   cursor: pointer;
-  font-size: 1rem;
-  font-weight: 600;
-  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.book-panel button:active, .book-stack > button:active { transform: scale(0.98); }
 
-/* 主按钮：更醒目的品牌色 */
-.book-panel button.book-primary {
-  background: #167c68;
-  border-color: #167c68;
-  color: #fff;
+.book-panel button:hover, .book-stack > button:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.book-panel button:active, .book-stack > button:active {
+  transform: scale(0.98);
+}
+
+/* 主行动按钮 */
+.book-panel button.book-primary, .book-stack > button.book-primary {
+  background: linear-gradient(180deg, #187a64 0%, #126351 100%);
+  border-color: #105949;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(18, 99, 81, 0.25);
+}
+
+.book-panel button.book-primary:hover, .book-stack > button.book-primary:hover {
+  background: linear-gradient(180deg, #156d59 0%, #0d5243 100%);
+  box-shadow: 0 4px 10px rgba(18, 99, 81, 0.32);
+}
+
+/* 文本/链接按钮 */
+.book-panel button.book-link {
+  border-color: transparent;
+  background: transparent;
+  color: #155f4d;
   font-weight: 700;
-  box-shadow: 0 2px 8px rgb(22 124 104 / 20%);
+  text-align: left;
+  padding: 0;
+  min-height: unset;
+  box-shadow: none;
 }
-.book-panel button.book-primary:active { background: #126a58; }
 
-/* 链接按钮 */
-.book-panel button.book-link { border-color: transparent; color: #155f4d; font-weight: 700; text-align: left; }
-.book-panel button:disabled, .book-stack > button:disabled { opacity: .5; cursor: default; }
+.book-panel button.book-link:hover {
+  color: #0d4437;
+  text-decoration: underline;
+}
 
-/* 输入框：从 44px → 50px，更大字体 */
-.book-panel input:not([type=checkbox]), .book-panel select, .book-panel textarea {
-  border: 1.5px solid #b0c4bd;
-  border-radius: .75rem;
-  background: #fff;
-  min-height: 3.125rem;
-  padding: .5rem .75rem;
+.book-panel button:disabled, .book-stack > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* 输入控件 */
+.book-panel input:not([type=checkbox]):not([type=radio]),
+.book-panel select,
+.book-panel textarea {
+  border: 1px solid #cbd5e1;
+  border-radius: 0.6875rem;
+  background: #ffffff;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
   min-width: 0;
   max-width: 100%;
-  font-size: 1.0625rem;
-  color: #1a2722;
+  font-size: 0.9375rem;
+  color: #0f172a;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-.book-panel input:not([type=checkbox]):focus, .book-panel select:focus, .book-panel textarea:focus {
-  border-color: #167c68;
-  box-shadow: 0 0 0 3px rgb(22 124 104 / 12%);
   outline: none;
 }
-.book-panel select { max-width: min(100%, 22rem); }
 
-/* 辅助文字：从 14px → 15px */
-.book-muted { color: #4a5a55; font-size: .9375rem; }
+.book-panel input:focus, .book-panel select:focus, .book-panel textarea:focus {
+  border-color: #167c68;
+  box-shadow: 0 0 0 3px rgba(22, 124, 104, 0.14);
+}
 
-/* 列表 */
-.book-list { list-style: none; padding: 0; margin: 0; }
+.book-panel select {
+  max-width: min(100%, 24rem);
+  cursor: pointer;
+}
+
+.book-muted {
+  color: #64748b;
+  font-size: 0.8125rem;
+}
+
+.book-break {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 会员列表与流水平铺 */
+.book-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .book-list li {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: .375rem 1rem;
+  gap: 0.375rem 0.75rem;
   justify-content: space-between;
-  border-bottom: 1px solid #e8efeb;
-  padding: .625rem 0;
+  border-bottom: 1px solid #f1f5f9;
+  padding: 0.625rem 0.25rem;
 }
-.book-list li:last-child { border-bottom: 0; }
-.book-list strong { font-size: 1.0625rem; }
 
-.book-ledger-list li { display: grid; gap: .375rem; justify-content: stretch; padding: .875rem 0; }
-.book-ledger-list li:last-child { border-bottom: 0; }
+.book-ledger-list li {
+  display: grid;
+  gap: 0.375rem;
+  justify-content: stretch;
+  padding: 0.875rem 0.75rem;
+  background: #fafcfb;
+  border: 1px solid #edf2f0;
+  border-radius: 0.875rem;
+  margin-bottom: 0.25rem;
+}
 
-.book-break { overflow-wrap: anywhere; }
+/* 报表指标看板网格 */
+.book-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
+  gap: 0.625rem;
+  margin: 0.25rem 0;
+}
 
-/* 指标卡片 */
-.book-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: .625rem; }
-.book-metrics div { padding: .75rem; border-radius: .75rem; background: #f0f6f3; overflow-wrap: anywhere; }
-.book-metrics dt { font-size: .875rem; color: #4a5a55; }
-.book-metrics dd { font-weight: 800; font-size: 1.125rem; color: #0d3a2f; }
+.book-metrics div {
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: #f1f7f5;
+  border: 1px solid #e2ebe7;
+  overflow-wrap: anywhere;
+}
 
-/* 表格 */
-.book-scroll { overflow-x: auto; }
-.book-scroll table { width: 100%; border-collapse: collapse; }
-.book-scroll th, .book-scroll td { padding: .625rem .75rem; text-align: left; border-bottom: 1px solid #e4ece8; white-space: nowrap; font-size: .9375rem; }
-.book-scroll th { font-weight: 700; color: #2d3a36; }
-.book-scroll td { color: #3a4a44; }
+.book-metrics dt {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #4b635c;
+  margin-bottom: 0.25rem;
+}
 
-/* 复选框：更大 */
-.book-panel input[type=checkbox] { width: 22px; height: 22px; accent-color: #167c68; }
+.book-metrics dd {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #0f4135;
+}
 
-/* 段落文字 */
-.book-panel p { font-size: 1rem; line-height: 1.6; color: #3a4a44; }
+/* 表格横向滚动 */
+.book-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 0.75rem;
+  border: 1px solid #e6ede9;
+}
+
+.book-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.book-scroll th, .book-scroll td {
+  padding: 0.625rem 0.875rem;
+  text-align: left;
+  border-bottom: 1px solid #edf2ef;
+  white-space: nowrap;
+}
+
+.book-scroll th {
+  background: #f4f8f6;
+  font-weight: 700;
+  color: #234d42;
+}
+
+/* ==========================================================================
+   移动端专属核心交互组件强化 (Bottom Nav / Cards / Keypad / Sheets)
+   ========================================================================== */
+
+/* 1. 移动端固定底部导航栏 */
+.book-nav-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid rgba(226, 232, 240, 0.85);
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.04);
+  padding: 0.4rem 0.5rem calc(0.4rem + var(--safe-bottom, 12px));
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.book-nav-bar button {
+  flex: 1;
+  max-width: 110px;
+  min-height: 3.1rem;
+  padding: 0.35rem 0.25rem;
+  border-radius: 0.75rem;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  transition: all 0.15s ease;
+  box-shadow: none;
+}
+
+.book-nav-bar button.book-primary,
+.book-nav-bar button[aria-current="page"] {
+  background: #e6f4f1;
+  color: #167c68;
+  font-weight: 750;
+  transform: none;
+}
+
+@media (min-width: 640px) {
+  .book-nav-bar {
+    position: static;
+    border-radius: 1rem;
+    border: 1px solid var(--app-card-border);
+    background: #ffffff;
+    box-shadow: var(--app-card-shadow);
+    padding: 0.5rem;
+    margin-bottom: 0.75rem;
+    justify-content: flex-start;
+  }
+  .book-nav-bar button {
+    flex-direction: row;
+    min-height: 2.5rem;
+    max-width: none;
+    font-size: 0.875rem;
+    padding: 0.5rem 1rem;
+  }
+}
+
+/* 2. 现代化会员卡片 (Customer Card) */
+.customer-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  background: #ffffff;
+  border: 1px solid #e7ecea;
+  border-radius: 1rem;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.customer-card:active {
+  transform: scale(0.99);
+  background: #fbfdfc;
+}
+
+.customer-card-debt {
+  border-color: #fecdd3;
+  background: #fffafa;
+}
+
+.customer-info-area {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.customer-avatar {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #e6f4f1 0%, #cde8e1 100%);
+  color: #126351;
+  font-weight: 800;
+  font-size: 1.15rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.6);
+}
+
+.customer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.customer-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.customer-name-text {
+  font-size: 1.05rem;
+  font-weight: 750;
+  color: #1e293b;
+  line-height: 1.3;
+}
+
+.customer-phone-text {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.customer-note-snippet {
+  font-size: 0.75rem;
+  color: #b45309;
+  background: #fffbeb;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.25rem;
+  display: inline-block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.customer-balance-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.customer-balance-badge {
+  font-size: 1.05rem;
+  font-weight: 850;
+  color: #167c68;
+}
+
+.customer-balance-debt {
+  color: #e11d48;
+}
+
+.customer-card-actions {
+  display: flex;
+  gap: 0.375rem;
+  align-items: center;
+}
+
+.customer-card-actions button {
+  min-height: 2.25rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.8125rem;
+  border-radius: 0.625rem;
+}
+
+/* 3. 底部抽屉与弹窗 (Bottom Sheet / Modal Drawer) */
+.app-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-sheet-surface {
+  width: 100%;
+  max-width: 640px;
+  max-height: 90vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: #ffffff;
+  border-radius: 1.5rem 1.5rem 0 0;
+  padding: 1.25rem 1.25rem calc(1.5rem + var(--safe-bottom, 12px));
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.12);
+  animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+/* 4. 触控数字键盘 (Touch Keypad) */
+.keypad-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.keypad-key {
+  height: 3.5rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.875rem;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 0.1s ease, transform 0.08s ease;
+}
+
+.keypad-key:active {
+  background: #e2e8f0;
+  transform: scale(0.97);
+}
+
+.keypad-function {
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 1rem;
+}
+
+/* 5. 常用服务与套餐预设药丸标签 (Preset Chips) */
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.25rem 0;
+}
+
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.5rem 0.875rem;
+  background: #f1f7f5;
+  border: 1px solid #cde5de;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #126351;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.chip-btn:active, .chip-btn[aria-pressed="true"] {
+  background: #167c68;
+  border-color: #167c68;
+  color: #ffffff;
+}
+
+/* 6. 范围筛选胶囊导航 (Filter Tabs) */
+.filter-tabs-row {
+  display: flex;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  gap: 0.375rem;
+  padding: 0.25rem 0;
+  scrollbar-width: none;
+}
+
+.filter-tabs-row::-webkit-scrollbar {
+  display: none;
+}
+
+.filter-tab-pill {
+  flex-shrink: 0;
+  padding: 0.4rem 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  border-radius: 9999px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.filter-tab-pill.active {
+  background: #167c68;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 2px 6px rgba(22, 124, 104, 0.25);
+}
