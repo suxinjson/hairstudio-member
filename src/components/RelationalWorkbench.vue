@@ -1,5 +1,5 @@
 <template>
-  <main class="book-stack pb-24 max-w-full overflow-x-hidden" :key="bookKey">
+  <div class="book-workbench book-stack pb-24 max-w-full overflow-x-hidden" :key="bookKey">
     <RelationalPending v-if="workspace.state.book" :workspace="workspace" />
     <slot name="connection" />
 
@@ -124,7 +124,7 @@
         <slot />
       </div>
     </div>
-  </main>
+  </div>
 
   <!-- 4. 底部主入口导航栏 (固定居底，三个主功能区，手势安全区适配) -->
   <nav class="app-nav fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-lg pb-gesture-safe" aria-label="主导航">

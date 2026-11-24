@@ -248,9 +248,18 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
       if (state.binding?.mode !== 'cloud' || !state.user || mutation) { publishAccess(); return; }
       const generation = state.generation, original = state.user;
       heartbeat = (async () => {
-        const value = await request('/api/v1/device/authorization');
-        assertCurrent(generation); if (!sameUser(original, value.user)) throw sessionChanged();
-        await keepOnline(value, state.binding, generation, { saveTokens: false });
+        try {
+          const value = await request('/api/v1/device/authorization');
+          assertCurrent(generation); if (!sameUser(original, value.user)) throw sessionChanged();
+          await keepOnline(value, state.binding, generation, { saveTokens: false });
+        } catch (error) {
+          if (denied.has(error.code)) {
+            await revoked(error, generation);
+            throw error;
+          }
+          unavailable = true;
+          publishAccess();
+        }
       })().finally(() => { heartbeat = null; });
       return heartbeat;
     },

@@ -5,8 +5,10 @@
       <h2 class="text-base font-extrabold text-slate-800 flex items-center gap-1.5">
         <span>{{ query.trim() ? '搜索 · ' : '' }}{{ currentFilterLabel }}</span>
         <span class="text-xs font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-full">
-          <template v-if="!query.trim() && balance === 'all' && totalCount !== null">
-            共 {{ totalCount }} 人
+          <template v-if="!query.trim() && balance === 'all'">
+            <span v-if="totalCount !== null">共 {{ totalCount }} 人</span>
+            <span v-else-if="page.next.value">已加载 {{ page.rows.value.length }} 人</span>
+            <span v-else>共 {{ page.rows.value.length }} 人</span>
           </template>
           <template v-else-if="!query.trim() && balance === 'recent'">
             最近 {{ page.rows.value.length }} 人
@@ -48,21 +50,10 @@
           type="button"
           :disabled="!workspace.state.book"
           aria-label="查询"
-          class="h-11 px-3.5 bg-slate-800 text-white rounded-xl font-bold text-sm shrink-0 btn-press active:bg-slate-900"
+          class="h-11 px-4 bg-slate-800 text-white rounded-xl font-bold text-sm shrink-0 btn-press active:bg-slate-900"
           @click="search"
         >
           查询
-        </button>
-        <button
-          v-if="canEdit"
-          type="button"
-          :disabled="blocked"
-          aria-label="新增会员"
-          class="register-member h-11 px-3 bg-emerald-700 text-white rounded-xl font-bold text-sm shrink-0 btn-press active:bg-emerald-800 flex items-center gap-1 shadow-sm"
-          @click="create"
-        >
-          <span class="text-base font-black">+</span>
-          <span>登记</span>
         </button>
       </div>
 
@@ -152,13 +143,13 @@
         <span>正在加载更多会员…</span>
       </div>
       <div v-else-if="!page.next.value && page.rows.value.length" class="text-xs text-slate-400 font-medium py-1">
-        已加载全部会员（共 {{ page.rows.value.length }} 人）
+        已加载全部会员<template v-if="totalCount !== null">（共 {{ totalCount }} 人）</template><template v-else>（共 {{ page.rows.value.length }} 人）</template>
       </div>
-      <!-- 兼容测试状态文本与辅助翻页 -->
+      <!-- 辅助加载提示与手动翻页 -->
       <div class="flex items-center justify-between text-xs text-slate-400 px-1 pt-1">
         <span class="book-muted">本页 {{ page.rows.value.length }} 条</span>
         <button v-if="page.next.value && !page.busy.value" type="button" class="text-xs text-emerald-700 font-bold hover:underline" @click="page.loadMore()">
-          加载更多会员 ↓
+          下滑或点击加载更多 ↓
         </button>
       </div>
     </div>
@@ -379,8 +370,18 @@ async function refreshTotalCount() {
   } catch {}
 }
 
+function handleScroll() {
+  if (page.next.value && !page.busy.value) {
+    const scrollBottom = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
+    if (scrollBottom < 400) {
+      void page.loadMore();
+    }
+  }
+}
+
 onMounted(() => {
   void refreshTotalCount();
+  window.addEventListener('scroll', handleScroll, { passive: true });
   if (typeof IntersectionObserver !== 'undefined') {
     observer = new IntersectionObserver(entries => {
       if (entries[0]?.isIntersecting && page.next.value && !page.busy.value) {
@@ -392,6 +393,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('scroll', handleScroll);
   if (observer) observer.disconnect();
 });
 

@@ -1,88 +1,93 @@
 <template>
-  <div class="book-cashier book-stack">
-    <!-- 现代化黑金/深空灰渐变状态栏与顶部品牌头 -->
-    <header class="app-header bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white rounded-2xl p-3.5 sm:p-4 shadow-lg border border-slate-800 flex items-center justify-between gap-3">
-      <div class="flex items-center gap-3 min-w-0">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center font-black text-xl shadow-md shrink-0" aria-hidden="true">
-          💳
+  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none pb-28 max-w-full overflow-x-hidden">
+    <!-- 现代化黑金/深空灰全宽贴顶状态栏与品牌头 -->
+    <header class="app-header w-full bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white px-3.5 py-3 sm:px-6 sticky top-0 z-30 shadow-md border-b border-slate-800">
+      <div class="max-w-4xl mx-auto flex items-center justify-between gap-2.5">
+        <div class="flex items-center gap-2.5 min-w-0 flex-1">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center font-black text-lg shadow-md shrink-0" aria-hidden="true">
+            💳
+          </div>
+          <div class="min-w-0 flex-1">
+            <h1 class="text-base font-black text-white tracking-tight m-0 truncate leading-tight">会员管家</h1>
+            <p v-if="unlocked" class="m-0 text-xs text-slate-300 font-medium flex items-center gap-1.5 mt-0.5 truncate">
+              <span class="w-2 h-2 rounded-full shrink-0" :class="state.online ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></span>
+              <span class="truncate">{{ state.storeProfile.name }} · {{ state.user.displayName }}</span>
+            </p>
+          </div>
         </div>
-        <div class="min-w-0">
-          <h1 class="text-base sm:text-lg font-black text-white tracking-tight m-0 truncate">会员管家</h1>
-          <p v-if="unlocked" class="m-0 text-xs text-slate-300 font-medium flex items-center gap-1.5 mt-0.5 truncate">
-            <span class="w-2 h-2 rounded-full shrink-0" :class="state.online ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></span>
-            <span class="truncate">{{ state.storeProfile.name }} · {{ state.user.displayName }}</span>
-          </p>
+        <div v-if="unlocked" class="flex items-center gap-2 shrink-0">
+          <button type="button" aria-label="提醒中心" class="relative w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center border border-slate-700 btn-press shrink-0" @click="noticesOpen = !noticesOpen">
+            <Bell :size="18" aria-hidden="true" />
+            <span v-if="notices.headerItems.value.length" class="absolute -top-1 -right-1 px-1.5 py-0.2 bg-rose-600 text-white text-[10px] font-black rounded-full shadow-xs">
+              {{ notices.headerItems.value.length }}
+            </span>
+          </button>
+          <button
+            v-if="canWrite && workspace.state.book"
+            type="button"
+            aria-label="新增会员"
+            :disabled="workspace.state.busy || workspace.state.pending || !workspace.state.book"
+            class="register-member h-9 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 text-white text-xs font-black rounded-xl shadow-md shadow-emerald-950/40 flex items-center gap-1 btn-press transition-all shrink-0"
+            @click="openNewMember"
+          >
+            <span class="text-sm font-black leading-none">+</span>
+            <span>登记会员</span>
+          </button>
         </div>
-      </div>
-      <div v-if="unlocked" class="flex items-center gap-2 shrink-0">
-        <button type="button" aria-label="提醒中心" class="relative w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center border border-slate-700 btn-press" @click="noticesOpen = !noticesOpen">
-          <Bell :size="18" aria-hidden="true" />
-          <span v-if="notices.headerItems.value.length" class="absolute -top-1 -right-1 px-1.5 py-0.2 bg-rose-600 text-white text-[10px] font-black rounded-full shadow-xs">
-            {{ notices.headerItems.value.length }}
-          </span>
-        </button>
-        <button
-          v-if="canWrite"
-          type="button"
-          aria-label="新增会员"
-          :disabled="workspace.state.busy || workspace.state.pending || !workspace.state.book"
-          class="register-member h-9 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 text-white text-xs font-black rounded-xl shadow-md shadow-emerald-950/40 flex items-center gap-1 btn-press transition-all shrink-0"
-          @click="openNewMember"
-        >
-          <span class="text-sm font-black leading-none">+</span>
-          <span>登记会员</span>
-        </button>
       </div>
     </header>
-    <p v-if="message || state.error" class="book-panel book-alert" role="alert">{{ message || state.error }}</p>
-    <div v-if="!state.ready" class="book-panel book-stack">
-      <p role="status">正在读取设备授权…</p><button v-if="state.error" type="button" @click="start">重试</button>
-    </div>
-    <template v-else-if="!unlocked">
-      <form v-if="!state.user" class="book-panel book-stack" @submit.prevent="signIn">
-        <h2>{{ standalone ? '登录本地账号' : '登录门店账号' }}</h2>
-        <label v-if="!standalone">服务器<input v-model.trim="origin" type="url" autocomplete="url" :readonly="Boolean(state.binding)" required></label>
-        <label>账号<input v-model.trim="username" autocomplete="username" autocapitalize="none" required></label>
-        <label>密码<input v-model="password" type="password" autocomplete="current-password" required></label>
-        <button class="book-primary" type="submit" :disabled="accountBusy || state.busy">登录</button>
-      </form>
-      <div v-else class="book-panel book-stack">
-        <p role="status">{{ state.deviceAccess.reason }}</p>
-        <button type="button" :disabled="accountBusy || state.busy" @click="resume">重新核验使用授权</button>
-        <button type="button" :disabled="accountBusy || state.busy" @click="signOut">退出并重新登录</button>
+
+    <main class="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-4 sm:py-4 space-y-3.5 flex-1 min-w-0">
+      <p v-if="message || state.error" class="book-panel book-alert" role="alert">{{ message || state.error }}</p>
+      <div v-if="!state.ready" class="book-panel book-stack">
+        <p role="status">正在读取设备授权…</p><button v-if="state.error" type="button" @click="start">重试</button>
       </div>
-      <div v-if="state.binding?.mode !== 'cloud' && !state.user" class="book-panel">
-        <OfflineActivation :state="state" :activate-offline="session.activateOffline" :copy-text="copyText" />
-      </div>
-    </template>
-    <template v-else>
-      <NoticeCenter v-if="noticesOpen" :items="notices.items.value" @back="noticesOpen = false" @navigate="noticeAction" @act="noticeReceipt" />
-      <NoticeTicker v-else :items="notices.headerItems.value" @open="noticesOpen = true" />
-      <div v-show="!noticesOpen" class="book-stack">
-        <RelationalWorkbench ref="workbench" :workspace="workspace" :identity="identity" :owner="owner" :writable="canWrite"
-          :profile-writable="canWrite && (standalone || state.online)" :feature="feature" :announce="announce" :backup="standalone ? archive : null">
-          <template #connection>
-            <RelationalNativeSync v-if="workspace.state.book && !standalone" :workspace="workspace" :online="state.online" :owner="owner" @reconnect="resume" />
-          </template>
-          <section class="book-panel book-stack">
-            <h3>账号与设备</h3>
-            <p>{{ standalone ? '独立离线账本' : '云端绑定 · 本机 SQLite' }} · {{ state.user.displayName }}</p>
-            <label>设备标识<input :value="state.deviceId" readonly></label>
-            <button type="button" @click="copyDevice">复制设备标识</button>
-            <p v-if="state.deviceAccess.authorizedUntil">授权到期 {{ new Date(state.deviceAccess.authorizedUntil).toLocaleString() }}</p>
-            <a v-if="!standalone && state.online" :href="state.serverUrl + '/admin/'" target="_blank" rel="noopener noreferrer">商家后台 · 员工、设备、审计和云端备份</a>
-          </section>
-          <StoreSettings v-if="feature('settings')" :profile="state.storeProfile" :can-edit="owner && !standalone && state.online"
-            :load-profile="standalone ? undefined : session.loadStoreProfile" :save-profile="session.saveStoreProfile" />
-          <VoiceSettings v-if="feature('voice') && !standalone && state.online" :api="session" :player="voice"
-            :user="state.user" :server-url="state.serverUrl" :copy-text="copyText" @saved="voice.stop()" />
-          <NativeUpdate v-if="!standalone" :api="updateApi" :origin="state.serverUrl" :can-check="state.online" :check-update="updateCheck.checkManually"
-            :before-install="beforeInstall" :available-update="updateCheck.availableUpdate.value" :update-resume-token="foregroundToken"
-            :auto-start-download="autoStartDownload" @auto-start-consumed="autoStartDownload = false" />
-        </RelationalWorkbench>
-      </div>
-    </template>
-    <ConfirmModal :modal="confirmation" @cancel="finishConfirm(false)" @accept="finishConfirm(true)" />
+      <template v-else-if="!unlocked">
+        <form v-if="!state.user" class="book-panel book-stack bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200" @submit.prevent="signIn">
+          <h2>{{ standalone ? '登录本地账号' : '登录门店账号' }}</h2>
+          <label v-if="!standalone">服务器<input v-model.trim="origin" type="url" autocomplete="url" :readonly="Boolean(state.binding)" required></label>
+          <label>账号<input v-model.trim="username" autocomplete="username" autocapitalize="none" required></label>
+          <label>密码<input v-model="password" type="password" autocomplete="current-password" required></label>
+          <button class="book-primary" type="submit" :disabled="accountBusy || state.busy">登录</button>
+        </form>
+        <div v-else class="book-panel book-stack bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200">
+          <p role="status">{{ state.deviceAccess.reason }}</p>
+          <button type="button" :disabled="accountBusy || state.busy" @click="resume">重新核验使用授权</button>
+          <button type="button" :disabled="accountBusy || state.busy" @click="signOut">退出并重新登录</button>
+        </div>
+        <div v-if="state.binding?.mode !== 'cloud' && !state.user" class="book-panel bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200">
+          <OfflineActivation :state="state" :activate-offline="session.activateOffline" :copy-text="copyText" />
+        </div>
+      </template>
+      <template v-else>
+        <NoticeCenter v-if="noticesOpen" :items="notices.items.value" @back="noticesOpen = false" @navigate="noticeAction" @act="noticeReceipt" />
+        <NoticeTicker v-else :items="notices.headerItems.value" @open="noticesOpen = true" />
+        <div v-show="!noticesOpen" class="book-stack">
+          <RelationalWorkbench ref="workbench" :workspace="workspace" :identity="identity" :owner="owner" :writable="canWrite"
+            :profile-writable="canWrite && (standalone || state.online)" :feature="feature" :announce="announce" :backup="standalone ? archive : null">
+            <template #connection>
+              <RelationalNativeSync v-if="workspace.state.book && !standalone" :workspace="workspace" :online="state.online" :owner="owner" @reconnect="resume" />
+            </template>
+            <section class="book-panel book-stack">
+              <h3>账号与设备</h3>
+              <p>{{ standalone ? '独立离线账本' : '云端绑定 · 本机 SQLite' }} · {{ state.user.displayName }}</p>
+              <label>设备标识<input :value="state.deviceId" readonly></label>
+              <button type="button" @click="copyDevice">复制设备标识</button>
+              <p v-if="state.deviceAccess.authorizedUntil">授权到期 {{ new Date(state.deviceAccess.authorizedUntil).toLocaleString() }}</p>
+              <a v-if="!standalone && state.online" :href="state.serverUrl + '/admin/'" target="_blank" rel="noopener noreferrer">商家后台 · 员工、设备、审计和云端备份</a>
+            </section>
+            <StoreSettings v-if="feature('settings')" :profile="state.storeProfile" :can-edit="owner && !standalone && state.online"
+              :load-profile="standalone ? undefined : session.loadStoreProfile" :save-profile="session.saveStoreProfile" />
+            <VoiceSettings v-if="feature('voice') && !standalone && state.online" :api="session" :player="voice"
+              :user="state.user" :server-url="state.serverUrl" :copy-text="copyText" @saved="voice.stop()" />
+            <NativeUpdate v-if="!standalone" :api="updateApi" :origin="state.serverUrl" :can-check="state.online" :check-update="updateCheck.checkManually"
+              :before-install="beforeInstall" :available-update="updateCheck.availableUpdate.value" :update-resume-token="foregroundToken"
+              :auto-start-download="autoStartDownload" @auto-start-consumed="autoStartDownload = false" />
+          </RelationalWorkbench>
+        </div>
+      </template>
+      <ConfirmModal :modal="confirmation" @cancel="finishConfirm(false)" @accept="finishConfirm(true)" />
+    </main>
   </div>
 </template>
 

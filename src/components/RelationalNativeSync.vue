@@ -62,7 +62,8 @@ const canRebuild = computed(() => props.owner && (crossEpoch.value || props.work
 const cursorBlocked = computed(() => ['CURSOR_AHEAD', 'CURSOR_HISTORY_INCOMPLETE'].includes(props.workspace.state.syncError));
 const showSyncCard = computed(() => {
   const s = props.workspace.state;
-  return Boolean(s.blockedEpoch || s.syncError || s.pendingCount || s.pendingRows?.length || !props.online || s.syncStatus === 'conflict');
+  // 仅在发生冲突、代际阻塞、历史不一致或有需要人工核对的原单时才展开大卡片，避免挤占正常收银空间
+  return Boolean(s.blockedEpoch || s.syncStatus === 'conflict' || s.syncError || s.pendingRows?.length);
 });
 watch(() => target.value?.ledgerEpoch, () => { confirmed.value = false; for (const id of Object.keys(decisions)) delete decisions[id]; });
 const blockedMessage = computed(() => cursorBlocked.value
