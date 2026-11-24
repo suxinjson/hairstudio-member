@@ -61,14 +61,17 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
       throw Object.assign(new Error('暂时不能连接服务器，本机账本和原待办已保留'), { network: true, cause: error });
     } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
-  async function revoked(error, generation) {
+  async function revoked(error, generation, { force = false } = {}) {
     if (generation !== state.generation) return;
     if (error.network) { unavailable = true; publishAccess(); return; }
-    if (denied.has(error.code) || error.status === 401) {
+    if (denied.has(error.code) || force) {
       accessToken = ''; refreshToken = ''; unsavedSession = false; state.user = null; state.syncLoginRequired = true; state.generation++;
       const ending = state.generation;
       try { await serializeVault(async () => { assertCurrent(ending); try { await access.deny(error.code || 'AUTH_REQUIRED'); } finally { await device.clearSession(); } }); }
       finally { publishAccess(); }
+    } else {
+      unavailable = true;
+      publishAccess();
     }
   }
   function validateGrant(value, binding) {

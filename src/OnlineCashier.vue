@@ -8,7 +8,7 @@
             💳
           </div>
           <div class="min-w-0 flex-1">
-            <h1 class="text-base font-black text-white tracking-tight m-0 truncate leading-tight">会员管家 · 网页收银</h1>
+            <h1 class="text-base font-black text-white tracking-tight m-0 truncate leading-tight">会员管家</h1>
             <p v-if="user && !locked" class="m-0 text-xs text-slate-300 font-medium flex items-center gap-1.5 mt-0.5 truncate">
               <span class="w-2 h-2 rounded-full shrink-0 bg-emerald-400 animate-pulse"></span>
               <span class="truncate">{{ adminApi.storeProfile.value.name }} · {{ user.displayName }}</span>
@@ -76,10 +76,29 @@ const feature = name => !adminApi.entitlements.value || allowsFeature(adminApi.e
 const username = ref(''), password = ref(''), notice = ref(''), busy = ref(false), workbench = ref(null);
 const announce = (...args) => { if (feature('voice')) return announceRelationalSale(voicePlayer, ...args); };
 function openNewMember() { workbench.value?.openCreateMember(); }
-// 移动端收银免去后台切回强锁机制，避免影响店员连续操作
+// 移动端收银免去后台切回强锁机制，全天免密码连续高效收银
+const keepActive = () => {
+  if (user.value) {
+    if (locked.value) adminApi.setAutoLock(false);
+    adminApi.recordActivity();
+  }
+};
 watch([identity, locked], () => { password.value = ''; notice.value = ''; voicePlayer.stop(); }, { flush: 'sync' });
-onMounted(() => { if (user.value && !locked.value) void workspace.connect(); });
-onUnmounted(() => { voicePlayer.stop(); workspace.dispose(); });
+onMounted(() => {
+  adminApi.setAutoLock(false);
+  window.addEventListener('focus', keepActive);
+  document.addEventListener('visibilitychange', keepActive);
+  window.addEventListener('touchstart', keepActive, { passive: true });
+  if (user.value && !locked.value) void workspace.connect();
+});
+onUnmounted(() => {
+  adminApi.setAutoLock(true);
+  window.removeEventListener('focus', keepActive);
+  document.removeEventListener('visibilitychange', keepActive);
+  window.removeEventListener('touchstart', keepActive);
+  voicePlayer.stop();
+  workspace.dispose();
+});
 async function signIn() {
   if (busy.value || !password.value) return;
   busy.value = true; notice.value = '';

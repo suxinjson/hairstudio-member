@@ -21,7 +21,7 @@ export class MerchantSessionClient {
     this.accessToken = ref(''); this.refreshToken = ref(''); this.user = ref(null); this.entitlements = ref(null);
     this.storeProfile = ref({ ...DEFAULT_STORE_PROFILE }); this.idleExpiresAt = ref(null);
     this.generation = 0; this.applyingSession = false; this.refreshPromise = null; this.lockSignals = new Set();
-    this.deviceId = this.getOrCreateDeviceId(); this.isLocked = this.createLockedRef(); this.restoreSession();
+    this.deviceId = this.getOrCreateDeviceId(); this.autoLock = true; this.isLocked = this.createLockedRef(); this.restoreSession();
     const changed = event => { if (event.key === STORAGE_KEY || event.key === null) this.restoreSession(); };
     eventTarget?.addEventListener('storage', changed);
     this.dispose = () => eventTarget?.removeEventListener('storage', changed);
@@ -78,11 +78,18 @@ export class MerchantSessionClient {
     try { this.isLocked.value = Boolean(data?.isLocked); } finally { this.applyingSession = false; }
   }
 
+  setAutoLock(enabled) {
+    this.autoLock = Boolean(enabled);
+    if (!this.autoLock && this.isLocked.value) {
+      this.isLocked.value = false;
+    }
+  }
+
   restoreSession() {
     try {
       let saved = this.readSavedSession();
       // Legacy sessions have no trusted activity deadline and must be unlocked once.
-      if (saved?.user && !saved.isLocked && (!Number.isSafeInteger(saved.idleExpiresAt) || saved.idleExpiresAt <= Date.now())) {
+      if (this.autoLock !== false && saved?.user && !saved.isLocked && (!Number.isSafeInteger(saved.idleExpiresAt) || saved.idleExpiresAt <= Date.now())) {
         saved = { ...saved, isLocked: true };
         this.storage.setItem(STORAGE_KEY, JSON.stringify(saved));
       }

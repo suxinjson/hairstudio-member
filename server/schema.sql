@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS store_licenses (
   id uuid PRIMARY KEY, store_id uuid NOT NULL UNIQUE REFERENCES stores(id),
   active boolean NOT NULL DEFAULT true, starts_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz,
   features jsonb NOT NULL CHECK(jsonb_typeof(features)='array'),
-  offline_hours integer NOT NULL DEFAULT 0 CHECK(offline_hours BETWEEN 0 AND 8760),
+  offline_hours integer NOT NULL DEFAULT 168 CHECK(offline_hours BETWEEN 0 AND 8760),
   version integer NOT NULL DEFAULT 0, updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK(expires_at IS NULL OR expires_at>starts_at)
 );

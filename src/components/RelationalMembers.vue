@@ -366,14 +366,21 @@ async function refreshTotalCount() {
     const report = await props.workspace.read('reportBusiness', businessDays(today, today));
     if (report?.balances?.memberCount !== undefined) {
       totalCount.value = Number(report.balances.memberCount);
+      return;
     }
   } catch {}
+  if (!page.next.value && page.rows.value.length) {
+    totalCount.value = page.rows.value.length;
+  }
 }
 
 function handleScroll() {
   if (page.next.value && !page.busy.value) {
-    const scrollBottom = document.documentElement.scrollHeight - window.innerHeight - window.scrollY;
-    if (scrollBottom < 400) {
+    const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+    const scrollHeight = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+    const clientHeight = window.innerHeight || document.documentElement.clientHeight;
+    const scrollBottom = scrollHeight - clientHeight - scrollTop;
+    if (scrollBottom < 600) {
       void page.loadMore();
     }
   }
@@ -387,7 +394,7 @@ onMounted(() => {
       if (entries[0]?.isIntersecting && page.next.value && !page.busy.value) {
         void page.loadMore();
       }
-    }, { rootMargin: '200px' });
+    }, { rootMargin: '400px' });
     if (sentinel.value) observer.observe(sentinel.value);
   }
 });
@@ -423,8 +430,8 @@ defineExpose({ goBack, hasOpenAction, create });
 function search() { closeDetail(); criteria = { search: query.value, balance: balance.value }; void page.load(); }
 watch(() => props.balanceFilter, filter => { balance.value = filter; query.value = ''; search(); });
 watch(editor, () => { duplicate.value = null; }, { deep: true, flush: 'sync' });
-watch(() => props.workspace.state.revision, () => {
-  if (props.workspace.state.book) {
+watch([() => props.workspace.state.book, () => props.workspace.state.revision], ([book]) => {
+  if (book) {
     void page.load();
     void refreshTotalCount();
   }
