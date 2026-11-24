@@ -12,9 +12,9 @@ html {
   --safe-top: max(env(safe-area-inset-top, 0px), 48px);
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), 24px);
   --app-accent: #167c68;
-  --app-ink: #202a36;
-  --app-border: #e4e9ed;
-  --app-canvas: #f3f6f6;
+  --app-ink: #1a2722;
+  --app-border: #d8e3de;
+  --app-canvas: #f2f6f4;
 }
 
 /* Android 已在原生窗口预留状态栏、刘海和导航栏，只保留按钮边缘间距。 */
@@ -1122,4 +1122,441 @@ body {
   .ledger-amount { margin-left: auto; }
   .ledger-item-identity { flex-basis: 50%; }
   .report-card, .report-kpis article { padding: 13px; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   老年人友好 · 简约高级增强层
+   原则：大字体（≥16px）、大触控（≥48px）、高对比度、充足留白
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 全局基础 ── */
+body {
+  font-size: 17px;
+  line-height: 1.6;
+  color: #1a2722;
+}
+
+#app {
+  max-width: 880px;
+}
+
+/* ── 导航栏：更大图标和文字 ── */
+.app-shell .app-nav-item {
+  font-size: 15px;
+  font-weight: 700;
+  gap: 5px;
+}
+.app-shell .app-nav-item svg {
+  padding: 4px 18px;
+}
+.app-shell .app-nav button {
+  min-height: 64px;
+}
+.app-nav .grid {
+  min-height: 68px;
+}
+
+/* ── 顶部头部：更清晰的品牌信息 ── */
+.app-header .brand-title {
+  font-size: 20px;
+  font-weight: 800;
+}
+.brand-icon {
+  font-size: 26px;
+}
+.header-meta {
+  font-size: 14px;
+}
+
+/* ── 搜索栏：更大更高 ── */
+.header-search input {
+  height: 52px;
+  font-size: 17px;
+}
+.header-search-row .header-search-input {
+  font-size: 17px;
+}
+
+/* ── 内容区：更宽裕的内边距 ── */
+.app-content {
+  padding: 20px 20px 32px;
+}
+
+/* ── 卡片：更圆润、更通透 ── */
+.dashboard-card,
+.member-card {
+  border-radius: 18px;
+  border: 1px solid #d8e3de;
+  box-shadow: 0 2px 10px rgb(34 52 57 / 4%);
+  padding: 20px;
+}
+
+/* ── 会员列表：更大姓名和余额 ── */
+.customer-identity strong {
+  font-size: 22px;
+  font-weight: 800;
+}
+.customer-phone {
+  font-size: 16px;
+}
+.customer-visit {
+  font-size: 14px;
+}
+.customer-balance {
+  font-size: 24px;
+  font-weight: 800;
+}
+.customer-balance-label {
+  font-size: 14px;
+}
+.customer-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  font-size: 23px;
+}
+.customer-consume {
+  min-height: 52px;
+  min-width: 96px;
+  padding: 10px 20px;
+  font-size: 17px;
+  font-weight: 800;
+  border-radius: 13px;
+}
+.customer-row {
+  padding: 18px 16px;
+}
+.customer-row + .customer-row {
+  border-top: 1px solid #e8efeb;
+}
+.customer-list {
+  border-radius: 20px;
+}
+
+/* ── 空状态提示 ── */
+.customer-empty h3 {
+  font-size: 20px;
+}
+.customer-empty p {
+  font-size: 16px;
+}
+.customer-empty button {
+  min-height: 52px;
+  font-size: 17px;
+}
+
+/* ── 充值/消费抽屉：更大金额显示 ── */
+.consume-header .modal-title {
+  font-size: 21px;
+}
+.consume-amount-edit strong {
+  font-size: clamp(28px, 9vw, 42px);
+}
+.consume-currency {
+  font-size: 24px;
+}
+.consume-preset {
+  min-height: 62px;
+}
+.consume-preset-name {
+  font-size: 15px;
+}
+.consume-preset strong {
+  font-size: 18px;
+}
+.consume-payment .consume-submit {
+  min-height: 56px;
+  min-width: 112px;
+  font-size: 18px;
+  font-weight: 800;
+}
+.consume-sheet .keypad-key {
+  height: 60px;
+  font-size: 27px;
+}
+
+/* ── 充值抽屉 ── */
+.recharge-header .modal-title {
+  font-size: 21px;
+}
+.recharge-plans button {
+  min-height: 62px;
+}
+.recharge-plans strong {
+  font-size: 20px;
+}
+.recharge-plans button span {
+  font-size: 14px;
+}
+.recharge-channels button {
+  min-height: 50px;
+  font-size: 16px;
+}
+.recharge-review-button {
+  min-height: 58px;
+  font-size: 19px;
+}
+.recharge-credit-preview strong {
+  font-size: 30px;
+}
+.recharge-pay-input input {
+  font-size: 30px;
+}
+.recharge-pay-input > span {
+  font-size: 26px;
+}
+
+/* ── 模态弹窗：更大标题和内容 ── */
+.modal-dialog {
+  padding: 28px 24px !important;
+  border-radius: 20px !important;
+}
+.modal-title {
+  font-size: 20px;
+  font-weight: 800;
+}
+.modal-header {
+  padding: 16px 20px;
+}
+
+/* ── 确认弹窗 ── */
+.feedback-icon {
+  width: 72px;
+  height: 72px;
+  font-size: 42px;
+}
+.feedback-confirm {
+  min-height: 60px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.feedback-amount {
+  font-size: 18px;
+}
+
+/* ── 会员详情面板 ── */
+.member-balance-panel {
+  border-radius: 16px;
+  padding: 18px;
+}
+.member-detail-actions button {
+  min-height: 56px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+/* ── 欠款警示：更醒目 ── */
+.debt-warning {
+  font-size: 16px;
+  border-radius: 14px;
+  padding: 14px;
+}
+.debt-warning strong {
+  font-size: 18px;
+}
+.debt-warning-total {
+  font-size: 20px;
+}
+
+/* ── 设置菜单：更大行高和文字 ── */
+.settings-menu-item {
+  padding: 20px 18px;
+}
+.settings-entry-copy strong {
+  font-size: 18px;
+}
+.settings-entry-copy small {
+  font-size: 15px;
+}
+.settings-entry-icon {
+  font-size: 26px;
+}
+.settings-chevron {
+  font-size: 26px;
+}
+
+/* ── 提醒中心 ── */
+.notice-center-heading h2 {
+  font-size: 26px;
+}
+.notice-card h3 {
+  font-size: 19px;
+}
+.notice-body {
+  font-size: 16px;
+  line-height: 1.8;
+}
+.notice-card-actions button {
+  min-height: 48px;
+  font-size: 16px;
+}
+.notice-preview {
+  min-height: 52px;
+  font-size: 15px;
+}
+.notice-ticker-copy {
+  font-size: 15px;
+}
+
+/* ── 报表区域 ── */
+.cash-overview h2, .report-heading h2 {
+  font-size: 24px;
+}
+.cash-metrics strong {
+  font-size: clamp(22px, 5.5vw, 32px);
+}
+.cash-metrics p {
+  font-size: 15px;
+}
+.cash-snapshot dt {
+  font-size: 14px;
+}
+.cash-snapshot dd {
+  font-size: 19px;
+}
+.report-kpis strong {
+  font-size: clamp(21px, 5.2vw, 28px);
+}
+.report-kpis p {
+  font-size: 14px;
+}
+.report-card h3 {
+  font-size: 18px;
+}
+.report-card {
+  padding: 20px;
+  border-radius: 16px;
+}
+.report-balance-totals dd {
+  font-size: 21px;
+}
+
+/* ── 流水列表 ── */
+.ledger-item-card {
+  padding: 18px;
+  border-radius: 15px;
+}
+.ledger-item-identity h3 {
+  font-size: 18px;
+}
+.ledger-amount {
+  font-size: 22px;
+}
+.ledger-item-remark {
+  font-size: 15px;
+}
+.ledger-item-meta {
+  font-size: 14px;
+}
+.ledger-shortcuts button {
+  min-height: 60px;
+  padding: 18px 15px;
+  font-size: 16px;
+}
+
+/* ── 输入框统一增大 ── */
+.app-shell input,
+.app-shell textarea,
+.app-shell select {
+  font-size: 17px;
+}
+.app-shell label {
+  font-size: 17px;
+}
+
+/* ── 筛选触发器 ── */
+.customer-filter-trigger {
+  height: 52px;
+  font-size: 16px;
+}
+.customer-filter-menu button {
+  min-height: 62px;
+}
+.customer-filter-menu strong {
+  font-size: 17px;
+}
+.customer-filter-menu small {
+  font-size: 14px;
+}
+
+/* ── 提示文字统一增大 ── */
+.app-shell .text-xs {
+  font-size: 15px;
+}
+.app-shell .text-sm {
+  font-size: 17px;
+}
+
+/* ── 窄屏适配：保持大字体不缩小 ── */
+@media (max-width: 380px) {
+  .app-content {
+    padding: 16px 14px 28px;
+  }
+  .dashboard-card,
+  .member-card {
+    padding: 16px;
+  }
+  .customer-identity strong {
+    font-size: 20px;
+  }
+  .customer-balance {
+    font-size: 22px;
+  }
+  .customer-avatar {
+    width: 42px;
+    height: 42px;
+    font-size: 20px;
+  }
+  .consume-header .modal-title,
+  .recharge-header .modal-title {
+    font-size: 19px;
+  }
+}
+
+@media (max-width: 320px) {
+  .app-shell .app-nav-item {
+    font-size: 14px;
+  }
+  .customer-identity strong {
+    font-size: 18px;
+  }
+  .customer-balance {
+    font-size: 20px;
+  }
+}
+
+/* ── 高对比度焦点环 ── */
+.app-shell button:focus-visible,
+.app-shell input:focus-visible,
+.app-shell select:focus-visible,
+.app-shell textarea:focus-visible {
+  outline: 3px solid rgb(22 124 104 / 40%);
+  outline-offset: 3px;
+}
+
+/* ── 选中文本高对比度 ── */
+::selection {
+  background: #b8e6d5;
+  color: #0d3a2f;
+}
+
+/* ── 禁用状态更明显 ── */
+.app-shell button:disabled,
+.book-panel button:disabled,
+.book-stack > button:disabled {
+  opacity: .45;
+}
+
+/* ── 滚动条美化 ── */
+.app-shell ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.app-shell ::-webkit-scrollbar-thumb {
+  background: #c1d0c8;
+  border-radius: 4px;
+}
+.app-shell ::-webkit-scrollbar-track {
+  background: transparent;
 }

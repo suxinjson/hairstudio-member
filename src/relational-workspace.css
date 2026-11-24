@@ -1,31 +1,127 @@
-.book-stack { display: grid; gap: .75rem; min-width: 0; }
-.book-cashier { padding: .75rem .75rem calc(1rem + var(--safe-bottom, 0px)); }
-.book-cashier h1, .book-cashier h2 { font-weight: 750; color: #123c32; }
-.book-cashier a { color: #155f4d; text-decoration: underline; }
-.book-panel { border: 1px solid #dbe5e2; border-radius: 1rem; padding: 1rem; background: #fff; min-width: 0; }
-.book-panel h3, .book-panel legend { color: #123c32; font-weight: 750; }
-.book-inline, .book-actions { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center; }
+/* ── 会员管家 · 收银设计系统 ──
+   简约高级 · 老年人友好：大字体、大触控区、高对比度、充足留白 */
+
+/* 基础间距与布局 */
+.book-stack { display: grid; gap: 1rem; min-width: 0; }
+.book-cashier { padding: 1rem 1rem calc(1.25rem + var(--safe-bottom, 0px)); }
+
+/* 标题：更大更醒目 */
+.book-cashier h1 { font-weight: 800; color: #0d3a2f; font-size: 1.5rem; letter-spacing: -0.01em; }
+.book-cashier h2 { font-weight: 800; color: #0d3a2f; font-size: 1.25rem; }
+.book-cashier a { color: #155f4d; text-decoration: underline; text-underline-offset: 3px; }
+
+/* 面板卡片：更圆润、更通透 */
+.book-panel {
+  border: 1px solid #d8e3de;
+  border-radius: 1.125rem;
+  padding: 1.25rem;
+  background: #fff;
+  min-width: 0;
+  box-shadow: 0 1px 4px rgb(34 52 57 / 4%);
+}
+.book-panel h3, .book-panel legend { color: #0d3a2f; font-weight: 800; font-size: 1.0625rem; }
+
+/* 行内布局 */
+.book-inline, .book-actions { display: flex; flex-wrap: wrap; gap: .625rem 1rem; align-items: center; }
 .book-actions { align-items: end; }
 .book-between { justify-content: space-between; }
-.book-alert { background: #fff7e5; color: #703400; overflow-wrap: anywhere; }
+
+/* 提示与警示 */
+.book-alert { background: #fff4e0; color: #7a3500; overflow-wrap: anywhere; border-radius: .75rem; padding: .75rem 1rem; }
 .book-alert p { margin: .25rem 0 .5rem; }
-.book-fields { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: end; }
-.book-panel label { display: grid; gap: .25rem; font-weight: 560; font-size: .875rem; }
+
+/* 表单字段组 */
+.book-fields { display: flex; flex-wrap: wrap; gap: .625rem 1rem; align-items: end; }
+
+/* 标签：从 14px → 16px，更高对比度 */
+.book-panel label { display: grid; gap: .375rem; font-weight: 600; font-size: 1rem; color: #2d3a36; }
 .book-panel label.book-inline { display: flex; }
-.book-panel button, .book-stack > button { border: 1px solid #bbcfc8; border-radius: .625rem; min-height: 2.75rem; padding: .375rem .75rem; text-align: center; cursor: pointer; }
-.book-panel button.book-primary { background: #176d58; border-color: #176d58; color: #fff; }
+
+/* 按钮：从 44px → 50px 触控高度，更清晰 */
+.book-panel button, .book-stack > button {
+  border: 1px solid #b4c8c0;
+  border-radius: .75rem;
+  min-height: 3.125rem;
+  padding: .5rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+.book-panel button:active, .book-stack > button:active { transform: scale(0.98); }
+
+/* 主按钮：更醒目的品牌色 */
+.book-panel button.book-primary {
+  background: #167c68;
+  border-color: #167c68;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgb(22 124 104 / 20%);
+}
+.book-panel button.book-primary:active { background: #126a58; }
+
+/* 链接按钮 */
 .book-panel button.book-link { border-color: transparent; color: #155f4d; font-weight: 700; text-align: left; }
 .book-panel button:disabled, .book-stack > button:disabled { opacity: .5; cursor: default; }
-.book-panel input:not([type=checkbox]), .book-panel select, .book-panel textarea { border: 1px solid #b8c9c4; border-radius: .55rem; background: white; min-height: 2.75rem; padding: .375rem .5rem; min-width: 0; max-width: 100%; font-size: 1rem; }
+
+/* 输入框：从 44px → 50px，更大字体 */
+.book-panel input:not([type=checkbox]), .book-panel select, .book-panel textarea {
+  border: 1.5px solid #b0c4bd;
+  border-radius: .75rem;
+  background: #fff;
+  min-height: 3.125rem;
+  padding: .5rem .75rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 1.0625rem;
+  color: #1a2722;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.book-panel input:not([type=checkbox]):focus, .book-panel select:focus, .book-panel textarea:focus {
+  border-color: #167c68;
+  box-shadow: 0 0 0 3px rgb(22 124 104 / 12%);
+  outline: none;
+}
 .book-panel select { max-width: min(100%, 22rem); }
-.book-muted { color: #515f5b; font-size: .875rem; }
+
+/* 辅助文字：从 14px → 15px */
+.book-muted { color: #4a5a55; font-size: .9375rem; }
+
+/* 列表 */
 .book-list { list-style: none; padding: 0; margin: 0; }
-.book-list li { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem .75rem; justify-content: space-between; border-bottom: 1px solid #edf2ef; padding: .4rem 0; }
-.book-ledger-list li { display: grid; gap: .25rem; justify-content: stretch; padding: .7rem 0; }
+.book-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .375rem 1rem;
+  justify-content: space-between;
+  border-bottom: 1px solid #e8efeb;
+  padding: .625rem 0;
+}
+.book-list li:last-child { border-bottom: 0; }
+.book-list strong { font-size: 1.0625rem; }
+
+.book-ledger-list li { display: grid; gap: .375rem; justify-content: stretch; padding: .875rem 0; }
+.book-ledger-list li:last-child { border-bottom: 0; }
+
 .book-break { overflow-wrap: anywhere; }
-.book-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr)); gap: .5rem; }
-.book-metrics div { padding: .5rem; border-radius: .5rem; background: #f1f7f4; overflow-wrap: anywhere; }
-.book-metrics dd { font-weight: 700; }
+
+/* 指标卡片 */
+.book-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); gap: .625rem; }
+.book-metrics div { padding: .75rem; border-radius: .75rem; background: #f0f6f3; overflow-wrap: anywhere; }
+.book-metrics dt { font-size: .875rem; color: #4a5a55; }
+.book-metrics dd { font-weight: 800; font-size: 1.125rem; color: #0d3a2f; }
+
+/* 表格 */
 .book-scroll { overflow-x: auto; }
 .book-scroll table { width: 100%; border-collapse: collapse; }
-.book-scroll th, .book-scroll td { padding: .45rem .65rem; text-align: left; border-bottom: 1px solid #e4ece8; white-space: nowrap; }
+.book-scroll th, .book-scroll td { padding: .625rem .75rem; text-align: left; border-bottom: 1px solid #e4ece8; white-space: nowrap; font-size: .9375rem; }
+.book-scroll th { font-weight: 700; color: #2d3a36; }
+.book-scroll td { color: #3a4a44; }
+
+/* 复选框：更大 */
+.book-panel input[type=checkbox] { width: 22px; height: 22px; accent-color: #167c68; }
+
+/* 段落文字 */
+.book-panel p { font-size: 1rem; line-height: 1.6; color: #3a4a44; }
