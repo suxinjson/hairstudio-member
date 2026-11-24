@@ -1,19 +1,26 @@
 <template>
   <div class="book-cashier book-stack">
-    <header class="book-panel book-actions book-between" style="border-radius: 1.125rem; padding: 0.875rem 1.125rem;">
-      <div style="display: flex; align-items: center; gap: 0.625rem;">
-        <span style="font-size: 1.6rem; line-height: 1;" aria-hidden="true">💇</span>
-        <div>
-          <h1 style="font-size: 1.15rem; font-weight: 800; color: #123c32; margin: 0;">会员管家 · 网页收银</h1>
-          <p v-if="user && !locked" style="margin: 0.1rem 0 0; font-size: 0.8125rem; color: #64748b; display: flex; align-items: center; gap: 0.35rem;">
-            <span style="display: inline-block; width: '7px'; height: '7px'; border-radius: '50%'; background: '#10b981';"></span>
-            <span>{{ adminApi.storeProfile.value.name }} · {{ user.displayName }}</span>
+    <!-- 现代化黑金/深空灰渐变状态栏与顶部品牌头 -->
+    <header class="app-header bg-gradient-to-b from-slate-950 via-slate-900 to-slate-900/98 text-white rounded-2xl p-3.5 sm:p-4 shadow-lg border border-slate-800 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center font-black text-xl shadow-md shrink-0" aria-hidden="true">
+          💳
+        </div>
+        <div class="min-w-0">
+          <h1 class="text-base sm:text-lg font-black text-white tracking-tight m-0 truncate">会员管家 · 网页收银</h1>
+          <p v-if="user && !locked" class="m-0 text-xs text-slate-300 font-medium flex items-center gap-1.5 mt-0.5 truncate">
+            <span class="w-2 h-2 rounded-full shrink-0 bg-emerald-400 animate-pulse"></span>
+            <span class="truncate">{{ adminApi.storeProfile.value.name }} · {{ user.displayName }}</span>
           </p>
         </div>
       </div>
-      <div v-if="user && !locked" class="book-actions" style="margin: 0; gap: 0.5rem;">
-        <button type="button" class="book-btn" @click="locked = true" style="min-height: 2.25rem; padding: 0.25rem 0.625rem; font-size: 0.8125rem;">锁屏</button>
-        <button type="button" class="book-btn" :disabled="busy" @click="signOut" style="min-height: 2.25rem; padding: 0.25rem 0.625rem; font-size: 0.8125rem;">退出</button>
+      <div v-if="user && !locked" class="flex items-center gap-2 shrink-0">
+        <button type="button" class="h-9 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 btn-press" @click="locked = true">
+          锁屏
+        </button>
+        <button type="button" class="h-9 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 btn-press" :disabled="busy" @click="signOut">
+          退出
+        </button>
       </div>
     </header>
     <p v-if="notice" class="book-panel book-alert" role="alert">{{ notice }}</p>
