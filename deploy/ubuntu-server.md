@@ -78,43 +78,15 @@ sudo docker compose version
 
 ## 4. 创建配置并启动
 
-以下命令生成随机数据库密码和权限为仅当前用户可读写的 `.env`，已有配置会保留。输入自己的实际域名，不带 `https://`、路径或端口：
+使用权限为 600 的 `.env`，按 [首次启动](README.md#首次启动) 填写域名、`MIGRATION_DATABASE_URL`、`DATABASE_URL` 和 `APP_DATABASE_PASSWORD`。两条连接指向同一外部新库，旧库留作核验。只有 IP 时使用对应证书与 Compose 覆盖。当前候选用于隔离验证；正式切换按 [停写与开账](../docs/relational-refactor-assessment.md#8-一次性切换流程)。
 
-```bash
-cd ~/member
-if [ ! -e .env ]; then
-  read -r -p '已解析到 124.70.184.136 的域名：' PUBLIC_DOMAIN
-  umask 077
-  {
-    printf 'PUBLIC_DOMAIN=%s\n' "$PUBLIC_DOMAIN"
-    printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)"
-    printf 'APP_DATABASE_PASSWORD=%s\n' "$(openssl rand -hex 32)"
-    printf 'VITE_CLOUD_SERVER_URL=https://%s\n' "$PUBLIC_DOMAIN"
-    printf 'RELEASE_CERT_SHA256=\n'
-  } > .env
-else
-  printf '保留现有 .env，请核对域名和默认服务器地址。\n'
-fi
-if ! grep -q '^APP_DATABASE_PASSWORD=' .env; then
-  umask 077
-  printf 'APP_DATABASE_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> .env
-fi
-chmod 600 .env
+~~~sh
 sudo docker compose up -d --build
-```
-
-`RELEASE_CERT_SHA256` 可以暂时留空，不影响账号和记账；需要发布 APK 更新时再填写长期使用的签名证书指纹。已有数据库时不要随意修改 `POSTGRES_PASSWORD`。
-
-`POSTGRES_PASSWORD` 仅用于一次性迁移和服务器管理员命令；API 使用 `APP_DATABASE_PASSWORD` 对应的受限 `member_app` 角色。迁移任务自动创建/更新角色与权限，不重建数据卷。旧版升级的停机备份与网络迁移步骤见 [部署维护说明](README.md#已有部署升级)。
-
-检查容器和日志：
-
-```bash
 sudo docker compose ps
-sudo docker compose logs --tail=100 api web
-```
+sudo docker compose logs --tail=100 migrate api web
+~~~
 
-如果提示 80/443 被占用，先确认现有网站和反向代理配置，再决定如何接入；不要直接停止不明服务。
+只有一次性迁移任务验证成功才启动 API；角色或权限失败时修正配置，避免对原旧业务库操作。80/443 被占用时先确认现有反向代理归属。
 
 ## 5. 创建初始店主
 
@@ -142,22 +114,10 @@ curl -fsS https://member.your-domain.com/api/health
 
 预期返回 `{"status":"ok"}`。随后浏览器打开同一 HTTPS 地址，确认网页可访问。
 
-在 App 的“设置 → 云端账号与同步”中，将默认 IP 地址改成自己的 HTTPS 域名，输入刚创建的店主账号和密码。云端为空时选择“上传本机初始账本”；登录和迁移成功后设备才会绑定。迁移前先导出一份本机 JSON 备份。
+先配置 [在线商业授权](../docs/platform-operations.md#在线商业授权)，然后在 App 登录页输入正确 HTTPS 地址及门店账号；首次完整同步后核对人数、余额、水位及离线权限。云端为空时由店主在管理后台开期初，不从手机整店覆盖。
 
 ## 7. 备份与更新
 
-日常备份数据库：
-
-```bash
-mkdir -p backups
-chmod 700 backups
-umask 077
-sudo docker compose exec -T db pg_dump -U member -d member -Fc \
-  > "backups/member-$(date +%Y%m%d-%H%M%S).dump"
-```
-
-将数据库备份、`.env` 和长期使用的 APK 签名密钥另外保存。只把备份留在同一台服务器上不能防止服务器损坏。
-
-更新代码前先备份，再在项目目录执行 `sudo docker compose up -d --build`。Docker 命名卷保留数据库；不要使用 `docker compose down -v` 删除数据卷。旧版首次升级需按部署维护说明重建私有网络。
+请按 [备份与恢复](README.md#备份与恢复) 使用外部 PostgreSQL 自身的备份和商家后台业务归档；App 服务器没有数据库卷。升级前做一次与候选对应的隔离恢复验证，发布后核对新交易和原回执。保留旧环境与备份，发生问题停止对应写入后处置。
 
 APK 更新发布和更多故障核对方法见 [云端部署说明](README.md)。

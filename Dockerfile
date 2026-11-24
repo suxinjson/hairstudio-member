@@ -8,6 +8,7 @@ COPY vendor ./vendor
 RUN npm ci
 COPY . .
 ARG VITE_CLOUD_SERVER_URL=https://124.70.184.136
+ARG VITE_LICENSE_PUBLIC_KEYS
 RUN npm run build:web
 RUN npm run admin:build
 
@@ -20,8 +21,11 @@ COPY server/package.json ./server/package.json
 COPY vendor ./vendor
 RUN npm ci --workspace=server --omit=dev --ignore-scripts
 COPY server ./server
-COPY src/storage.js src/accounting.js src/money.js src/sync-protocol.js src/cloud-storage.js src/data-limits.js src/recharge-settings.js src/ledger-access.js src/member-tags.js src/voice-text.js src/store-profile.js ./src/
+COPY src/money.js src/data-limits.js src/voice-text.js src/store-profile.js src/license-policy.js src/canonical-json.js src/ledger-domain.js src/relational-contract.js src/relational-sales.js src/relational-reports.js src/relational-tasks.js src/ledger-epoch.js ./src/
 COPY capacitor.config.json ./
+COPY src/relational-backup-rows.js src/relational-task-result-tables.js src/relational-restore.js ./src/
+COPY src/relational-batches.js src/relational-archive.js src/relational-pg-archive-tables.js src/relational-opening-contract.js src/relational-replica.js ./src/
+COPY src/relational-export-sheet.js src/relational-presentation.js ./src/
 RUN mkdir -p /app/releases && chown -R node:node /app
 USER node
 EXPOSE 48927

@@ -1,22 +1,4 @@
 services:
-  db:
-    image: postgres:17-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: member
-      POSTGRES_DB: member
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置数据库密码}
-    volumes:
-      - database:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U member -d member"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-    networks: [private]
-    mem_limit: 512m
-    cpus: 1.0
-    pids_limit: 128
   migrate:
     build:
       context: .
@@ -24,18 +6,13 @@ services:
     command: ["node", "server/migrate.js"]
     restart: "no"
     environment:
-      PGHOST: db
-      PGDATABASE: member
-      PGUSER: member
-      PGPASSWORD: ${POSTGRES_PASSWORD:?请保留数据库管理员密码}
+      DATABASE_URL: ${MIGRATION_DATABASE_URL:?请指定外部 PostgreSQL 的新数据库和迁移凭据}
       APP_DATABASE_PASSWORD: ${APP_DATABASE_PASSWORD:?请设置独立的应用数据库随机密码}
+      RECOVERY_DATABASE_PASSWORD: ${RECOVERY_DATABASE_PASSWORD:-}
       RELEASE_DIRECTORY: /app/releases
       RELEASE_CERT_SHA256: ${RELEASE_CERT_SHA256:-}
-    depends_on:
-      db:
-        condition: service_healthy
     volumes: ["packages:/app/releases"]
-    networks: [private]
+    networks: [egress]
     read_only: true
     tmpfs: ["/tmp:size=32m,mode=1777"]
     cap_drop: [ALL]
@@ -48,23 +25,24 @@ services:
       target: api
     restart: unless-stopped
     environment:
-      PGHOST: db
-      PGDATABASE: member
-      PGUSER: member_app
-      PGPASSWORD: ${APP_DATABASE_PASSWORD:?请设置独立的应用数据库随机密码}
+      DATABASE_URL: ${DATABASE_URL:?请指定外部 PostgreSQL 的 member_app 连接串}
+      RECOVERY_DATABASE_URL: ${RECOVERY_DATABASE_URL:-}
       TRUSTED_PROXY_IPS: ${MEMBER_PROXY_IP:-172.30.184.10}
       ALLOWED_ORIGINS: https://localhost,https://${PUBLIC_DOMAIN:?请设置公网域名}
       VOICE_ALLOWED_ORIGINS: ${VOICE_ALLOWED_ORIGINS:-}
       ALIGENIE_LOG_ENABLED: ${ALIGENIE_LOG_ENABLED:-true}
       XFYUN_APP_ID: ${XFYUN_APP_ID:-}
       XFYUN_API_PASSWORD: ${XFYUN_API_PASSWORD:-}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+      DB_CONNECT_TIMEOUT_MS: ${DB_CONNECT_TIMEOUT_MS:-5000}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
       RELEASE_DIRECTORY: /app/releases
       RELEASE_CERT_SHA256: ${RELEASE_CERT_SHA256:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
     volumes: ["packages:/app/releases:ro"]
-    networks: [private, voice_egress]
+    networks: [private, egress]
     logging:
       driver: json-file
       options:
@@ -83,6 +61,7 @@ services:
       target: web
       args:
         VITE_CLOUD_SERVER_URL: ${VITE_CLOUD_SERVER_URL:-https://124.70.184.136}
+        VITE_LICENSE_PUBLIC_KEYS: ${VITE_LICENSE_PUBLIC_KEYS:-}
     restart: unless-stopped
     environment:
       PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?请设置公网域名}
@@ -98,7 +77,6 @@ services:
     pids_limit: 128
     security_opt: ["no-new-privileges:true"]
 volumes:
-  database:
   packages:
   caddy_data:
   caddy_config:
@@ -109,4 +87,4 @@ networks:
       config:
         - subnet: ${MEMBER_PRIVATE_SUBNET:-172.30.184.0/24}
   public:
-  voice_egress:
+  egress:

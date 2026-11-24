@@ -3,11 +3,9 @@ import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
 import { randomUUID } from 'node:crypto';
 import { migrate } from '../database.js';
-import { createService } from '../service.js';
+import { createService } from './helpers/licensed-service.js';
 import { createApi } from '../http.js';
-import { DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS, createLocalDb } from '../../src/storage.js';
-import { LEGACY_SERVICES } from '../../tests/fixtures/legacy-services.js';
-import { integrity } from '../security.js';
+import { seedVoiceBook, voiceSnapshot } from './helpers/voice-book.js';
 import {
   signAliGenieRequest,
   parseAliGenieRequest,
@@ -32,14 +30,9 @@ test('business intents and fallback commands ignore action words in member names
     await service.saveVoiceConfig(identity, { aligenie: {
       enabled: true, actorId: identity.id, token: secret, allowedDevices: ['intent-device']
     } }, 0);
-    const values = new Map();
-    const ledger = createLocalDb({ getItem: key => values.get(key) ?? null,
-      setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) });
-    ledger.init();
-    for (const [index, name] of ['查女士', '女士', '消费顾客', '充值顾客'].entries()) {
-      ledger.createMember({ name, phone: '1390000000' + index, initialBalance: 100 });
-    }
-    await service.bootstrap(identity, { id: randomUUID(), data: ledger.readBackupState() });
+    await seedVoiceBook(service, identity, ['查女士', '女士', '消费顾客', '充值顾客'].map((name, index) => ({
+      id: 'intent-' + index, name, phone: '1390000000' + index, balanceCents: '10000'
+    })));
     const signed = body => {
       const timestamp = String(Date.now());
       return service.handleAliGenieWebhook(body, { headers: {
@@ -59,7 +52,7 @@ test('business intents and fallback commands ignore action words in member names
     ];
     for (const version of ['1.0', '2.0']) for (const [intent, name, utterance, action] of cases) {
       await t.test(`${version} ${intent || 'missing intent'}: ${utterance}`, async () => {
-        const before = await service.account(identity), sessionId = randomUUID();
+        const before = await voiceSnapshot(service, identity), sessionId = randomUUID();
         const requestId = randomUUID(), amount = action === 'recharge' ? '200' : '20';
         const context = { System: { device: { deviceOpenId: 'intent-device' }, user: { userOpenId: 'intent-user' } } };
         const body = version === '2.0' ? {
@@ -71,7 +64,7 @@ test('business intents and fallback commands ignore action words in member names
         ] };
         const preview = await signed(body), speech = preview.response.outputSpeechs[0].text;
         assert.match(speech, new RegExp('会员' + name));
-        assert.deepEqual((await service.account(identity)).data, before.data, 'preview must never write');
+        assert.deepEqual(await voiceSnapshot(service, identity), before, 'preview must never write');
         if (action === 'query') {
           assert.match(speech, /余额/); assert.equal(preview.confirmationRequestId, undefined); return;
         }
@@ -83,12 +76,12 @@ test('business intents and fallback commands ignore action words in member names
         } : { context, sessionId, requestId: randomUUID(), confirmationRequestId: requestId,
           intentName: 'ConfirmIntent', confirmStatus: 'CONFIRMED', utterance: '确认' };
         assert.match((await signed(confirmation)).response.outputSpeechs[0].text, action === 'recharge' ? /充值成功/ : /扣款成功/);
-        const after = await service.account(identity), member = before.data.members.find(member => member.name === name);
-        assert.equal(after.data.members.find(item => item.id === member.id).balance, member.balance + (action === 'recharge' ? 22000 : -2000));
-        assert.equal(after.data.ledgers.length, before.data.ledgers.length + 1);
-        assert.equal(after.data.ledgers[0].memberId, member.id);
-        assert.equal(after.data.ledgers[0].type, action === 'recharge' ? 'RECHARGE' : 'CONSUME');
-        assert.deepEqual(after.data.members.filter(item => item.id !== member.id), before.data.members.filter(item => item.id !== member.id));
+        const after = await voiceSnapshot(service, identity), member = before.members.find(member => member.name === name);
+        assert.equal(after.members.find(item => item.id === member.id).balanceCents, String(BigInt(member.balanceCents) + (action === 'recharge' ? 22000n : -2000n)));
+        assert.equal(after.entries.length, before.entries.length + 1);
+        assert.equal(after.entries[0].memberId, member.id);
+        assert.equal(after.entries[0].type, action);
+        assert.deepEqual(after.members.filter(item => item.id !== member.id), before.members.filter(item => item.id !== member.id));
       });
     }
   } finally { await db.close(); }
@@ -107,16 +100,13 @@ test('signed member queries report only non-refunded visits and omit the visit d
     await service.saveVoiceConfig(identity, { aligenie: {
       enabled: true, actorId: identity.id, token: secret, allowedDevices: ['visit-device']
     } }, 0);
-    const values = new Map(); let date = '2026-01-02T12:00:00.000Z';
-    const ledger = createLocalDb({ getItem: key => values.get(key) ?? null,
-      setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) }, { now: () => date });
-    ledger.init(); const member = ledger.createMember({ name: '到店客户', phone: '13900008888', initialBalance: 100 });
-    const older = ledger.consume({ memberId: member.id, amount: 10 });
-    date = '2026-02-03T12:00:00.000Z';
-    const latest = ledger.consume({ memberId: member.id, amount: 20 }); ledger.refundLedger(latest.ledgerId);
+    const ledger = await seedVoiceBook(service, identity, [{ id: 'visitor', name: '到店客户', phone: '13900008888', balanceCents: '10000' }]);
+    const older = await ledger.command('visitor', 'consume', { amountCents: '1000' });
+    const latest = await ledger.command('visitor', 'consume', { amountCents: '2000' });
+    await pool.query('UPDATE ledger_entries SET occurred_at=$1 WHERE entry_id=$2', ['2026-01-02T12:00:00.000Z', older.entryId]);
+    await pool.query('UPDATE ledger_entries SET occurred_at=$1 WHERE entry_id=$2', ['2026-02-03T12:00:00.000Z', latest.entryId]);
+    await ledger.command('visitor', 'reverse', { originalEntryId: latest.entryId });
     async function ask() {
-      const data = ledger.readBackupState();
-      await pool.query('UPDATE accounts SET data=$1,integrity=$2,revision=revision+1 WHERE store_id=$3', [data, integrity(data), identity.store_id]);
       const body = { requestId: randomUUID(), sessionId: randomUUID(), intentName: 'QueryMemberIntent', utterance: '查询到店客户余额',
         slots: {}, context: { System: { device: { deviceOpenId: 'visit-device' }, user: { userOpenId: 'visit-user' } } } };
       const timestamp = String(Date.now());
@@ -127,7 +117,7 @@ test('signed member queries report only non-refunded visits and omit the visit d
       return response.response.outputSpeechs[0].text;
     }
     assert.match(await ask(), /上次到店是 1月2日/);
-    ledger.refundLedger(older.ledgerId);
+    await ledger.command('visitor', 'reverse', { originalEntryId: older.entryId });
     assert.doesNotMatch(await ask(), /上次到店/);
   } finally { await db.close(); }
 });
@@ -148,7 +138,7 @@ test('platform Header welcomes and business validation replies use the skill pro
     await service.saveVoiceConfig(identity, { aligenie: {
       enabled: true, actorId: identity.id, token: secret, allowedDevices: ['bound-device']
     } }, 0);
-    const before = await service.account(identity);
+    const before = await voiceSnapshot(service, identity);
     server = createApi({ service, pool, production: false });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/api/v1/voice/aligenie`;
@@ -247,7 +237,7 @@ test('platform Header welcomes and business validation replies use the skill pro
         'x-aligenie-signature': signAliGenieRequest(secret, timestamp, identity.store_id, body)
       })).status, 401);
     }
-    assert.deepEqual(await service.account(identity), before);
+    assert.deepEqual(await voiceSnapshot(service, identity), before);
     for (const table of ['voice_dialogs', 'voice_requests']) {
       assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count, 0);
     }
@@ -441,26 +431,12 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     return result;
   };
 
-  // Bootstrap initial ledger data
-  const initialData = {
-    members: [
-      { id: 'M-1', name: '张三', phone: '13800001234', balance: 10000, total_recharge: 10000, total_consume: 0, notes: '短发寸头，不贴皮', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      { id: 'M-2', name: '李四', phone: '13900005678', balance: 2000, total_recharge: 5000, total_consume: 3000, notes: '植物染发棕色', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      { id: 'M-3', name: '张三丰', phone: '13700001234', balance: 5000, total_recharge: 5000, total_consume: 0, notes: '', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      { id: 'M-4', name: '王五', phone: '13600008888', balance: -1500, total_recharge: 0, total_consume: 1500, notes: '挂账欠款', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
-    ],
-    ledgers: [
-      { id: 'TX-INIT-2B', memberId: 'M-2', memberName: '李四', memberPhone: '13900005678', type: 'CONSUME', changeAmount: -3000, balanceBefore: 5000, balanceAfter: 2000, remark: '精致洗剪吹', created_at: new Date(Date.now() - 3600000).toISOString() },
-      { id: 'TX-INIT-2A', memberId: 'M-2', memberName: '李四', memberPhone: '13900005678', type: 'RECHARGE', changeAmount: 5000, balanceBefore: 0, balanceAfter: 5000, remark: '充值50元', created_at: new Date(Date.now() - 7200000).toISOString() },
-      { id: 'TX-INIT-1', memberId: 'M-1', memberName: '张三', memberPhone: '13800001234', type: 'RECHARGE', changeAmount: 10000, balanceBefore: 0, balanceAfter: 10000, remark: '开卡充值100元', created_at: new Date(Date.now() - 86400000).toISOString() },
-      { id: 'TX-INIT-3', memberId: 'M-3', memberName: '张三丰', memberPhone: '13700001234', type: 'RECHARGE', changeAmount: 5000, balanceBefore: 0, balanceAfter: 5000, remark: '充值50元', created_at: new Date(Date.now() - 86400000).toISOString() },
-      { id: 'TX-INIT-4', memberId: 'M-4', memberName: '王五', memberPhone: '13600008888', type: 'CONSUME', changeAmount: -1500, balanceBefore: 0, balanceAfter: -1500, remark: '欠款消费15元', created_at: new Date(Date.now() - 86400000).toISOString() }
-    ],
-    services: LEGACY_SERVICES,
-    rechargePlans: DEFAULT_RECHARGE_PLANS,
-    rechargeSettings: { giftEnabled: true, giftRate: 10 }
-  };
-  await service.bootstrap(identity, { id: randomUUID(), data: initialData });
+  await seedVoiceBook(service, identity, [
+    { id: 'M-1', name: '张三', phone: '13800001234', balanceCents: '10000', notes: '短发寸头，不贴皮' },
+    { id: 'M-2', name: '李四', phone: '13900005678', balanceCents: '2000', notes: '植物染发棕色' },
+    { id: 'M-3', name: '张三丰', phone: '13700001234', balanceCents: '5000' },
+    { id: 'M-4', name: '王五', phone: '13600008888', balanceCents: '-1500', notes: '挂账欠款' }
+  ], [{ id: 's1', name: '精致洗剪吹', priceCents: '3800' }, { id: 's2', name: '快剪/寸头', priceCents: '2500' }]);
 
   // 2. Test Verification File Serving (GET /aligenie/<file>.txt)
   const testFileName = 'test_verify_hash_9876543210.txt';
@@ -637,8 +613,8 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.match(pureData.returnValue.reply, /请问确认扣款吗/);
 
     // Verify Zhang San balance has NOT changed yet in DB
-    const head1 = await service.account(identity);
-    assert.equal(head1.data.members.find(m => m.id === 'M-1').balance, 10000);
+    const head1 = await voiceSnapshot(service, identity);
+    assert.equal(head1.members.find(m => m.id === 'M-1').balanceCents, '10000');
 
     // 5.2 Second turn: User says "确认" (re-invokes or confirms with same sessionId)
     const consumeRes2 = await fetch(`${baseUrl}/api/v1/voice/aligenie`, {
@@ -665,12 +641,11 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.equal(consumeData2.response.shouldEndSession, true);
 
     // Verify Zhang San balance IS updated to 6200 in DB
-    const head2 = await service.account(identity);
-    const zhangSan = head2.data.members.find(m => m.id === 'M-1');
-    assert.equal(zhangSan.balance, 6200);
-    assert.equal(zhangSan.total_consume, 3800);
-    assert.equal(head2.data.ledgers[0].changeAmount, -3800);
-    assert.equal(head2.data.ledgers[0].type, 'CONSUME');
+    const head2 = await voiceSnapshot(service, identity);
+    const zhangSan = head2.members.find(m => m.id === 'M-1');
+    assert.equal(zhangSan.balanceCents, '6200');
+    assert.equal(head2.entries[0].deltaCents, '-3800');
+    assert.equal(head2.entries[0].type, 'consume');
 
     // 5.3 Third turn: Duplicate request retry with same requestId (req-c-2)
     const consumeResRetry = await fetch(`${baseUrl}/api/v1/voice/aligenie`, {
@@ -692,8 +667,8 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     });
     assert.equal(consumeResRetry.status, 200);
     // Balance must not be deducted again!
-    const head3 = await service.account(identity);
-    assert.equal(head3.data.members.find(m => m.id === 'M-1').balance, 6200);
+    const head3 = await voiceSnapshot(service, identity);
+    assert.equal(head3.members.find(m => m.id === 'M-1').balanceCents, '6200');
 
     // 6. Test Consume with Price Lookup & Debt Warning (Li Si has ¥20.00, item is ¥38.00)
     const debtSessionId = 'sess-consume-debt';
@@ -717,8 +692,8 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
       })
     });
     const debtData1 = await debtRes1.json();
-    assert.match(debtData1.response.outputSpeechs[0].text, /余额仅为 20 元/);
-    assert.match(debtData1.response.outputSpeechs[0].text, /产生欠款 18 元/);
+    assert.match(debtData1.response.outputSpeechs[0].text, /余额 20 元/);
+    assert.match(debtData1.response.outputSpeechs[0].text, /将欠款 18 元/);
     assert.match(debtData1.response.outputSpeechs[0].text, /确认扣款并记入欠款吗/);
 
     // Confirm debt deduction
@@ -740,9 +715,9 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.match(debtData2.response.outputSpeechs[0].text, /扣款成功/);
     assert.match(debtData2.response.outputSpeechs[0].text, /当前已欠款 18 元/);
 
-    const headDebt = await service.account(identity);
-    const liSi = headDebt.data.members.find(m => m.id === 'M-2');
-    assert.equal(liSi.balance, -1800); // -¥18.00
+    const headDebt = await voiceSnapshot(service, identity);
+    const liSi = headDebt.members.find(m => m.id === 'M-2');
+    assert.equal(liSi.balanceCents, '-1800'); // -¥18.00
 
     // 7. Test Consume Cancellation / Deny
     const cancelSessionId = 'sess-cancel-1';
@@ -826,11 +801,11 @@ test('AliGenie Webhook End-to-End flow: Verification, Query, Consume, Recharge, 
     assert.match(rechargeData2.response.outputSpeechs[0].text, /到账 220 元/);
 
     // Check DB: Zhang San balance was 6200, + 22000 = 28200 (¥282.00)
-    const headRecharge = await service.account(identity);
-    const zhangSanRecharged = headRecharge.data.members.find(m => m.id === 'M-1');
-    assert.equal(zhangSanRecharged.balance, 28200);
-    assert.equal(headRecharge.data.ledgers[0].type, 'RECHARGE');
-    assert.equal(headRecharge.data.ledgers[0].changeAmount, 22000);
+    const headRecharge = await voiceSnapshot(service, identity);
+    const zhangSanRecharged = headRecharge.members.find(m => m.id === 'M-1');
+    assert.equal(zhangSanRecharged.balanceCents, '28200');
+    assert.equal(headRecharge.entries[0].type, 'recharge');
+    assert.equal(headRecharge.entries[0].deltaCents, '22000');
 
     // Unsigned, expired, invalid signature, and unbound devices are rejected by HTTP.
     const signedBody = { requestId: randomUUID(), sessionId: randomUUID(), utterance: '查询张三余额', context: { System: { device: { deviceOpenId: 'allowed-device-888' }, user: { userOpenId: 'signed-user' } } } };

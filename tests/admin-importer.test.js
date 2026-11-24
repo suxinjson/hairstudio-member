@@ -1,18 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as XLSX from 'xlsx';
-import {
-  sanitizeCellValue,
-  guessColumnMapping,
-  parseImportMoney,
-  parseUploadedFile,
-  selectImportHeader,
-  createErrorReportWorkbook,
-  validateImportBatch
-} from '../admin/src/utils/importer.js';
-import { maskPhone, formatYuan } from '../admin/src/utils/security.js';
-import { createMembersWorkbook, createLedgersWorkbook } from '../admin/src/utils/exporter.js';
+import { parseUploadedFile } from '../admin/src/utils/importer.js';
 import { parseImportBuffer } from '../admin/src/utils/import-parser.js';
+import { sanitizeCellValue } from '../admin/src/utils/exporter.js';
+import { readProfileBatch } from '../src/relational-profile-batches.js';
 
 function importFile(rows, name = 'members.xlsx') {
   const book = XLSX.utils.book_new();
@@ -30,7 +22,7 @@ test('shared-string references are budgeted before an expanded Worker response i
   assert.ok(aggregate.size < 40000);
   await assert.rejects(parseUploadedFile(aggregate), /展开数据过大/);
   const accepted = await parseUploadedFile(importFile([['姓名', '手机号', '备注'], ['客户', '13800001111', '文'.repeat(4096)]]));
-  assert.equal(accepted.dataRows[0][2].length, 4096);
+  assert.equal(accepted[1][2].length, 4096);
 });
 
 test('invalid Worker responses reject cleanly and terminate parsing', async t => {
@@ -46,134 +38,6 @@ test('invalid Worker responses reject cleanly and terminate parsing', async t =>
     assert.equal(workers.at(-1).terminated, true);
   }
 });
-
-test('titles and blank rows retain physical source rows with automatic and manual header selection', async () => {
-  const rows = [[], ['梦飞空间会员批量导入'], ['会员姓名', '手机号码', '可用余额'], [], ['客户', '13800001111', '1.005'], [], ['新客户', '13900001111', '20']];
-  const parsed = await parseUploadedFile(importFile(rows));
-  assert.equal(parsed.headerIndex, 2);
-  assert.deepEqual(parsed.headers, ['会员姓名', '手机号码', '可用余额']);
-  assert.deepEqual(parsed.rowNumbers, [5, 7]);
-  const report = validateImportBatch(parsed.dataRows, parsed.mapping, [], { rowNumbers: parsed.rowNumbers });
-  assert.equal(report.results[0].rowNum, 5);
-  assert.equal(report.results[0].status, 'invalid');
-  assert.equal(report.results[1].rowNum, 7);
-  const corrected = selectImportHeader(parsed.rawRows, 2);
-  assert.deepEqual(corrected.dataRows, parsed.dataRows);
-  const title = selectImportHeader(parsed.rawRows, 1);
-  assert.equal(title.rowNumbers[0], 3);
-  assert.throws(() => selectImportHeader(parsed.rawRows, 5), /前 5 行/);
-  assert.throws(() => validateImportBatch(parsed.dataRows, parsed.mapping, [], { rowNumbers: [5] }), /原始行号/);
-  const csv = new TextEncoder().encode('梦飞空间会员批量导入\n会员姓名,手机号码,可用余额\n客户,13800001111,20');
-  const table = await parseUploadedFile({ name: 'title.csv', size: csv.length, arrayBuffer: async () => csv.buffer });
-  assert.equal(table.headerIndex, 1);
-  assert.deepEqual(table.rowNumbers, [3]);
-});
-
-test('legacy text and array member tags export as plain text', () => {
-  const members = [{ name: '旧会员', tags: 'VIP' }, { name: '数组会员', tags: ['常客', '年卡'] }, { name: '备注会员', tags: null, notes: '[熟客] 短发' }];
-  const book = createMembersWorkbook(members), sheet = book.Sheets[book.SheetNames[0]];
-  assert.equal(sheet.E2.v, 'VIP');
-  assert.equal(sheet.E3.v, '常客、年卡');
-  assert.equal(sheet.E4.v, '熟客');
-});
-
-test('ambiguous legacy phone identities are rejected rather than choosing a financial target', () => {
-  const members = [{ id: 'a', name: 'A', phone: '13800001111', balance: 10000 }, { id: 'b', name: 'B', phone: '138 0000-1111', balance: 20000 }];
-  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: null, tag: null };
-  for (const conflictStrategy of ['skip', 'merge_balance', 'overwrite_profile']) {
-    const report = validateImportBatch([['B', '(138)00001111', '50', '0']], mapping, members, { conflictStrategy });
-    assert.equal(report.invalidCount, 1); assert.match(report.results[0].reason, /多个档案/);
-    assert.equal(report.results[0].existingMember, undefined);
-  }
-});
-
-test('blank phones import as separate new members under every conflict strategy while filled phones remain validated', () => {
-  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: null, tag: null };
-  const existing = [
-    { id: 'blank-a', name: '同名客户', phone: '', balance: 10000 },
-    { id: 'blank-b', name: '同名客户', phone: '   ', balance: 20000 },
-    { id: 'with-phone', name: '有手机号客户', phone: '13800001111', balance: 30000 }
-  ];
-  const rows = [
-    ['同名客户', '', '20', '0'],
-    ['同名客户', ' \t ', '30', '0'],
-    ['有手机号客户', '(138)0000-1111', '40', '0'],
-    ['短号码', '123', '50', '0'],
-    ['无效号码', '---', '60', '0']
-  ];
-  for (const conflictStrategy of ['skip', 'merge_balance', 'overwrite_profile']) {
-    const report = validateImportBatch(rows, mapping, existing, { conflictStrategy });
-    assert.equal(report.validCount, 2);
-    assert.equal(report.conflictCount, 1);
-    assert.equal(report.invalidCount, 2);
-    assert.equal(report.sameNameCount, 2);
-    for (const item of report.results.slice(0, 2)) {
-      assert.equal(item.status, 'valid_new');
-      assert.equal(item.data.phone, '');
-      assert.equal(item.existingMember, undefined);
-      assert.match(item.sameNameWarning, /同名会员/);
-    }
-    assert.equal(report.results[2].existingMember.id, 'with-phone');
-    for (const item of report.results.slice(3)) assert.match(item.reason, /手机号格式不正确/);
-  }
-});
-
-test('Excel and CSV headers without phone columns skip titles and preserve physical rows', async () => {
-  const rows = [['梦飞空间会员批量导入'], ['会员姓名', '本金余额'], ['同名客户', '20'], [], ['同名客户', '30']];
-  const csv = new TextEncoder().encode(rows.map(row => row.join(',')).join('\n'));
-  for (const file of [importFile(rows), { name: 'no-phone.csv', size: csv.length, arrayBuffer: async () => csv.buffer }]) {
-    const parsed = await parseUploadedFile(file);
-    assert.equal(parsed.headerIndex, 1);
-    assert.equal(parsed.mapping.phone, null);
-    assert.deepEqual(parsed.rowNumbers, [3, 5]);
-    const report = validateImportBatch(parsed.dataRows, parsed.mapping, [], { rowNumbers: parsed.rowNumbers });
-    assert.equal(report.validCount, 2);
-    assert.equal(report.sameNameCount, 2);
-    assert.deepEqual(report.results.map(item => item.data.phone), ['', '']);
-    assert.deepEqual(report.results.map(item => item.data.balanceCents), [2000, 3000]);
-    assert.throws(() => validateImportBatch(parsed.dataRows, { ...parsed.mapping, name: null }), /姓名列/);
-    assert.throws(() => validateImportBatch(parsed.dataRows, { ...parsed.mapping, balance: parsed.mapping.name }), /不同的列/);
-  }
-  const namesOnly = await parseUploadedFile(importFile([['梦飞空间会员批量导入'], ['姓名'], ['同名客户'], ['同名客户']]));
-  assert.equal(namesOnly.headerIndex, 1);
-  assert.equal(validateImportBatch(namesOnly.dataRows, namesOnly.mapping).validCount, 2);
-});
-
-test('same-name import review includes all rows, ignores archived identities and preserves distinguishing suffixes', () => {
-  const mapping = { name: 0, phone: 1, balance: 2, gift: null, remark: null, tag: null };
-  const existing = [{ id: 'active', name: '张姐', phone: '13800001111' }, { id: 'old', name: '旧会员', isArchived: true }];
-  const rows = Array.from({ length: 16 }, (_, i) => ['客户' + i, '', '0']);
-  rows.push(['客户0', '', '1'], [' 张姐 ', '', '2'], ['张姐（东区）', '', '3'], ['旧会员', '', '4'],
-    ['单独一位', '', '5'], ['有电话的同名', '', '6'], ['有电话的同名', '13900001111', '7']);
-  const report = validateImportBatch(rows, mapping, existing);
-  assert.equal(report.sameNameCount, 4);
-  assert.deepEqual(report.results.filter(item => item.sameNameWarning).map(item => item.rowNum), [2, 18, 19, 23]);
-  assert.ok(report.results.every(item => item.status === 'valid_new'));
-  assert.ok(report.results.every(item => !item.existingMember));
-});
-
-test('financial Excel cells remain numeric and summable after serialization while text stays protected', () => {
-  const members = [{ name: '=1+1', phone: '13800001111', balance: 12345 }, { name: '欠款', phone: '13900002222', balance: -2000 }];
-  const book = createMembersWorkbook(members);
-  const roundtrip = XLSX.read(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer', cellNF: true });
-  const sheet = roundtrip.Sheets[roundtrip.SheetNames[0]];
-  assert.equal(sheet.C2.t, 'n'); assert.equal(sheet.D3.t, 'n'); assert.equal(sheet.C2.z, '0.00');
-  assert.equal(sheet.C2.v + sheet.C3.v, 103.45); assert.equal(sheet.D3.v, 20);
-  assert.equal(sheet.A2.t, 's'); assert.equal(sheet.A2.f, undefined); assert.equal(sheet.B2.t, 's');
-  const ledgers = createLedgersWorkbook([{ id: '@cmd', type: 'RECHARGE', changeAmount: 12345, balanceAfter: 12345 }, { id: '2', type: 'CONSUME', changeAmount: -2345, balanceAfter: 10000 }]);
-  const result = XLSX.read(XLSX.write(ledgers, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer', cellNF: true });
-  const ledgerSheet = result.Sheets[result.SheetNames[0]];
-  assert.equal(ledgerSheet.F2.t, 'n'); assert.equal(ledgerSheet.G3.t, 'n'); assert.equal(ledgerSheet.F2.z, '0.00');
-  assert.equal(ledgerSheet.F2.v + ledgerSheet.F3.v, 100); assert.equal(ledgerSheet.A2.f, undefined);
-});
-
-function rangedWorkbook(ref) {
-  const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['姓名', '手机号'], ['客户', '13800001111']]), '会员');
-  const archive = XLSX.CFB.read(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' });
-  const entry = archive.FileIndex[archive.FullPaths.findIndex(path => path.endsWith('/xl/worksheets/sheet1.xml'))];
-  entry.content = Buffer.from(Buffer.from(entry.content).toString('utf8').replace('ref="A1:B2"', 'ref="' + ref + '"')); entry.size = entry.content.length;
-  return XLSX.CFB.write(archive, { type: 'buffer', fileType: 'zip', compression: true });
-}
 
 test('small Excel files with enormous declared dimensions are rejected before row expansion', async () => {
   for (const ref of ['A1:XFD1048576', 'A1:B10006', 'A1:DY2', 'A1:DX10000']) {
@@ -227,133 +91,18 @@ test('sanitizeCellValue prevents formula injection by escaping dangerous leading
   assert.equal(sanitizeCellValue('13800001111'), '13800001111');
 });
 
-test('guessColumnMapping correctly matches diverse salon management headers', () => {
-  const headers = ['顾客姓名', '手机号码', '当前储值余额', '活动赠金', '发型喜好备注', '会员分组'];
-  const mapping = guessColumnMapping(headers);
 
-  assert.equal(mapping.name, 0);
-  assert.equal(mapping.phone, 1);
-  assert.equal(mapping.balance, 2);
-  assert.equal(mapping.gift, 3);
-  assert.equal(mapping.remark, 4);
-  assert.equal(mapping.tag, 5);
-});
+function rangedWorkbook(ref) {
+  const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['姓名', '手机号'], ['客户', '13800001111']]), '会员');
+  const archive = XLSX.CFB.read(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }), { type: 'buffer' });
+  const entry = archive.FileIndex[archive.FullPaths.findIndex(path => path.endsWith('/xl/worksheets/sheet1.xml'))];
+  entry.content = Buffer.from(Buffer.from(entry.content).toString('utf8').replace('ref="A1:B2"', 'ref="' + ref + '"')); entry.size = entry.content.length;
+  return XLSX.CFB.write(archive, { type: 'buffer', fileType: 'zip', compression: true });
+}
 
-test('validateImportBatch identifies valid, invalid and duplicate records', () => {
-  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: 4, tag: 5 };
-  const existingMembers = [
-    { id: 'M1', name: '老会员', phone: '13800001111', balance: 50000 }
-  ];
-
-  const dataRows = [
-    ['全新会员A', '13912345678', '100.50', '20.00', '常客', 'VIP'],
-    ['老会员', '13800001111', '200.00', '0.00', '期初导入', ''], // 与现有系统冲突
-    ['手机号错误', '1391234', '50.00', '0.00', '', ''], // 7位手机号
-    ['姓名为空', '13788889999', '50.00', '0.00', '', ''],
-    ['全新会员B', '13912345678', '80.00', '0.00', '', ''] // 与第1行手机号重复
-  ];
-  dataRows[3][0] = ''; // 姓名为空
-
-  // 1. 采用 skip 策略测试
-  const reportSkip = validateImportBatch(dataRows, mapping, existingMembers, { conflictStrategy: 'skip' });
-  assert.equal(reportSkip.total, 5);
-  assert.equal(reportSkip.validCount, 1); // 全新会员A
-  assert.equal(reportSkip.conflictCount, 1); // 13800001111
-  assert.equal(reportSkip.invalidCount, 3); // 手机号短、姓名空、文件内手机号重复
-
-  // 校验金额转换
-  const validItem = reportSkip.results.find(r => r.status === 'valid_new');
-  assert.equal(validItem.data.balanceCents, 10050);
-  assert.equal(validItem.data.giftCents, 2000);
-
-  // 2. 采用 merge_balance 策略测试
-  const reportMerge = validateImportBatch(dataRows, mapping, existingMembers, { conflictStrategy: 'merge_balance' });
-  const conflictItem = reportMerge.results.find(r => r.status === 'conflict');
-  assert.ok(conflictItem.reason.includes('累加余额'));
-});
-
-test('maskPhone masks middle 4 digits by default and reveals on demand', () => {
-  assert.equal(maskPhone('13812345678', false), '138 **** 5678');
-  assert.equal(maskPhone('13812345678', true), '138 1234 5678');
-  assert.equal(maskPhone(''), '—');
-});
-
-test('formatYuan accurately formats integer cents to 2-decimal string', () => {
-  assert.equal(formatYuan(10050), '100.50');
-  assert.equal(formatYuan(0), '0.00');
-  assert.equal(formatYuan(-3500), '-35.00');
-});
-
-test('column ownership is independent of order and ambiguous money columns stay unselected', () => {
-  assert.deepEqual(guessColumnMapping(['赠金余额', '本金余额', '会员标签', '手机号码', '会员姓名']),
-    { name: 4, phone: 3, balance: 1, gift: 0, remark: null, tag: 2 });
-  assert.equal(guessColumnMapping(['本金余额', '可用余额', '手机号', '姓名']).balance, null);
-});
-
-test('money parsing preserves cents and rejects rounding, exponent notation, malformed grouping and overflow', () => {
-  assert.equal(parseImportMoney('￥1,234.56元'), 123456);
-  assert.equal(parseImportMoney('-100.01', { signed: true }), -10001);
-  assert.equal(parseImportMoney('90071992547409.91'), Number.MAX_SAFE_INTEGER);
-  for (const text of ['1.005', '1e3', '1,2', '90071992547409.92', 'Infinity', '0x10']) assert.throws(() => parseImportMoney(text));
-  assert.throws(() => parseImportMoney('-1'));
-});
-
-test('import precheck matches only active phone holders and counts explicit debt entries', () => {
-  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: null, tag: null };
-  const active = { id: 'active', name: '在用', phone: '13800001111', balance: 0 };
-  const archived = { ...active, id: 'archived', isArchived: true };
-  const rows = [['欠款', active.phone, '-100.01', '0']];
-  const report = validateImportBatch(rows, mapping, [active, archived], { conflictStrategy: 'merge_balance' });
-  assert.equal(report.results[0].existingMember.id, active.id);
-  assert.equal(report.debtCount, 1);
-  assert.equal(validateImportBatch(rows, mapping, [archived]).results[0].status, 'valid_new');
-  assert.equal(validateImportBatch([['精度错误', active.phone, '1.005', '0']], mapping).invalidCount, 1);
-  assert.throws(() => validateImportBatch(rows, { ...mapping, gift: 2 }));
-});
-
-test('uploaded CSV notation and underlying Excel precision reach precheck without coercion or display rounding', async () => {
-  const csv = new TextEncoder().encode('姓名,手机号,本金余额\n指数金额,13800001111,1e3\n十六进制,13800001112,0x10\n正常金额,13800001113,12.34');
-  const csvResult = await parseUploadedFile({ name: 'members.csv', size: csv.byteLength, arrayBuffer: async () => csv.buffer });
-  const csvReport = validateImportBatch(csvResult.dataRows, csvResult.mapping);
-  assert.equal(csvReport.invalidCount, 2); assert.equal(csvReport.validCount, 1);
-  assert.equal(csvReport.results[2].data.balanceCents, 1234);
-
-  const sheet = XLSX.utils.aoa_to_sheet([['姓名', '手机号', '本金余额'], ['隐藏小数', '13800001111', 1.005], ['正常金额', '13800001112', 12.34]]);
-  sheet.C2.z = '0.00';
-  const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, sheet, '会员');
-  const bytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
-  const excelResult = await parseUploadedFile({ name: 'members.xlsx', size: bytes.byteLength,
-    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
-  const excelReport = validateImportBatch(excelResult.dataRows, excelResult.mapping);
-  assert.equal(excelReport.invalidCount, 1); assert.equal(excelReport.validCount, 1);
-  assert.equal(excelReport.results[1].data.balanceCents, 1234);
-});
-
-test('correction workbooks preserve original invalid amounts through export and reimport', async () => {
-  const mapping = { name: 0, phone: 1, balance: 2, gift: 3, remark: null, tag: null };
-  const rows = [
-    ['小数错误', '13800001111', '123.456', '0.789'],
-    ['指数错误', '13800001112', '1e3', '-5'],
-    ['超出范围', '13800001113', '90071992547409.92', '=1+1'],
-    ['', '13800001114', '￥1,234.56元', '12.34']
-  ];
-  const report = validateImportBatch(rows, mapping);
-  assert.equal(report.invalidCount, 4);
-  const book = createErrorReportWorkbook(report.results);
-  const sheet = book.Sheets[book.SheetNames[0]];
-  rows.forEach((row, i) => {
-    assert.equal(sheet['E' + (i + 2)].v, row[2]);
-    assert.equal(sheet['F' + (i + 2)].v, row[3]);
-    assert.equal(sheet['F' + (i + 2)].t, 's');
-    assert.equal(sheet['F' + (i + 2)].f, undefined);
-  });
-  const bytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
-  const uploaded = await parseUploadedFile({ name: 'correction.xlsx', size: bytes.byteLength,
-    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
-  assert.equal(validateImportBatch(uploaded.dataRows, uploaded.mapping).invalidCount, 4);
-  uploaded.dataRows[3][uploaded.mapping.name] = '已修正姓名';
-  const corrected = validateImportBatch(uploaded.dataRows, uploaded.mapping);
-  assert.equal(corrected.validCount, 1);
-  assert.equal(corrected.results[3].data.balanceCents, 123456);
-  assert.equal(corrected.results[3].data.giftCents, 1234);
+test('v2 spreadsheet keeps leading zeros, physical row numbers and the funding boundary', async () => {
+  const { rows } = await readProfileBatch(importFile([['门店资料'], [], ['姓名', '手机号'], ['同名客户', '00123'], ['同名客户', '']]));
+  assert.deepEqual(rows.map(row => [row.data.name, row.data.phone]), [['同名客户', '00123'], ['同名客户', '']]);
+  await assert.rejects(readProfileBatch(importFile([['标题'], ['姓名', '会员编号', '档案版本'], [], ['错行', 'member-1', '-1']])), /第 4 行/);
+  await assert.rejects(readProfileBatch(importFile([['姓名', '余额'], ['不应写资金', '100.00']])), /资金不在资料批次/);
 });

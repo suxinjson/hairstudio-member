@@ -2,4 +2,7 @@
 <full-backup-content>
     <exclude domain="sharedpref" path="member_cloud_vault.xml" />
     <exclude domain="root" path="app_webview" />
+    <exclude domain="database" path="member-relational-v2.sqlite" />
+    <exclude domain="database" path="member-relational-v2.sqlite-wal" />
+    <exclude domain="database" path="member-relational-v2.sqlite-shm" />
 </full-backup-content>

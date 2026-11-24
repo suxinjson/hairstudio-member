@@ -5,5 +5,5 @@ try {
   if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) throw new Error('须设置 ADMIN_USERNAME 和至少 12 位的 ADMIN_PASSWORD');
   const result = await createService(pool).createOwner({ username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD,
     displayName: process.env.ADMIN_NAME || '店主', storeName: process.env.STORE_NAME || '我的门店' });
-  console.log('店主账号已创建；门店 ID：' + result.storeId);
+  console.log('店主账号已创建；门店 ID：' + result.storeId + '。尚未授予商业许可，请在平台控制台配置在线授权或签发离线码。');
 } finally { await pool.end(); }

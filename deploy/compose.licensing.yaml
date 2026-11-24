@@ -1,0 +1,11 @@
+# Use together with compose.yaml when independent offline licensing is sold.
+services:
+  api:
+    environment:
+      LICENSE_PRIVATE_KEY_FILE: /run/secrets/member_license_key
+      LICENSE_KEY_ID: ${LICENSE_KEY_ID:-main}
+    secrets:
+      - member_license_key
+secrets:
+  member_license_key:
+    file: ${LICENSE_PRIVATE_KEY_HOST_FILE:?请指定只保存在服务端的 P-256 私钥文件}

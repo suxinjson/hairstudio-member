@@ -2,25 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
 import { migrate } from '../database.js';
-import { createService } from '../service.js';
+import { createService } from './helpers/licensed-service.js';
 import { createApi } from '../http.js';
 import { sanitizeVoiceConfig, maskApiKey, synthesizeTTS, readVoiceConfig, publicVoiceConfig, PROVIDER_DEFAULTS, VOICE_SYNTHESIS_TIMEOUT_MS, VOICE_DOWNLOAD_TIMEOUT_MS } from '../voice.js';
 import { randomUUID } from 'node:crypto';
 
-test('voice configuration migration preserves legacy settings and gives them an initial version', async () => {
+test('re-running the relational schema migration preserves saved voice settings and version', async () => {
   const db = new PGlite();
-  const pool = { query: sql => db.exec(sql) };
-  const storeId = randomUUID(), legacy = { enabled: false, aligenie: { allowedDevices: ['existing-speaker'] } };
+  const query = (sql, params) => params ? db.query(sql, params) : sql.includes(';') ? db.exec(sql) : db.query(sql);
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+  const password = 'VoiceConfigFixture123!';
   try {
-    await db.exec(`CREATE TABLE stores(id uuid PRIMARY KEY, name text NOT NULL);
-      CREATE TABLE store_settings(store_id uuid PRIMARY KEY REFERENCES stores(id), voice_config jsonb NOT NULL DEFAULT '{}', updated_at timestamptz NOT NULL DEFAULT now());`);
-    await db.query('INSERT INTO stores(id,name) VALUES($1,$2)', [storeId, '原门店']);
-    await db.query('INSERT INTO store_settings(store_id,voice_config) VALUES($1,$2)', [storeId, legacy]);
     await migrate(pool);
+    const service = createService(pool);
+    await service.createOwner({ username: 'voice-settings-owner', password });
+    const session = await service.login({ username: 'voice-settings-owner', password, deviceId: randomUUID() });
+    const identity = await service.authenticate(session.accessToken);
+    assert.equal((await service.getVoiceConfig(identity)).version, 0);
+    const saved = await service.saveVoiceConfig(identity, { events: { consume: false, recharge: true }, volume: 0.5 }, 0);
     await migrate(pool);
-    const { rows: [saved] } = await db.query('SELECT voice_config,voice_config_version FROM store_settings WHERE store_id=$1', [storeId]);
-    assert.deepEqual(saved.voice_config, legacy);
-    assert.equal(saved.voice_config_version, 0);
+    assert.equal(saved.version, 1);
+    assert.deepEqual(await service.getVoiceConfig(identity), saved);
   } finally { await db.close(); }
 });
 

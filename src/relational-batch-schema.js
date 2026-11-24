@@ -1,0 +1,17 @@
+export function batchSchema(dialect = 'sqlite') {
+  const pg = dialect === 'postgres', scope = pg ? 'uuid' : 'TEXT', version = pg ? 'bigint' : 'INTEGER', integer = pg ? 'integer' : 'INTEGER';
+  const storeRef = pg ? ' REFERENCES stores(id)' : '', actorRef = pg ? ' REFERENCES users(id)' : '';
+  const sql = [
+    'CREATE TABLE IF NOT EXISTS application_batches(store_id ' + scope + ' NOT NULL' + storeRef + ',batch_id TEXT NOT NULL,ledger_epoch ' + scope + ' NOT NULL,actor_id ' + scope + ' NOT NULL' + actorRef + ',device_id TEXT NOT NULL,request_hash TEXT NOT NULL,source_digest TEXT,item_count ' + integer + ' NOT NULL CHECK(item_count BETWEEN 1 AND 500),created_at ' + (pg ? 'timestamptz' : 'TEXT') + ' NOT NULL,PRIMARY KEY(store_id,batch_id))',
+    'CREATE TABLE IF NOT EXISTS application_batch_items(store_id ' + scope + ' NOT NULL,batch_id TEXT NOT NULL,position ' + integer + ' NOT NULL CHECK(position BETWEEN 0 AND 499),task_id TEXT NOT NULL,request_hash TEXT NOT NULL,task_type TEXT NOT NULL CHECK(task_type IN (\'member.create\',\'member.update\',\'member.archive\')),member_id TEXT,name TEXT,phone TEXT,notes TEXT,tags_present ' + integer + ' NOT NULL CHECK(tags_present IN (0,1)),expected_version ' + version + ',PRIMARY KEY(store_id,task_id),UNIQUE(store_id,batch_id,position),FOREIGN KEY(store_id,batch_id) REFERENCES application_batches(store_id,batch_id),CHECK((task_type=\'member.create\' AND member_id IS NULL AND name IS NOT NULL AND expected_version IS NULL) OR (task_type=\'member.update\' AND member_id IS NOT NULL AND name IS NOT NULL AND expected_version>=0) OR (task_type=\'member.archive\' AND member_id IS NOT NULL AND name IS NULL AND phone IS NULL AND notes IS NULL AND tags_present=0 AND expected_version IS NULL)))',
+    'CREATE TABLE IF NOT EXISTS application_batch_tags(store_id ' + scope + ' NOT NULL,task_id TEXT NOT NULL,position ' + integer + ' NOT NULL CHECK(position BETWEEN 0 AND 31),tag TEXT NOT NULL,PRIMARY KEY(store_id,task_id,position),UNIQUE(store_id,task_id,tag),FOREIGN KEY(store_id,task_id) REFERENCES application_batch_items(store_id,task_id))',
+    'CREATE TABLE IF NOT EXISTS application_batch_controls(store_id ' + scope + ' NOT NULL,batch_id TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN (\'paused\',\'active\',\'cancelled\')),version ' + version + ' NOT NULL CHECK(version>=0),PRIMARY KEY(store_id,batch_id),FOREIGN KEY(store_id,batch_id) REFERENCES application_batches(store_id,batch_id))',
+    'CREATE INDEX IF NOT EXISTS batch_identity_page ON application_batches(store_id,actor_id,device_id,ledger_epoch,batch_id)'
+  ];
+  if (!pg) {
+    for (const table of ['application_batches', 'application_batch_items', 'application_batch_tags']) for (const action of ['UPDATE', 'DELETE']) sql.push('CREATE TRIGGER IF NOT EXISTS immutable_' + table + '_' + action.toLowerCase() + ' BEFORE ' + action + ' ON ' + table + " BEGIN SELECT RAISE(ABORT,'batch capture immutable'); END");
+    sql.push("CREATE TRIGGER IF NOT EXISTS batch_control_transition BEFORE UPDATE ON application_batch_controls WHEN NEW.store_id<>OLD.store_id OR NEW.batch_id<>OLD.batch_id OR NEW.version<>OLD.version+1 OR (OLD.state='cancelled' AND NEW.state<>'cancelled') BEGIN SELECT RAISE(ABORT,'invalid batch transition'); END");
+    sql.push("CREATE TRIGGER IF NOT EXISTS batch_control_delete BEFORE DELETE ON application_batch_controls BEGIN SELECT RAISE(ABORT,'batch control immutable identity'); END");
+  }
+  return sql;
+}

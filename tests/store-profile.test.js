@@ -1,18 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createLocalDb, STORAGE_KEYS } from '../src/storage.js';
-import { normalizeStoreProfile, latestStoreProfile, storeWelcome, storeFilePrefix, APP_NAME } from '../src/store-profile.js';
-import { AdminApiClient } from '../admin/src/api/client.js';
-
-test('fresh installations use a generic name and no industry service presets; saved services survive initialization', () => {
-  const values = new Map();
-  const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
-  const db = createLocalDb(storage); db.init();
-  assert.equal(APP_NAME, '会员管家'); assert.deepEqual(db.getServices(), []);
-  const services = [{ id: 'existing', name: '原店项目', price: 38 }];
-  storage.setItem(STORAGE_KEYS.SERVICES, JSON.stringify(services)); db.init();
-  assert.deepEqual(db.getServices(), services);
-});
+import { normalizeStoreProfile, latestStoreProfile, storeWelcome, storeFilePrefix } from '../src/store-profile.js';
+import { MerchantSessionClient } from '../admin/src/api/merchant-session.js';
 
 test('store settings validate fields and supply configurable speech and safe export names', () => {
   const profile = normalizeStoreProfile({ name: '安心门店', welcomeText: '欢迎来到{store}，请说', version: 5 });
@@ -35,7 +24,7 @@ test('multiple browser pages retain current store settings, reject stale writes 
     }
     return Response.json(profile);
   };
-  const create = () => new AdminApiClient({ storage, fetch, eventTarget: null, serverOrigin: 'https://member.example.com' });
+  const create = () => new MerchantSessionClient({ storage, fetch, eventTarget: null, serverOrigin: 'https://member.example.com' });
   const user = { id: 'owner-A', storeId: 'store-A', role: 'owner' };
   const first = create(); first.saveSession({ accessToken: 'a', refreshToken: 'r', user, storeProfile: profile }, false);
   const deadline = first.idleExpiresAt.value, second = create();

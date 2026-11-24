@@ -5,18 +5,16 @@ import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { PGlite } from '@electric-sql/pglite';
 import { migrate } from '../database.js';
-import { createService } from '../service.js';
+import { createService } from './helpers/licensed-service.js';
 import { createApi } from '../http.js';
-import { createLocalDb } from '../../src/storage.js';
-import { integrity } from '../security.js';
+import { seedVoiceBook, voiceSnapshot } from './helpers/voice-book.js';
 import { signAliGenieRequest, parseAmount, extractAmountFromUtterance, membersFromUtterance, cleanMemberQuery, findMatchingMembers } from '../aligenie.js';
 import { readVoiceConfig, synthesizeTTS } from '../voice.js';
 import { assertVoiceUrl, resolveVoiceTarget, isPublicAddress, createVoiceFetch, readVoiceBody } from '../voice-network.js';
 
 const password = 'Voice-Security-Regression-2026!';
 const secret = 'new-signing-secret-' + randomUUID();
-const memory = () => { const data = new Map(); return { getItem: k => data.get(k) ?? null, setItem: (k, v) => data.set(k, String(v)), removeItem: k => data.delete(k) }; };
-let db, pool, service, identity, memberId, leases = 0;
+let db, pool, service, identity, book, leases = 0;
 before(async () => {
   db = new PGlite(); let tail = Promise.resolve();
   pool = {
@@ -36,10 +34,7 @@ beforeEach(async () => {
   await service.createOwner({ username: 'owner', password });
   const login = await service.login({ username: 'owner', password, deviceId: randomUUID() }, 'local');
   identity = await service.authenticate(login.accessToken);
-  const local = createLocalDb(memory()); local.init();
-  local.createMember({ name: '张三', phone: '13800001234', initialBalance: 100 });
-  memberId = local.readBackupState().members[0].id;
-  await service.bootstrap(identity, { id: randomUUID(), data: local.readBackupState() });
+  book = await seedVoiceBook(service, identity, [{ id: 'voice-member', name: '张三', phone: '13800001234', balanceCents: '10000' }]);
   await service.saveVoiceConfig(identity, { aligenie: { enabled: true, actorId: identity.id, token: secret, allowedDevices: ['device-a', 'device-b'] } }, 0);
 });
 const request = (utterance, extra = {}) => ({ requestId: randomUUID(), sessionId: 'session-shared', utterance,
@@ -49,7 +44,7 @@ function send(body, instance = service, storeId = identity.store_id, key = secre
   return instance.handleAliGenieWebhook(body, { headers: { 'x-store-id': storeId, 'x-aligenie-timestamp': timestamp,
     'x-aligenie-signature': signAliGenieRequest(key, timestamp, storeId, body) } });
 }
-const balance = async () => (await service.account(identity)).data.members.find(m => m.id === memberId).balance;
+const balance = async () => Number((await service.relational.getMember(identity, 'voice-member')).balanceCents);
 
 let slotTimestamp = Date.now();
 const platformRequest = (action = 'consume') => {
@@ -115,23 +110,21 @@ for (const action of ['consume', 'recharge']) {
     const late = await restarted.post({ ...confirmation, requestId: randomUUID() });
     assert.match(late.returnValue.reply, /没有待确认/);
     assert.equal(await balance(), action === 'consume' ? 6200 : 32000);
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM operations WHERE method=$1', [action])).rows[0].count, 1);
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM audit_events WHERE event=$1', ['voice_' + action])).rows[0].count, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM ledger_entries WHERE kind=$1', [action])).rows[0].count, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM audit_events WHERE event=$1', ['ledger_' + action])).rows[0].count, 1);
   });
 }
 
 for (const failure of [
   { code: 'VOICE_ACTOR_UNAVAILABLE', status: 403, text: /记账账号已停用或无权限/,
-    prepare: () => pool.query('UPDATE users SET active=false WHERE id=$1', [identity.id]) },
-  { code: 'VOICE_LEDGER_INVALID', status: 503, text: /账本校验失败/,
-    prepare: () => pool.query('UPDATE accounts SET integrity=$1 WHERE store_id=$2', ['invalid-integrity', identity.store_id]) }
+    prepare: () => pool.query('UPDATE users SET active=false WHERE id=$1', [identity.id]) }
 ]) {
   test(`authenticated platform explains ${failure.code} while signed callers retain the rejection and accounting stays unchanged`, async t => {
     const records = [], api = await platformApi(t, service, record => records.push(record));
     await failure.prepare();
-    const readAccount = async () => (await pool.query('SELECT data,revision,integrity FROM accounts WHERE store_id=$1', [identity.store_id])).rows[0];
+    const readAccount = async () => (await pool.query('SELECT member_id,balance_cents,version FROM member_accounts WHERE store_id=$1', [identity.store_id])).rows;
     const before = await readAccount(), body = platformRequest();
-    const countRows = async () => (await pool.query('SELECT (SELECT count(*)::int FROM voice_dialogs) AS dialogs,(SELECT count(*)::int FROM voice_requests) AS requests,(SELECT count(*)::int FROM operations) AS operations')).rows[0];
+    const countRows = async () => (await pool.query('SELECT (SELECT count(*)::int FROM voice_dialogs) AS dialogs,(SELECT count(*)::int FROM voice_requests) AS requests,(SELECT count(*)::int FROM ledger_command_receipts) AS operations')).rows[0];
     const countsBefore = await countRows();
     const reply = await api.post(body);
     assert.equal(reply.returnValue.executeCode, 'SUCCESS');
@@ -150,7 +143,7 @@ for (const failure of [
 test('platform request conflicts are explained without replacing a preview or applying a different amount', async t => {
   const api = await platformApi(t), preview = platformRequest();
   assert.equal((await api.post(preview)).returnValue.resultType, 'CONFIRM');
-  const before = await service.account(identity);
+  const before = await voiceSnapshot(service, identity);
   const dialogs = (await pool.query('SELECT pending FROM voice_dialogs')).rows;
   const changed = structuredClone(preview);
   changed.utterance = '张三扣款50元';
@@ -160,11 +153,11 @@ test('platform request conflicts are explained without replacing a preview or ap
   assert.equal(reply.returnValue.resultType, 'RESULT');
   assert.equal(JSON.parse(reply.returnValue.msgInfo).code, 'VOICE_REQUEST_CONFLICT');
   await assert.rejects(send(changed), error => error.status === 409 && error.code === 'VOICE_REQUEST_CONFLICT');
-  assert.deepEqual(await service.account(identity), before);
+  assert.deepEqual(await voiceSnapshot(service, identity), before);
   assert.deepEqual((await pool.query('SELECT pending FROM voice_dialogs')).rows, dialogs);
   assert.match((await api.post(platformConfirm(preview))).returnValue.reply, /扣款成功.*38 元/);
   assert.equal(await balance(), 6200);
-  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='consume'")).rows[0].count, 1);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM ledger_entries WHERE kind='consume'")).rows[0].count, 1);
 });
 
 for (const action of ['consume', 'recharge']) {
@@ -181,7 +174,7 @@ for (const action of ['consume', 'recharge']) {
     assert.match((await post(confirmation)).returnValue.reply, action === 'consume' ? /扣款成功/ : /充值成功/);
     await post(confirmation);
     assert.equal(await balance(), action === 'consume' ? 6200 : 32000);
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM operations WHERE method=$1', [action])).rows[0].count, 1);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM ledger_entries WHERE kind=$1', [action])).rows[0].count, 1);
     assert.ok(records.some(record => record.event === 'aligenie.parsed' && record.slots.amount === amountSlot.originalValue));
     assert.ok(records.some(record => record.outcome === 'transaction_committed'));
     assert.ok(records.some(record => record.outcome === 'receipt_replayed'));
@@ -318,15 +311,15 @@ for (const action of ['consume', 'recharge']) {
     const api = await platformApi(t), bad = platformRequest(action), phone = '13800001234';
     bad.utterance = `手机号${phone}${action === 'consume' ? '消费' : '充值'}100`;
     for (const slot of bad.slotEntities) slot.originalValue = slot.standardValue = slot.slotValue = phone;
-    const before = await service.account(identity);
+    const before = await voiceSnapshot(service, identity);
     const reply = await api.post(bad);
     assert.equal(reply.returnValue.resultType, 'ASK_INF');
     assert.deepEqual(reply.returnValue.askedInfos, [{ parameterName: 'amount', intentId: bad.intentId }]);
     assert.equal(reply.confirmationRequestId, undefined);
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM voice_dialogs')).rows[0].count, 0);
     assert.match((await api.post(platformConfirm(bad))).returnValue.reply, /没有待确认/);
-    assert.deepEqual(await service.account(identity), before);
-    assert.equal((await pool.query('SELECT count(*)::int AS count FROM operations WHERE method=$1', [action])).rows[0].count, 0);
+    assert.deepEqual(await voiceSnapshot(service, identity), before);
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM ledger_entries WHERE kind=$1', [action])).rows[0].count, 0);
     const good = structuredClone(bad);
     good.requestId = randomUUID();
     good.utterance = `手机号${phone}${action === 'consume' ? '消费' : '充值'}38元`;
@@ -349,7 +342,7 @@ test('pending confirmations and successful response receipts survive service res
   assert.deepEqual(await send(confirmation, createService(pool)), first);
   assert.equal(await balance(), 6200);
   await assert.rejects(send({ ...confirmation, utterance: '不确认' }), { status: 409 });
-  assert.equal((await pool.query("SELECT count(*)::int AS count FROM operations WHERE method='consume'")).rows[0].count, 1);
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM ledger_entries WHERE kind='consume'")).rows[0].count, 1);
 });
 
 test('session IDs are isolated by device, platform user, store, and explicit preview reference', async () => {
@@ -398,12 +391,18 @@ test('bound welcomes reset new sessions and default-intent replies still cancel 
 for (const changed of ['balance', 'archive', 'rechargeSettings', 'services']) {
   test(`confirmation rejects changes to preview ${changed}`, async () => {
     const preview = request(changed === 'rechargeSettings' ? '张三充值200元' : '张三扣款38元'); await send(preview);
-    const account = await service.account(identity), data = structuredClone(account.data);
-    if (changed === 'balance') data.members[0].balance = 2000;
-    if (changed === 'archive') data.members[0].isArchived = true;
-    if (changed === 'rechargeSettings') data.rechargeSettings = { giftEnabled: true, giftRate: 50 };
-    if (changed === 'services') data.services.push({ id: 'new-service', name: '新增服务', price: 39 });
-    await pool.query('UPDATE accounts SET data=$1,integrity=$2,revision=revision+1 WHERE store_id=$3', [data, integrity(data), identity.store_id]);
+    const scope = await service.relational.getBook(identity);
+    if (changed === 'balance') await book.command('voice-member', 'consume', { amountCents: '8000' });
+    else if (changed === 'archive') {
+      // Simulate a concurrent archival independent from the tested confirmation.
+      await pool.query('UPDATE member_profiles SET archived_at=now() WHERE store_id=$1 AND id=$2', [identity.store_id, 'voice-member']);
+    } else {
+      const configuration = await service.relational.getConfiguration(identity, scope);
+      await service.relational.updateConfiguration(identity, { expectedVersion: configuration.version,
+        services: changed === 'services' ? [{ id: 'new-service', name: '新增服务', priceCents: '3900' }] : [], rechargePlans: [],
+        rechargeSettings: { giftEnabled: true, giftRateBasisPoints: changed === 'rechargeSettings' ? 5000 : 1000 }
+      }, { ...scope, id: randomUUID() });
+    }
     const reply = await send(request('确认', { confirmationRequestId: preview.requestId }));
     assert.match(reply.returnValue.reply, /已变化/);
     assert.equal(await balance(), changed === 'balance' ? 2000 : 10000);

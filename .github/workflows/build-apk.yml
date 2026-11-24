@@ -4,6 +4,11 @@ on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      release:
+        description: '发布门槛核验完成后，生成并发布正式签名 APK'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,6 +39,7 @@ jobs:
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: 1.0.${{ github.run_number }}
       SERVER_DEPLOY_ENABLED: ${{ secrets.SERVER_SSH_KEY != '' }}
+      RELEASE_APPROVED: ${{ github.event_name == 'workflow_dispatch' && inputs.release && vars.RELATIONAL_RELEASE_APPROVED == 'true' }}
 
     steps:
     - name: 1. 拉取项目源码
@@ -58,15 +64,30 @@ jobs:
       env:
         MEMBER_TEST_DATABASE_URL: postgresql://member_test:member_test@localhost:5432/member_test
         MEMBER_TEST_ADMIN_DATABASE_URL: postgresql://member_test:member_test@localhost:5432/member_test
+        MEMBER_RELATIONAL_TEST_DATABASE_URL: postgresql://member_test:member_test@localhost:5432/member_test
+        MEMBER_TEST_DATABASE_DISPOSABLE: '1'
       run: npm ci && npm test
 
+    - name: 4a. 关系化真实 PostgreSQL 并发验收
+      env:
+        MEMBER_TEST_ADMIN_DATABASE_URL: postgresql://member_test:member_test@localhost:5432/member_test
+        MEMBER_RELATIONAL_TEST_DATABASE_URL: postgresql://member_test:member_test@localhost:5432/member_test
+        MEMBER_TEST_DATABASE_DISPOSABLE: '1'
+      run: npm run refactor:test:postgres
+
+    - name: 4b. 关系化运行依赖与部署审计
+      run: npm run refactor:audit
+
     - name: 5. 编译前端离线资产
+      env:
+        VITE_LICENSE_PUBLIC_KEYS: ${{ vars.LICENSE_PUBLIC_KEYS }}
       run: |
         npm run build
         npm run admin:build
         node scripts/check-public-credentials.mjs
 
     - name: 6. 配置发布签名
+      if: ${{ env.RELEASE_APPROVED == 'true' }}
       env:
         SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
         RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
@@ -98,7 +119,14 @@ jobs:
         sed -i -e 's/\r$//' ./android/gradlew
         chmod +x ./android/gradlew
 
+    - name: 编译调试 APK 与 Android 测试
+      if: ${{ env.RELEASE_APPROVED != 'true' }}
+      run: |
+        cd android
+        ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac --no-daemon --stacktrace
+
     - name: 8. 执行 Gradle 编译生成 APK
+      if: ${{ env.RELEASE_APPROVED == 'true' }}
       env:
         RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
         RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
@@ -112,6 +140,7 @@ jobs:
       run: rm -f -- "$RUNNER_TEMP/hairstudio-release.jks"
 
     - name: 9. 校验 APK 签名
+      if: ${{ env.RELEASE_APPROVED == 'true' }}
       env:
         RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
       run: |
@@ -128,6 +157,7 @@ jobs:
         }
 
     - name: 10. 收集生成好的 APK
+      if: ${{ env.RELEASE_APPROVED == 'true' }}
       env:
         RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
       run: |
@@ -137,9 +167,10 @@ jobs:
         node tools/update-manifest.js "output_apk/member-manager-v${VERSION_NAME}.apk" output_apk/update-manifest.json
 
     - name: 11. 打包生成服务器更新包
+      if: ${{ env.RELEASE_APPROVED == 'true' }}
       run: |
         mkdir -p deploy_bundle/releases
-        cp -r admin server src deploy Dockerfile compose.yaml package.json package-lock.json capacitor.config.json index.html vite.config.js .dockerignore vendor deploy_bundle/
+        cp -r admin server src deploy docs Dockerfile compose.yaml package.json package-lock.json capacitor.config.json index.html vite.config.js .dockerignore vendor deploy_bundle/
         cp "output_apk/member-manager-v${VERSION_NAME}.apk" deploy_bundle/releases/
         cp output_apk/update-manifest.json deploy_bundle/releases/
         printf '%s\n' "$VERSION_CODE" > deploy_bundle/release-version.txt
@@ -147,6 +178,7 @@ jobs:
         tar -czf "output_apk/server-update-v${VERSION_NAME}.tar.gz" -C deploy_bundle .
 
     - name: 12. 上传安装包与服务端更新产物供备用下载
+      if: ${{ env.RELEASE_APPROVED == 'true' }}
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
         name: member-manager-${{ env.VERSION_NAME }}
@@ -154,7 +186,7 @@ jobs:
         retention-days: 30
 
     - name: 13. [方案B] 自动 SSH 远程部署到云服务器并发布新版 APK
-      if: ${{ env.SERVER_DEPLOY_ENABLED == 'true' }}
+      if: ${{ env.RELEASE_APPROVED == 'true' && env.SERVER_DEPLOY_ENABLED == 'true' }}
       env:
         SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
         SERVER_HOST: ${{ secrets.SERVER_HOST || '124.70.184.136' }}

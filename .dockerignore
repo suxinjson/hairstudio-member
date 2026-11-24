@@ -17,3 +17,5 @@ backups
 .member-deployment-version
 *.jks
 *.keystore
+.license-keys
+*.private.pem

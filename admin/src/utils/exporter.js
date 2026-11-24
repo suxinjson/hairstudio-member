@@ -1,104 +1,15 @@
 import * as XLSX from 'xlsx';
-import { sanitizeCellValue } from './importer.js';
-import { memberTagText } from '../../../src/member-tags.js';
 
-/**
- * 导出会员列表为 Excel
- */
-export function createMembersWorkbook(members) {
-  const exportData = members.map(m => {
-    return {
-      '会员姓名': sanitizeCellValue(m.name),
-      '手机号码': sanitizeCellValue(m.phone),
-      '卡内本金余额(元)': (m.balance || 0) / 100,
-      '累计欠款(元)': Math.max(0, -(m.balance || 0)) / 100,
-      '会员标签': sanitizeCellValue(memberTagText(m) || '普通会员'),
-      '备注信息': sanitizeCellValue(m.notes || m.remark || ''),
-      '建卡时间': m.created_at ? new Date(m.created_at).toLocaleString('zh-CN') : '—',
-      '状态': m.isArchived ? '已归档' : m.balance < 0 ? '欠款' : '正常'
-    };
-  });
-
-  const ws = XLSX.utils.json_to_sheet(exportData);
-  formatMoneyColumns(ws, members.length, ['C', 'D']);
-  ws['!cols'] = [
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 28 },
-    { wch: 20 },
-    { wch: 10 }
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '会员档案');
-  return wb;
-}
-
-export function exportMembersToExcel(members, filename = '会员档案明细') {
-  const wb = createMembersWorkbook(members);
-  const dateStr = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, `${filename}_${dateStr}.xlsx`);
-}
-
-/**
- * 导出财务流水账单为 Excel
- */
-export function createLedgersWorkbook(ledgers) {
-  const exportData = ledgers.map(l => {
-    let typeName = '消费扣款';
-    if (l.type === 'RECHARGE') typeName = '充值入账';
-    if (l.type === 'REFUND') typeName = '撤销冲正';
-
-    return {
-      '流水单号': sanitizeCellValue(l.id),
-      '交易时间': l.created_at ? new Date(l.created_at).toLocaleString('zh-CN') : '—',
-      '会员姓名': sanitizeCellValue(l.memberName || '散客'),
-      '联系电话': sanitizeCellValue(l.memberPhone || '—'),
-      '业务类型': typeName,
-      '变动金额(元)': (l.changeAmount || 0) / 100,
-      '变动后余额(元)': (l.balanceAfter || 0) / 100,
-      '项目明细/备注': sanitizeCellValue(l.remark || '无'),
-      '冲正状态': l.isRefunded ? '已冲正撤销' : '正常'
-    };
-  });
-
-  const ws = XLSX.utils.json_to_sheet(exportData);
-  formatMoneyColumns(ws, ledgers.length, ['F', 'G']);
-  ws['!cols'] = [
-    { wch: 24 },
-    { wch: 20 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 14 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 28 },
-    { wch: 12 }
-  ];
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '流水对账明细');
-  return wb;
-}
-
-export function exportLedgersToExcel(ledgers, filename = '财务流水对账单') {
-  const wb = createLedgersWorkbook(ledgers);
-  const dateStr = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, `${filename}_${dateStr}.xlsx`);
-}
-
-function formatMoneyColumns(sheet, count, columns) {
-  for (let row = 2; row <= count + 1; row++) {
-    for (const column of columns) sheet[column + row].z = '0.00';
+export function sanitizeCellValue(val) {
+  if (typeof val !== 'string') return val;
+  const raw = String(val);
+  // 若包含前导制表符/回车，或首字符为危险计算符号，在前面加单引号转义为纯文本，防止在 Office 中触发公式执行
+  if (/^[\t\r]/.test(raw) || /^[=+\-@]/.test(raw.trim())) {
+    return "'" + raw;
   }
+  return raw.trim();
 }
 
-/**
- * 导出系统安全审计日志
- */
 export function exportAuditLogsToExcel(logs, filename = '系统安全审计日志') {
   const exportData = logs.map(l => {
     return {

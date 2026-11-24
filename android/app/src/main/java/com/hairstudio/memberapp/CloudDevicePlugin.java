@@ -113,6 +113,20 @@ public class CloudDevicePlugin extends Plugin {
         try { call.resolve(new JSObject().put("access", readCopies("access-", "access-backup-"))); }
         catch (Exception error) { call.reject("暂时无法读取设备授权，请联网确认"); }
     }
+    @PluginMethod public void loadBookBinding(PluginCall call) {
+        try { call.resolve(new JSObject().put("binding", readCopies("book-v2-", "book-v2-backup-"))); }
+        catch (Exception error) { call.reject("无法读取手机账本归属，已保留原账本"); }
+    }
+    @PluginMethod public synchronized void saveBookBinding(PluginCall call) {
+        try {
+            String value = call.getString("binding");
+            if (value == null || value.isEmpty() || value.length() > 1024) throw new Exception();
+            String existing = readCopies("book-v2-", "book-v2-backup-");
+            if (existing != null && !existing.equals(value)) { call.reject("不得覆盖原手机账本归属"); return; }
+            if (existing == null) writeCopies("book-v2-", "book-v2-backup-", value);
+            call.resolve();
+        } catch (Exception error) { call.reject("无法保存手机账本归属，已保留原账本"); }
+    }
     @PluginMethod public void saveAccess(PluginCall call) {
         try {
             String value = call.getString("access");

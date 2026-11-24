@@ -26,12 +26,13 @@ sudo ss -lntp
 ```dotenv
 PUBLIC_DOMAIN=124.70.184.136
 VITE_CLOUD_SERVER_URL=https://124.70.184.136
-POSTGRES_PASSWORD=替换为随机长密码
-APP_DATABASE_PASSWORD=替换为另一份独立随机长密码
+MIGRATION_DATABASE_URL=外部新库迁移连接串
+DATABASE_URL=同库member_app连接串
+APP_DATABASE_PASSWORD=对应member_app的独立随机长密码
 RELEASE_CERT_SHA256=
 ```
 
-首次部署分别用两次 `openssl rand -hex 32` 生成两个数据库密码。已有数据库时保留原 `POSTGRES_PASSWORD`，仅新增独立的 `APP_DATABASE_PASSWORD`；`.env` 的文件权限应为 600。旧版首次升级需先备份并按 [维护说明](README.md#已有部署升级)重建私网，保留数据卷。
+配置权限为 600。按 [首次启动](README.md#首次启动) 准备独立新 PostgreSQL 和迁移/应用凭据，旧版不在原库迁移。恢复启用时另配同库独立恢复角色。当前候选只做隔离验证，正式切换走 [停写方案](../docs/relational-refactor-assessment.md#8-一次性切换流程)。
 
 ## 2. 安装支持 IP 证书的 Certbot
 
@@ -54,7 +55,7 @@ sudo /opt/member-certbot/bin/python -m pip install --upgrade 'certbot>=5.4,<6' \
 
 ## 3. 启动仅用于证书验证的 HTTP 入口
 
-若下面的启动命令在拉取 postgres、node 或 caddy 镜像时提示 registry-1.docker.io 超时，先按 [Docker 网络排查](docker-network.md)配置华为云控制台提供的官方镜像加速地址，验证三个基础镜像均能拉取，再继续。
+若下面的启动命令在拉取 node 或 caddy 镜像时提示 registry-1.docker.io 超时，先按 [Docker 网络排查](docker-network.md)配置华为云控制台提供的官方镜像加速地址，验证所需基础镜像均能拉取，再继续。
 
 初次申请时尚无证书，因此先使用临时配置。HTTP 入口只提供 ACME 验证文件，其他请求返回 503，不提供账号登录和记账：
 

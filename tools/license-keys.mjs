@@ -1,0 +1,10 @@
+import { generateKeyPairSync } from 'node:crypto';
+import { writeFile, mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+const directory = resolve(process.argv[2] || '.license-keys'), keyId = process.argv[3] || 'main';
+if (!/^[a-zA-Z0-9_-]{1,40}$/.test(keyId)) throw new Error('密钥标识须为 1–40 位英文、数字、下划线或短横线');
+await mkdir(directory, { recursive: true, mode: 0o700 });
+const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+await writeFile(resolve(directory, keyId + '.private.pem'), privateKey.export({ format: 'pem', type: 'pkcs8' }), { flag: 'wx', mode: 0o600 });
+await writeFile(resolve(directory, keyId + '.public.json'), JSON.stringify({ [keyId]: publicKey.export({ format: 'jwk' }) }), { flag: 'wx', mode: 0o644 });
+console.log('密钥已生成于指定目录。私钥仅放服务端只读密钥挂载，public.json 的内容供 VITE_LICENSE_PUBLIC_KEYS 构建使用。');

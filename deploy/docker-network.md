@@ -1,6 +1,6 @@
 # Docker Hub 拉取超时：华为云部署
 
-Docker 安装成功后，拉取 postgres:17-alpine 等镜像仍可能因公网网络或 DNS 失败而超时。这与 Certbot 是否安装无关。反复执行 Compose 不会解决同一网络故障。
+Docker 安装成功后，拉取 node 或 caddy 等构建/运行镜像仍可能因公网网络或 DNS 失败而超时。这与 Certbot 是否安装无关。反复执行 Compose 不会解决同一网络故障。
 
 华为云控制台的镜像加速器说明限定个人开发场景，不允许再次封装或商业用途。因此，下面的加速器配置用于符合该限制的个人开发测试；正式店铺部署本会员系统时，应按控制台建议将所需镜像同步到自己的 SWR 私有仓库，或在能访问 Docker Hub 的机器拉取后使用 docker save / docker load 离线导入。不要把个人开发加速器作为正式生产的下载依赖。
 
@@ -32,12 +32,11 @@ sudo python3 deploy/configure-docker-mirror.py
 ```bash
 sudo systemctl restart docker
 sudo docker info --format '{{json .RegistryConfig.Mirrors}}'
-sudo docker pull postgres:17-alpine
 sudo docker pull node:22-alpine
 sudo docker pull caddy:2-alpine
 ```
 
-本项目数据库和构建需要这三个基础镜像，均拉取成功后再继续 Compose。不要只检查 postgres。
+这两个镜像用于应用构建与运行。外部 PostgreSQL 单独准备，不由应用 Compose 拉起。
 
 ## 3. 继续 IP HTTPS 初始化
 

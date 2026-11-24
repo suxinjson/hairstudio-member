@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { voicePlayer } from '../admin/src/utils/voice-player.js';
-import { AdminApiClient } from '../admin/src/api/client.js';
+import { MerchantSessionClient } from '../admin/src/api/merchant-session.js';
 import { VoicePlayer } from '../src/voice-player.js';
 
 const memoryStorage = () => {
@@ -24,7 +24,7 @@ test('voicePlayer template variable replacement', () => {
   assert.equal(partial, '李四 充值 {amount} 元');
 });
 
-test('AdminApiClient voice configuration and synthesis methods', async () => {
+test('MerchantSessionClient voice configuration and synthesis methods', async () => {
   const requests = [];
   const fakeStorage = new Map();
   const mockStorage = {
@@ -33,7 +33,7 @@ test('AdminApiClient voice configuration and synthesis methods', async () => {
     removeItem: k => fakeStorage.delete(k)
   };
 
-  const client = new AdminApiClient({
+  const client = new MerchantSessionClient({
     storage: mockStorage,
     fetch: async (path, options) => {
       requests.push({ path, ...options });
@@ -112,10 +112,11 @@ test('AdminApiClient voice configuration and synthesis methods', async () => {
 test('admin voice preview can wait for both HeyGen phases before timing out', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let signal, finish;
-  const client = new AdminApiClient({ storage: memoryStorage(), eventTarget: null, fetch: async (_path, options) => {
+  const client = new MerchantSessionClient({ storage: memoryStorage(), eventTarget: null, fetch: async (_path, options) => {
     signal = options.signal;
     return new Promise(resolve => { finish = resolve; });
   } });
+  client.saveSession({ accessToken: 'voice-access', refreshToken: 'voice-refresh', user: { id: 'voice-user', storeId: 'voice-store', role: 'owner' } }, false);
   t.after(() => client.dispose());
   const operation = client.synthesizeVoice({ provider: 'heygen', text: '测试' });
   t.mock.timers.tick(120000); assert.equal(signal.aborted, false);
@@ -126,9 +127,10 @@ test('admin voice preview can wait for both HeyGen phases before timing out', as
 
 test('admin voice preview gives a readable timeout error and does not refresh login on timeout', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
-  const client = new AdminApiClient({ storage: memoryStorage(), eventTarget: null, fetch: async (_path, options) => new Promise((_resolve, reject) => {
+  const client = new MerchantSessionClient({ storage: memoryStorage(), eventTarget: null, fetch: async (_path, options) => new Promise((_resolve, reject) => {
     options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
   }) });
+  client.saveSession({ accessToken: 'voice-access', refreshToken: 'voice-refresh', user: { id: 'voice-user', storeId: 'voice-store', role: 'owner' } }, false);
   t.after(() => client.dispose());
   const refresh = t.mock.method(client, 'refresh', async () => { throw new Error('unexpected refresh'); });
   const rejected = assert.rejects(client.synthesizeVoice({ text: '测试' }), /语音合成等待超时/);
@@ -288,9 +290,10 @@ test('playback failure reports an error and frees audio so later transactions ca
 
 test('admin synthesis cancellation does not refresh login or become a timeout', async t => {
   const controller = new AbortController();
-  const client = new AdminApiClient({ storage: memoryStorage(), eventTarget: null, fetch: async (_path, options) => new Promise((_resolve, reject) => {
+  const client = new MerchantSessionClient({ storage: memoryStorage(), eventTarget: null, fetch: async (_path, options) => new Promise((_resolve, reject) => {
     options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
   }) });
+  client.saveSession({ accessToken: 'voice-access', refreshToken: 'voice-refresh', user: { id: 'voice-user', storeId: 'voice-store', role: 'owner' } }, false);
   t.after(() => client.dispose());
   const refresh = t.mock.method(client, 'refresh', async () => { throw new Error('unexpected refresh'); });
   const rejected = assert.rejects(client.synthesizeVoice({ text: '测试' }, { signal: controller.signal }), { code: 'VOICE_CANCELLED' });

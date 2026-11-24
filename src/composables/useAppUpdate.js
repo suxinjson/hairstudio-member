@@ -1,10 +1,9 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue';
-import { checkForUpdate } from '../cloud-device.js';
 
 // Checks share the app's restored session. Background failures stay silent and
 // can be retried on the next connection or foreground event.
 export function useAppUpdate({ state, ready, isNativeApp, canPrompt, askConfirm, onUpdate,
-  check = checkForUpdate, promptAutomatically = true }) {
+  check, promptAutomatically = true }) {
   const availableUpdate = ref(null);
   const pendingPrompt = ref(null);
   let mounted = false, prompting = false, inFlight = null;

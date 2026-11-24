@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { migrate } from '../database.js';
-import { createService } from '../service.js';
+import { createService } from './helpers/licensed-service.js';
 import { createApi } from '../http.js';
 
 async function fixture(run) {
@@ -37,7 +37,7 @@ async function fixture(run) {
 }
 
 test('authenticated speakers are discoverable only by their store owner and remain blocked until explicitly saved', async () => fixture(async ({service,pool,owner,identity,password,call,body,post}) => {
-  const before = await service.account(identity);
+  const before = await service.relational.listLedger(identity);
   assert.equal((await call('/voice/aligenie/devices', {}, null)).status, 401);
   const denied = await post(body(), 'invalid-device-secret-' + randomUUID());
   assert.equal(denied.status, 401);
@@ -62,15 +62,15 @@ test('authenticated speakers are discoverable only by their store owner and rema
   await service.createOwner({ username: 'other-device-owner', password });
   const other = await service.login({ username: 'other-device-owner', password, deviceId: randomUUID() });
   assert.deepEqual(await (await call('/voice/aligenie/devices', {}, other.accessToken)).json(), []);
-  assert.deepEqual(await service.account(identity), before);
-  for (const table of ['voice_requests','voice_dialogs','operations']) assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count, 0);
+  assert.deepEqual(await service.relational.listLedger(identity), before);
+  for (const table of ['voice_requests','voice_dialogs','ledger_command_receipts']) assert.equal((await pool.query(`SELECT count(*)::int AS count FROM ${table}`)).rows[0].count, 0);
   const save = await call('/voice/config', { method: 'POST', body: JSON.stringify({ expectedVersion: 1, aligenie: { allowedDevices: ['real-speaker'] } }) });
   assert.equal(save.status, 200);
   assert.deepEqual(await (await call('/voice/aligenie/devices')).json(), []);
   const bound = await (await post(body('real-speaker','QueryMemberIntent'))).json();
   assert.match(bound.returnValue.reply, /未在会员库中找到/);
   assert.equal(bound.returnValue.msgInfo, '');
-  assert.deepEqual(await service.account(identity), before);
+  assert.deepEqual(await service.relational.listLedger(identity), before);
 }));
 
 test('device candidates expire, are bounded, and cannot cross signing-secret rotations', async () => fixture(async ({service,pool,identity,call,body,post,secret}) => {

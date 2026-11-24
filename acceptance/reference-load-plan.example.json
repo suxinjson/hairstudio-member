@@ -1,0 +1,19 @@
+{
+  "origin": "https://member-acceptance.example.test",
+  "profile": "smoke",
+  "tag": "qaabc123",
+  "sourceDigest": "648f6c579c2a02ffb39bdbd03b3bb5598217d30793c4c893ac2ec610f81e449e",
+  "fixtureFrom": "2026-08-01T00:00:00.000Z",
+  "fixtureTo": "2026-11-21T00:00:00.000Z",
+  "clients": [
+    {
+      "username": "refqa-qaabc123-01-owner01",
+      "passwordEnv": "MEMBER_REF_PASSWORD_OWNER01",
+      "deviceId": "00000000-0000-4000-8000-000000000001",
+      "storeId": "00000000-0000-4000-8000-000000000002",
+      "ledgerEpoch": "00000000-0000-4000-8000-000000000003",
+      "storeKey": "01",
+      "memberId": "refqa-qaabc123-01-m00001"
+    }
+  ]
+}

@@ -13,6 +13,12 @@
     "build": "npm run build:web && npx cap sync android",
     "build:web": "vite build",
     "test": "node tools/test.mjs",
+    "refactor:test": "node tools/refactor-tests.mjs",
+    "refactor:test:postgres": "node tools/refactor-tests.mjs --postgres",
+    "refactor:import": "node tools/relational-import.mjs",
+    "refactor:audit": "node tools/refactor-audit.mjs",
+    "refactor:capacity:sqlite": "node --expose-gc tools/relational-growth-sqlite.mjs",
+    "refactor:capacity:postgres": "node tools/relational-pg-capacity.mjs",
     "sync": "npx cap sync android",
     "open:android": "npx cap open android",
     "admin:dev": "npm --workspace=admin run dev",
@@ -21,6 +27,8 @@
     "server:check-voice": "node server/check-voice-network.js",
     "server:migrate": "node server/migrate.js",
     "server:create-owner": "node server/create-owner.js",
+    "server:create-platform-admin": "node server/create-platform-admin.js",
+    "license:keys": "node tools/license-keys.mjs",
     "server:publish": "node server/publish-release.js"
   },
   "dependencies": {

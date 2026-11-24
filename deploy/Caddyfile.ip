@@ -18,6 +18,8 @@ https://{$PUBLIC_DOMAIN} {
     header Strict-Transport-Security "max-age=31536000"
     header X-Content-Type-Options "nosniff"
     header Referrer-Policy "no-referrer"
+    header /admin/platform.html Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    header /admin/platform.html X-Frame-Options "DENY"
     handle /api/* {
         reverse_proxy api:48927
     }

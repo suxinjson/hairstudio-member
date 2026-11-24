@@ -52,6 +52,20 @@ else
   echo "🌐 检测到标准域名环境 ($PUBLIC_DOMAIN)，使用标准 compose 启动"
 fi
 
+# Compose reads exported variables before .env. Only detect whether signing is
+# configured here; never source .env or print the private key path/content.
+if [ "${LICENSE_PRIVATE_KEY_HOST_FILE+x}" != x ]; then
+  LICENSE_PRIVATE_KEY_HOST_FILE=$(sed -nE "s/^[[:space:]]*LICENSE_PRIVATE_KEY_HOST_FILE[[:space:]]*=[[:space:]]*(.*)/\1/p" .env | tail -n 1 | tr -d '\r')
+fi
+if [ -n "$LICENSE_PRIVATE_KEY_HOST_FILE" ] && [ "$LICENSE_PRIVATE_KEY_HOST_FILE" != '""' ] && [ "$LICENSE_PRIVATE_KEY_HOST_FILE" != "''" ]; then
+  if [ ! -f "deploy/compose.licensing.yaml" ]; then
+    echo "❌ 错误: 已配置离线签发，但缺少 deploy/compose.licensing.yaml，停止更新。"
+    exit 1
+  fi
+  echo "🔑 加载离线授权签发密钥挂载配置"
+  COMPOSE_ARGS+=("-f" "deploy/compose.licensing.yaml")
+fi
+
 echo ">>> [1/3] 正在重新构建并平滑重启服务容器 (Web & API)..."
 $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d --build
 

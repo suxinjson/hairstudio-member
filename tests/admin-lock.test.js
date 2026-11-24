@@ -8,7 +8,7 @@ class MemoryStorage {
   removeItem(key) { this.values.delete(key); }
 }
 globalThis.localStorage = new MemoryStorage();
-const { AdminApiClient, ADMIN_IDLE_TIMEOUT_MS } = await import('../admin/src/api/client.js');
+const { MerchantSessionClient, ADMIN_IDLE_TIMEOUT_MS } = await import('../admin/src/api/merchant-session.js');
 const user = { id: 'owner-A', storeId: 'store-A', username: 'owner', role: 'owner' };
 const session = { accessToken: 'access', refreshToken: 'refresh', user };
 
@@ -17,7 +17,7 @@ function fixture(t) {
   t.mock.method(Date, 'now', () => now);
   const storage = new MemoryStorage();
   const create = () => {
-    const client = new AdminApiClient({ storage, eventTarget: null });
+    const client = new MerchantSessionClient({ storage, eventTarget: null });
     t.after(() => client.dispose()); return client;
   };
   const client = create(); client.saveSession(session, false);
@@ -26,7 +26,8 @@ function fixture(t) {
 
 test('reopening preserves the idle deadline and locks expired sessions without discarding pending writes', async t => {
   const { client, storage, create, advance } = fixture(t);
-  const pendingKey = client.scopedKey('pending'); storage.setItem(pendingKey, 'retained operation');
+  const pendingKey = 'hairstudio_v2_pending:store-A:owner-A:' + client.deviceId;
+  storage.setItem(pendingKey, 'retained operation');
   const deadline = client.idleExpiresAt.value;
   advance(ADMIN_IDLE_TIMEOUT_MS - 1);
   const reopened = create();
@@ -40,7 +41,7 @@ test('reopening preserves the idle deadline and locks expired sessions without d
   assert.equal(expired.idleExpiresAt.value, deadline);
   assert.equal(storage.getItem(pendingKey), 'retained operation');
   assert.equal(expired.refreshToken.value, session.refreshToken);
-  await assert.rejects(expired.sync([]), /请先解锁/);
+  await assert.rejects(expired.getDevices(), /请先解锁/);
 });
 
 test('token rotation preserves the activity deadline and cannot unlock an expired session', async t => {

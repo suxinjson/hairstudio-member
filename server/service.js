@@ -1,68 +1,63 @@
 import { randomUUID } from 'node:crypto';
 import { transaction } from './database.js';
-import { token, digest, integrity, hashPassword, verifyPassword, normalizeUsername, ApiError, publicUser } from './security.js';
-import { createLocalDb, DEFAULT_SERVICES, DEFAULT_RECHARGE_PLANS } from '../src/storage.js';
-import { replayOperation } from '../src/cloud-storage.js';
-import { canWrite, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
-import { DATA_LIMITS, assertAccountLimits, assertJsonBudget, boundedText } from '../src/data-limits.js';
+import { token, digest, hashPassword, verifyPassword, normalizeUsername, ApiError, publicUser } from './security.js';
+import { assertJsonBudget, boundedText } from '../src/data-limits.js';
 import { sanitizeVoiceConfig, readVoiceConfig, publicVoiceConfig, synthesizeTTS } from './voice.js';
 import { handleAliGenieWebhook, getAliGenieVerificationContent, aliGenieDeviceScope } from './aligenie.js';
 import { ensureDevice, checkDevice, deviceGrant } from './device-access.js';
 import { readStoreProfile } from './store-profile.js';
 import { normalizeStoreProfile } from '../src/store-profile.js';
+import { storeEntitlement, requireFeature, commercialGrant } from './entitlements.js';
+import { provisionStore } from './provision-store.js';
+import { createRelationalLedger } from './relational-ledger.js';
+import { createLedgerExportJobs } from './relational-export-jobs.js';
 
-export function validateSnapshot(data, options) {
-  assertAccountLimits(data && { ...data, ledgers: data.ledgers ?? [], services: data.services ?? DEFAULT_SERVICES, rechargePlans: data.rechargePlans ?? DEFAULT_RECHARGE_PLANS });
-  const validated = createLocalDb(null).parseAndValidateBackup(JSON.stringify({ data }), options).data;
-  for (const [items, label] of [[validated.services, '服务项目'], [validated.members, '会员']]) {
-    if (new Set(items.map(item => item.id)).size !== items.length) throw new Error(label + '单号重复');
-  }
-  return validated;
-}
-const emptyData = () => ({ members: [], ledgers: [], services: DEFAULT_SERVICES, rechargePlans: DEFAULT_RECHARGE_PLANS });
 const sessionTimes = () => [new Date(Date.now() + 15 * 60000), new Date(Date.now() + 30 * 86400000)];
-const importReceiptId = (signature, index) => 'IMPORT-' + signature + '-' + index;
-function validateImportReceipt(value, operations) {
-  if (!value || !/^[a-f0-9]{64}$/.test(value.signature || '') ||
-      !/^[a-zA-Z0-9-]{16,80}$/.test(value.taskId || '') ||
-      !Number.isInteger(value.totalBatches) || value.totalBatches < 1 || value.totalBatches > 10000 ||
-      !Number.isInteger(value.batchIndex) || value.batchIndex < 0 || value.batchIndex >= value.totalBatches ||
-      !Number.isInteger(value.total) || value.total < 1 || value.total > 10000 ||
-      !Number.isInteger(value.count) || value.count < 1 || value.count > 50 || value.count > value.total ||
-      operations.length < value.count || operations.length > value.count * 2 ||
-      operations.some(op => !['createMember', 'updateMember', 'consume', 'recharge'].includes(op.method))) {
-    throw new ApiError(400, '导入批次标识无效');
-  }
-}
-
 let activeSynthesis = 0;
 const MAX_SYNTHESIS = 4;
 
-export function createService(pool, { fetchFn, socketFn } = {}) {
-  async function importReceipts(client, user, signature) {
-    return (await client.query("SELECT request_hash,result FROM operations WHERE store_id=$1 AND method='admin_import_batch' AND id LIKE $2 ORDER BY (result->>'batchIndex')::int", [user.store_id, 'IMPORT-' + signature + '-%'])).rows;
-  }
-  const importStatus = rows => rows.length ? {
-    taskId: rows[0].result.taskId, total: rows[0].result.total,
-    count: rows.reduce((sum, row) => sum + row.result.count, 0),
-    status: rows.length === rows[0].result.totalBatches ? 'complete' : 'pending'
-  } : null;
+export function createService(pool, { fetchFn, socketFn, recoveryPool } = {}) {
   async function audit(client, user, event, details = {}, occurredAt = null) {
     await client.query('INSERT INTO audit_events(store_id,user_id,device_id,event,details,occurred_at) VALUES($1,$2,$3,$4,$5,$6)',
       [user.store_id, user.id, user.device_id || null, event, details, occurredAt]);
   }
   async function lockedUser(client, identity) {
-    const { rows: [user] } = await client.query('SELECT u.*,s.device_id FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id=$1 AND s.revoked=false AND s.expires_at>now() FOR SHARE OF u,s', [identity.sessionId]);
-    if (!user?.active || user.id !== identity.id) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
+    const entitlement = await storeEntitlement(client, identity.store_id);
+    const { rows: [user] } = await client.query('SELECT u.*,s.device_id,s.expires_at AS session_expires_at FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id=$1 AND s.revoked=false AND s.expires_at>now() FOR SHARE OF u,s', [identity.sessionId]);
+    if (!user?.active || user.historical_only || user.id !== identity.id) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
+    if (user.platform_disabled) throw new ApiError(403, '账号已被平台禁用', 'USER_DISABLED');
+    user.entitlements = entitlement;
+    user.permissions = (await client.query('SELECT permission_id FROM merchant_role_permissions WHERE role_id=$1', [user.role])).rows.map(row => row.permission_id);
+    if (!user.permissions.includes('account.read')) throw new ApiError(403, '账号没有账本访问权限', 'FORBIDDEN');
     await checkDevice(client, user.store_id, user.device_id);
     return user;
   }
   async function authorize(identity, permission) {
     return transaction(pool, async client => {
       const user = await lockedUser(client, identity);
-      if (permission === 'owner' && user.role !== 'owner' || permission === 'write' && user.role === 'viewer') throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
+      if (permission === 'owner' && !user.permissions.includes('store.manage') || permission === 'write' && !user.permissions.includes('account.write')) throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
       return user;
     });
+  }
+  // Authorization locks are held until the financial transaction commits.
+  // Imports acquire the store lock first; normal writers share it, so an
+  // opening import cannot race the first member or financial command.
+  async function withAuthorized(identity, permission, callback, { exclusiveStore = false, consistentRead = false, recovery = false, rollbackOnly = false } = {}) {
+    if (recovery && !recoveryPool) throw new ApiError(503, '独立恢复数据库账号未配置', 'RECOVERY_UNAVAILABLE');
+    return transaction(recovery ? recoveryPool : pool, async client => {
+      if (consistentRead) await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+      if (exclusiveStore) await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
+      const user = await lockedUser(client, identity);
+      if (user.store_id !== identity.store_id || permission === 'owner' && !user.permissions.includes('store.manage') ||
+          permission === 'write' && !user.permissions.includes('account.write')) throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
+      const { rows: [book] } = await client.query('SELECT ledger_epoch FROM stores WHERE id=$1', [user.store_id]);
+      user.ledger_epoch = book.ledger_epoch;
+      const result = await callback(client, user);
+      if (Date.parse(user.session_expires_at) <= Date.now()) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
+      if (user.entitlements.expiresAt && Date.parse(user.entitlements.expiresAt) <= Date.now()) throw new ApiError(403, '门店授权已到期', 'LICENSE_EXPIRED');
+      await checkDevice(client, user.store_id, user.device_id);
+      return result;
+    }, { rollbackOnly });
   }
   async function reserveLogin(username, ip) {
     const failureBuckets = [digest('user:' + username), digest('ip:' + ip)];
@@ -81,41 +76,40 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
     // Compare the window so a late success cannot refund a newer window's quota.
     for (const { bucket, start } of reserved) await pool.query('UPDATE login_limits SET failures=GREATEST(0,failures-1) WHERE bucket=$1 AND window_start=$2', [bucket, start]);
   }
+  const relational = { ...createRelationalLedger({ withAuthorized, audit }), ...createLedgerExportJobs({ pool, withAuthorized, audit }) };
   return {
     authorize,
+    relational,
     async createOwner({ username, password, displayName = '店主', storeName = '我的门店' }) {
       username = normalizeUsername(username);
       boundedText(displayName, 128, '显示名', true); boundedText(storeName, 128, '门店名', true);
       const passwordHash = await hashPassword(password);
       return transaction(pool, async client => {
-        const storeId = randomUUID(), userId = randomUUID(), data = emptyData();
-        await client.query('INSERT INTO stores(id,name) VALUES($1,$2)', [storeId, storeName]);
-        await client.query('INSERT INTO users(id,store_id,username,display_name,password_hash,role) VALUES($1,$2,$3,$4,$5,$6)',
-          [userId, storeId, username, displayName, passwordHash, 'owner']);
-        await client.query('INSERT INTO accounts(store_id,data,integrity) VALUES($1,$2,$3)', [storeId, data, integrity(data)]);
-        return { userId, storeId };
+        return provisionStore(client, { username, passwordHash, displayName, storeName });
       });
     },
     async login({ username, password, deviceId, clientKind = 'web', deviceFingerprint = null, deviceName = '' }, ip) {
       if (!['native', 'web'].includes(clientKind)) throw new ApiError(400, '客户端类型无效');
-      if (typeof deviceId !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(deviceId)) throw new ApiError(400, '设备标识无效');
+      if (typeof deviceId !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(deviceId) || /^voice-[0-9a-f]{64}$/.test(deviceId)) throw new ApiError(400, '设备标识无效');
       try { username = normalizeUsername(username); } catch { throw new ApiError(401, '账号或密码错误'); }
       const reserved = await reserveLogin(username, ip);
       const { rows: [user] } = await pool.query('SELECT * FROM users WHERE username=$1', [username]);
       let valid;
       try { valid = await verifyPassword(password, user?.password_hash); }
       catch (error) { await releaseLogin(reserved); throw error; }
-      if (!valid || !user?.active) {
+      if (!valid || !user?.active || user.historical_only) {
         throw new ApiError(401, '账号或密码错误', 'AUTH_REQUIRED');
       }
       const accessToken = token(), refreshToken = token(), sessionId = randomUUID();
       const [accessExpires, expires] = sessionTimes();
-      let authorization, storeProfile;
+      let authorization, storeProfile, entitlements;
       const currentUser = await transaction(pool, async client => {
+        entitlements = await storeEntitlement(client, user.store_id);
         const { rows: [current] } = await client.query('SELECT * FROM users WHERE id=$1 FOR UPDATE', [user.id]);
-        if (!current?.active || current.password_hash !== user.password_hash) throw new ApiError(401, '账号或密码错误');
+        if (!current?.active || current.historical_only || current.password_hash !== user.password_hash) throw new ApiError(401, '账号或密码错误');
+        if (current.platform_disabled) throw new ApiError(403, '账号已被平台禁用', 'USER_DISABLED');
         await client.query("DELETE FROM sessions WHERE user_id=$1 AND expires_at<now()", [user.id]);
-        authorization = deviceGrant(await ensureDevice(client, current, deviceId, clientKind, deviceFingerprint, deviceName));
+        authorization = commercialGrant(deviceGrant(await ensureDevice(client, current, deviceId, clientKind, deviceFingerprint, deviceName)), entitlements, current);
         storeProfile = await readStoreProfile(client, current.store_id);
         await client.query('INSERT INTO sessions(id,user_id,device_id,access_hash,refresh_hash,access_expires_at,expires_at,client_kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
           [sessionId, user.id, deviceId, digest(accessToken), digest(refreshToken), accessExpires, clientKind === 'native' ? 'infinity' : expires, clientKind]);
@@ -123,36 +117,39 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         return current;
       });
       await releaseLogin(reserved);
-      return { accessToken, refreshToken, user: publicUser(currentUser), expiresAt: accessExpires.toISOString(), authorization, storeProfile };
+      return { accessToken, refreshToken, user: publicUser(currentUser), expiresAt: accessExpires.toISOString(), authorization, entitlements, storeProfile };
     },
     async authenticate(accessToken) {
       if (typeof accessToken !== 'string' || accessToken.length > 128) throw new ApiError(401, '请登录', 'AUTH_REQUIRED');
       const { rows: [row] } = await pool.query('SELECT u.*,s.id AS session_id,s.device_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE ((s.access_hash=$1 AND s.access_expires_at>now()) OR (s.previous_access_hash=$1 AND s.previous_access_expires_at>now())) AND s.revoked=false AND s.expires_at>now() AND u.active=true', [digest(accessToken)]);
-      if (!row) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
-      await transaction(pool, client => checkDevice(client, row.store_id, row.device_id));
+      if (!row || row.historical_only) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
+      if (row.platform_disabled) throw new ApiError(403, '账号已被平台禁用', 'USER_DISABLED');
+      await transaction(pool, async client => { await storeEntitlement(client, row.store_id); await checkDevice(client, row.store_id, row.device_id); });
       return { ...row, sessionId: row.session_id };
     },
     async refresh(refreshToken, clientKind, deviceFingerprint = null, deviceName = '') {
       if (typeof refreshToken !== 'string' || refreshToken.length > 128) throw new ApiError(401, '请重新登录', 'AUTH_REQUIRED');
       const next = await transaction(pool, async client => {
         const refreshHash = digest(refreshToken);
-        const { rows: [candidate] } = await client.query('SELECT user_id FROM sessions WHERE refresh_hash=$1 OR previous_refresh_hash=$1', [refreshHash]);
+        const { rows: [candidate] } = await client.query('SELECT s.user_id,u.store_id FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.refresh_hash=$1 OR s.previous_refresh_hash=$1', [refreshHash]);
         if (!candidate) return null;
+        const entitlements = await storeEntitlement(client, candidate.store_id);
         // 与权限变更保持先用户、后会话的锁定顺序，避免互相等待。
         const { rows: [user] } = await client.query('SELECT * FROM users WHERE id=$1 FOR SHARE', [candidate.user_id]);
-        if (!user?.active) return null;
+        if (!user?.active || user.historical_only) return null;
+        if (user.platform_disabled) throw new ApiError(403, '账号已被平台禁用', 'USER_DISABLED');
         const { rows: [session] } = await client.query('SELECT * FROM sessions WHERE refresh_hash=$1 OR previous_refresh_hash=$1 FOR UPDATE', [refreshHash]);
         if (!session || session.revoked) return null;
         // The request cannot upgrade a stored web credential to a perpetual session.
         const kind = session.client_kind === 'native' ? 'native' : 'web';
         if (kind !== 'native' && new Date(session.expires_at) <= new Date()) return null;
-        const authorization = deviceGrant(await ensureDevice(client, user, session.device_id, kind, deviceFingerprint, deviceName));
+        const authorization = commercialGrant(deviceGrant(await ensureDevice(client, user, session.device_id, kind, deviceFingerprint, deviceName)), entitlements, user);
         // Keep the refresh credential stable. Accept the last rotated legacy credential,
         // including a refresh whose response was lost, without revoking other requests.
         const accessToken = digest('access:' + refreshToken), [accessExpires] = sessionTimes();
         await client.query('UPDATE sessions SET previous_access_hash=CASE WHEN access_hash<>$1 THEN access_hash ELSE previous_access_hash END,previous_access_expires_at=CASE WHEN access_hash<>$1 THEN access_expires_at ELSE previous_access_expires_at END,access_hash=$1,access_expires_at=$2,client_kind=$3,expires_at=CASE WHEN $3=\'native\' THEN \'infinity\'::timestamptz ELSE expires_at END WHERE id=$4',
           [digest(accessToken), accessExpires, kind, session.id]);
-        return { accessToken, refreshToken, user: publicUser(user), expiresAt: accessExpires.toISOString(), authorization, storeProfile: await readStoreProfile(client, user.store_id) };
+        return { accessToken, refreshToken, user: publicUser(user), expiresAt: accessExpires.toISOString(), authorization, entitlements, storeProfile: await readStoreProfile(client, user.store_id) };
       });
       if (!next) throw new ApiError(401, '登录已失效，请重新登录', 'AUTH_REQUIRED');
       return next;
@@ -165,12 +162,13 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
         const device = await checkDevice(client, user.store_id, user.device_id) || await ensureDevice(client, user, user.device_id);
-        return { authorization: deviceGrant(device), user: publicUser(user), storeProfile: await readStoreProfile(client, user.store_id) };
+        return { authorization: commercialGrant(deviceGrant(device), user.entitlements, user), entitlements: user.entitlements, user: publicUser(user), storeProfile: await readStoreProfile(client, user.store_id) };
       });
     },
     async devices(identity) {
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'devices');
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以管理设备');
         return (await client.query(`SELECT d.*,u.display_name FROM app_devices d LEFT JOIN users u ON u.id=d.last_user_id
           WHERE d.store_id=$1 ORDER BY d.last_seen_at DESC`, [user.store_id])).rows.map(d => ({
@@ -189,6 +187,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
       return transaction(pool, async client => {
         await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'devices');
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以管理设备');
         const { rowCount } = await client.query(`UPDATE app_devices SET active=$1,offline_hours=$2,authorized_until=$3,label=$4
           WHERE store_id=$5 AND (device_id=$6 OR hardware_fingerprint=(SELECT hardware_fingerprint FROM app_devices WHERE store_id=$5 AND device_id=$6))`, [input.active, input.offlineHours, input.authorizedUntil, input.label.trim(), user.store_id, deviceId]);
@@ -208,6 +207,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
       return transaction(pool, async client => {
         await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'settings');
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以修改门店设置');
         const { rows: [updated] } = await client.query('UPDATE stores SET name=$1,profile=$2,profile_version=profile_version+1 WHERE id=$3 AND profile_version=$4 RETURNING profile_version',
           [profile.name, profile, user.store_id, input.expectedVersion]);
@@ -216,171 +216,13 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         return { ...profile, version: updated.profile_version };
       });
     },
-    async account(identity) {
-      return transaction(pool, async client => {
-        const user = await lockedUser(client, identity);
-        const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1', [user.store_id]);
-        if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败，请联系管理员', 'INTEGRITY_FAILED');
-        return { data: account.data, revision: account.revision, integrity: account.integrity, storeProfile: await readStoreProfile(client, user.store_id) };
-      });
-    },
-    async reconcileAccount(identity, expectedHead) {
-      if (!Number.isSafeInteger(expectedHead?.revision) || expectedHead.revision < 0 || !/^[a-f0-9]{64}$/.test(expectedHead.integrity || '')) throw new ApiError(400, '核对版本无效');
-      return transaction(pool, async client => {
-        const user = await lockedUser(client, identity);
-        if (user.role !== 'owner') throw new ApiError(403, '仅店主可以重新确认账本版本');
-        const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
-        if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端数据损坏，请先修复服务器账本');
-        if (account.revision !== expectedHead.revision || account.integrity !== expectedHead.integrity) throw new ApiError(409, '云端账本已变化，请重新导出核对');
-        await audit(client, user, 'account_version_reconciled', { expectedHead });
-        return { data: account.data, revision: account.revision, integrity: account.integrity };
-      });
-    },
-    async bootstrap(identity, request) {
-      await authorize(identity, 'owner');
-      let data;
-      try { data = validateSnapshot(request.data); }
-      catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
-      if (typeof request.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(request.id)) throw new ApiError(400, '同步单号无效');
-      return transaction(pool, async client => {
-        const user = await lockedUser(client, identity);
-        if (user.role !== 'owner') throw new ApiError(403, '仅店主可以迁移初始账本');
-        const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
-        const hash = integrity({ method: 'bootstrap', data });
-        const { rows: [existing] } = await client.query('SELECT * FROM operations WHERE store_id=$1 AND id=$2', [user.store_id, request.id]);
-        if (existing && (existing.request_hash !== hash || existing.user_id !== user.id || existing.device_id !== user.device_id)) throw new ApiError(409, '同一同步单号对应不同数据或设备', 'SYNC_CONFLICT');
-        if (existing?.result?.cancelled === true) throw new ApiError(409, '此初始迁移已取消，请重新核对账本', 'OPERATION_CANCELLED');
-        if (!existing) {
-          if (account.revision !== 0 || account.data.members.length || account.data.ledgers.length) throw new ApiError(409, '云端已有账本，不能再次初始化', 'SYNC_CONFLICT');
-          await client.query('UPDATE accounts SET data=$1,revision=1,integrity=$2 WHERE store_id=$3', [data, integrity(data), user.store_id]);
-          await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,1)',
-            [user.store_id, request.id, user.id, user.device_id, 'bootstrap', hash, { success: true }]);
-          await audit(client, user, 'bootstrap', { memberCount: data.members.length, ledgerCount: data.ledgers.length });
-        }
-        const { rows: [next] } = await client.query('SELECT * FROM accounts WHERE store_id=$1', [user.store_id]);
-        return { data: next.data, revision: next.revision, integrity: next.integrity, acknowledged: [request.id] };
-      });
-    },
-    async importStatus(identity, signature) {
-      if (!/^[a-f0-9]{64}$/.test(signature)) throw new ApiError(400, '导入任务标识无效');
-      return transaction(pool, async client => {
-        const user = await lockedUser(client, identity);
-        if (user.role === 'viewer') throw new ApiError(403, '当前账号没有导入权限', 'FORBIDDEN');
-        return { signature, ...(importStatus(await importReceipts(client, user, signature)) || { status: 'absent', count: 0 }) };
-      });
-    },
-    async sync(identity, operations, importBatch = null, observedHead = null) {
-      if (!Array.isArray(operations) || operations.length > 100 || new Set(operations.map(op => op?.id)).size !== operations.length) throw new ApiError(400, '同步批次格式无效');
-      if (observedHead !== null && (!observedHead || !Number.isSafeInteger(observedHead.revision) || observedHead.revision < 0 ||
-          typeof observedHead.integrity !== 'string' || !/^[a-f0-9]{64}$/.test(observedHead.integrity))) throw new ApiError(400, '同步账本版本格式无效');
-      return transaction(pool, async client => {
-        const user = await lockedUser(client, identity);
-        for (const operation of operations) if (!canWrite(user.role, operation?.method)) throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
-        try {
-          assertJsonBudget(operations, operations.some(op => op?.method === 'importBackupData') ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes, DATA_LIMITS.backupBytes);
-          operations.forEach(validateOperation);
-          if (importBatch !== null) { assertJsonBudget(importBatch, 1024); validateImportReceipt(importBatch, operations); }
-        } catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
-        for (const operation of operations) if (operation.actorId !== user.id || operation.deviceId !== user.device_id) throw new ApiError(403, '操作账号或设备不匹配', 'FORBIDDEN');
-        const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
-        if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败', 'INTEGRITY_FAILED');
-        // The account lock closes the gap between the client's head check and
-        // this upload, including batches that could advance a rolled-back head.
-        if (observedHead && (account.revision < observedHead.revision || account.revision === observedHead.revision && account.integrity !== observedHead.integrity)) {
-          throw new ApiError(409, '云端账本版本核验失败，请先导出并核对账本', 'CLOUD_INTEGRITY_CONFLICT');
-        }
-        let receiptRows = [], receiptHash;
-        if (importBatch !== null) {
-          receiptRows = await importReceipts(client, user, importBatch.signature);
-          const previous = importStatus(receiptRows);
-          if (previous && previous.taskId !== importBatch.taskId) {
-            if (previous.status === 'complete') return { data: account.data, revision: account.revision, integrity: account.integrity,
-              acknowledged: operations.map(op => op.id), importReceipt: { signature: importBatch.signature, ...previous } };
-            throw new ApiError(409, '这份数据已部分导入，请在原设备继续确认，或核对后仅导入剩余记录', 'IMPORT_ALREADY_STARTED');
-          }
-          if (previous && (previous.total !== importBatch.total || receiptRows[0].result.totalBatches !== importBatch.totalBatches)) throw new ApiError(409, '原导入任务的批次声明已变化', 'SYNC_CONFLICT');
-          receiptHash = integrity({ operations, importBatch });
-          const existingReceipt = receiptRows.find(row => row.result.batchIndex === importBatch.batchIndex);
-          if (existingReceipt && existingReceipt.request_hash !== receiptHash) throw new ApiError(409, '原导入批次内容已变化', 'SYNC_CONFLICT');
-          if (!existingReceipt && importBatch.batchIndex !== receiptRows.length) throw new ApiError(409, '请按原导入批次顺序继续确认', 'SYNC_CONFLICT');
-        }
-        let data = account.data, revision = account.revision;
-        for (const operation of operations) {
-          if (!canWrite(user.role, operation.method)) throw new ApiError(403, '当前账号没有此操作权限', 'FORBIDDEN');
-          if (operation.actorId !== user.id || operation.deviceId !== user.device_id) throw new ApiError(403, '操作账号或设备不匹配', 'FORBIDDEN');
-          const hash = integrity(operation);
-          const { rows: [existing] } = await client.query('SELECT * FROM operations WHERE store_id=$1 AND id=$2', [user.store_id, operation.id]);
-          if (existing) {
-            if (existing.request_hash !== hash || existing.user_id !== user.id) throw new ApiError(409, '同一同步单号对应不同操作', 'SYNC_CONFLICT');
-            if (existing.result?.cancelled === true) throw new ApiError(409, '此操作已取消，请重新核对后记账', 'OPERATION_CANCELLED');
-            continue;
-          }
-          let applied;
-          try { applied = replayOperation(data, operation); data = validateSnapshot(applied.data, { allowPhoneConflicts: operation.method === 'updateMember' }); }
-          catch (error) { throw new ApiError(error.status || 409, error.message, error.code || 'SYNC_CONFLICT'); }
-          revision++;
-          await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-            [user.store_id, operation.id, user.id, user.device_id, operation.method, hash, JSON.stringify(applied.result), revision]);
-          await audit(client, user, operation.method, { operationId: operation.id }, operation.generated.times.at(-1) || null);
-        }
-        const checksum = integrity(data);
-        await client.query('UPDATE accounts SET data=$1,revision=$2,integrity=$3 WHERE store_id=$4', [data, revision, checksum, user.store_id]);
-        let receipt;
-        if (importBatch !== null) {
-          if (!receiptRows.some(row => row.result.batchIndex === importBatch.batchIndex)) {
-            const count = receiptRows.reduce((sum, row) => sum + row.result.count, 0) + importBatch.count;
-            if (count > importBatch.total || importBatch.batchIndex === importBatch.totalBatches - 1 && count !== importBatch.total) throw new ApiError(400, '导入进度与记录总数不一致');
-            await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-              [user.store_id, importReceiptId(importBatch.signature, importBatch.batchIndex), user.id, user.device_id, 'admin_import_batch', receiptHash, importBatch, revision]);
-          }
-          receipt = { signature: importBatch.signature, ...importStatus(await importReceipts(client, user, importBatch.signature)) };
-        }
-        return { data, revision, integrity: checksum, acknowledged: operations.map(op => op.id), ...(receipt ? { importReceipt: receipt } : {}) };
-      });
-    },
-    async resolveOperations(identity, operations, bootstrap = null) {
-      if (!Array.isArray(operations) || (!operations.length && !bootstrap) || operations.length > 100 ||
-          (bootstrap && operations.length) ||
-          (operations.some(op => op?.method === 'importBackupData') && operations.length !== 1) ||
-          new Set(operations.map(op => op?.id)).size !== operations.length) throw new ApiError(400, '待确认操作格式无效');
-      let bootstrapData;
-      try {
-        assertJsonBudget(operations, operations.some(op => op?.method === 'importBackupData') ? DATA_LIMITS.restoreBytes : DATA_LIMITS.syncBytes, DATA_LIMITS.backupBytes);
-        operations.forEach(validateOperation);
-        if (bootstrap) {
-          assertJsonBudget(bootstrap, DATA_LIMITS.restoreBytes);
-          if (typeof bootstrap.id !== 'string' || !/^[a-zA-Z0-9-]{16,80}$/.test(bootstrap.id)) throw new Error('同步单号无效');
-          bootstrapData = validateSnapshot(bootstrap.data);
-        }
-      } catch (error) { throw new ApiError(error.status || 400, error.message, error.code); }
-      return transaction(pool, async client => {
-        const user = await lockedUser(client, identity);
-        // The same account lock used by sync fences requests still in flight.
-        const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [user.store_id]);
-        if (integrity(account.data) !== account.integrity) throw new ApiError(503, '云端账本完整性检查失败', 'INTEGRITY_FAILED');
-        const resolved = [];
-        const requests = bootstrap ? [{ id: bootstrap.id, method: 'bootstrap', actorId: user.id, deviceId: user.device_id }] : operations;
-        for (const operation of requests) {
-          if (operation.actorId !== user.id || operation.deviceId !== user.device_id) throw new ApiError(403, '操作账号或设备不匹配', 'FORBIDDEN');
-          const hash = bootstrap ? integrity({ method: 'bootstrap', data: bootstrapData }) : integrity(operation);
-          const { rows: [existing] } = await client.query('SELECT * FROM operations WHERE store_id=$1 AND id=$2', [user.store_id, operation.id]);
-          if (existing && (existing.request_hash !== hash || existing.user_id !== user.id || existing.device_id !== user.device_id)) throw new ApiError(409, '同一同步单号对应不同操作或设备', 'SYNC_CONFLICT');
-          if (!existing) {
-            await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-              [user.store_id, operation.id, user.id, user.device_id, operation.method, hash, { cancelled: true }, account.revision]);
-            await audit(client, user, 'operation_cancelled', { operationId: operation.id, method: operation.method });
-          }
-          resolved.push({ id: operation.id, status: !existing || existing.result?.cancelled === true ? 'cancelled' : 'committed' });
-        }
-        return { data: account.data, revision: account.revision, integrity: account.integrity, resolved };
-      });
-    },
     async users(identity) {
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'staff');
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以管理账号');
-        const { rows } = await client.query('SELECT id,store_id,username,display_name,role,active FROM users WHERE store_id=$1 ORDER BY created_at', [user.store_id]);
-        return rows.map(member => ({ ...publicUser(member), active: member.active }));
+        const { rows } = await client.query('SELECT id,store_id,username,display_name,role,active,platform_disabled FROM users WHERE store_id=$1 AND historical_only=false ORDER BY created_at', [user.store_id]);
+        return rows.map(member => ({ ...publicUser(member), active: member.active, platformDisabled: member.platform_disabled }));
       });
     },
     async createUser(identity, input) {
@@ -392,8 +234,9 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
       return transaction(pool, async client => {
         await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'staff');
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以管理账号');
-        const { rows: [count] } = await client.query('SELECT count(*)::int AS count FROM users WHERE store_id=$1', [user.store_id]);
+        const { rows: [count] } = await client.query('SELECT count(*)::int AS count FROM users WHERE store_id=$1 AND historical_only=false', [user.store_id]);
         if (count.count >= 100) throw new ApiError(413, '账号数量已达到 100 个上限', 'DATA_LIMIT');
         const id = randomUUID();
         await client.query('INSERT INTO users(id,store_id,username,display_name,password_hash,role) VALUES($1,$2,$3,$4,$5,$6)', [id, user.store_id, username, input.displayName.trim(), passwordHash, input.role]);
@@ -407,12 +250,14 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
         // 管理员变更统一按门店锁定，防止两个请求同时撤销最后一位店主。
         await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'staff');
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以管理账号');
-        const { rows } = await client.query('SELECT id,role,active FROM users WHERE store_id=$1 FOR UPDATE', [user.store_id]);
+        const { rows } = await client.query('SELECT id,role,active,platform_disabled,historical_only FROM users WHERE store_id=$1 FOR UPDATE', [user.store_id]);
         const target = rows.find(row => row.id === id);
         if (!target) throw new ApiError(404, '账号不存在');
-        if (target.role === 'owner' && target.active && (!input.active || input.role !== 'owner') && rows.filter(row => row.active && row.role === 'owner').length === 1) throw new ApiError(409, '必须保留至少一位在用店主');
-        await client.query('UPDATE users SET role=$1,active=$2 WHERE id=$3 AND store_id=$4', [input.role, input.active, id, user.store_id]);
+        if (target.historical_only) throw new ApiError(409, '历史操作人引用不能启用或修改', 'HISTORICAL_ACTOR');
+        if (target.role === 'owner' && target.active && !target.platform_disabled && (!input.active || input.role !== 'owner') && rows.filter(row => row.active && !row.platform_disabled && row.role === 'owner').length === 1) throw new ApiError(409, '必须保留至少一位在用店主');
+        await client.query('UPDATE users SET role=$1,active=$2,version=version+1 WHERE id=$3 AND store_id=$4', [input.role, input.active, id, user.store_id]);
         await client.query('UPDATE sessions SET revoked=true WHERE user_id=$1', [id]);
         await audit(client, user, 'user_permissions_changed', { targetUserId: id, role: input.role, active: input.active });
         return { success: true };
@@ -444,6 +289,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
     async getAliGenieDevices(identity) {
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'voice');
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以查看待绑定音箱');
         const { rows: [settings] } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
         const config = settings?.voice_config?.aligenie;
@@ -458,6 +304,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
     async getVoiceConfig(identity) {
       return transaction(pool, async client => {
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'voice');
         const { rows } = await client.query('SELECT voice_config,voice_config_version FROM store_settings WHERE store_id=$1', [user.store_id]);
         const saved = rows[0]?.voice_config || {};
         const config = readVoiceConfig(saved);
@@ -468,6 +315,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
       return transaction(pool, async client => {
         await client.query('SELECT id FROM stores WHERE id=$1 FOR UPDATE', [identity.store_id]);
         const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'voice');
         if (user.role !== 'owner') throw new ApiError(403, '仅店主可以修改语音播报配置');
         if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) throw new ApiError(400, '语音配置版本无效，请重新加载或更新客户端', 'VOICE_CONFIG_VERSION_REQUIRED');
         const { rows } = await client.query('SELECT voice_config,voice_config_version FROM store_settings WHERE store_id=$1 FOR UPDATE', [user.store_id]);
@@ -494,6 +342,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
       try {
         const config = await transaction(pool, async client => {
           const user = await lockedUser(client, identity);
+        requireFeature(user.entitlements, 'voice');
           if (options.test === true && user.role !== 'owner') throw new ApiError(403, '仅店主可以试听草稿配置');
           const { rows } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1', [user.store_id]);
           const saved = readVoiceConfig(rows[0]?.voice_config || {});
@@ -506,7 +355,7 @@ export function createService(pool, { fetchFn, socketFn } = {}) {
       } finally { activeSynthesis--; }
     },
     async handleAliGenieWebhook(body, { headers = {}, platformTokenAuthenticated = false, trace = null } = {}) {
-      return handleAliGenieWebhook({ pool, body, headers, platformTokenAuthenticated, trace });
+      return handleAliGenieWebhook({ pool, body, headers, platformTokenAuthenticated, trace, executeRelationalVoice: relational.executeVoiceCommand });
     },
     async getAliGenieVerification(fileName) {
       return getAliGenieVerificationContent(fileName, pool);

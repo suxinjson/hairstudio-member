@@ -71,6 +71,7 @@ Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路�
 | Variable 名称 | 填入的内容 |
 | --- | --- |
 | `RELEASE_CERT_SHA256` | `keytool` 输出的 `SHA256:` 指纹，只复制指纹值，允许带冒号 |
+| `RELATIONAL_RELEASE_APPROVED` | 达到 [发布门槛](../docs/refactor-test-plan.md#10-发布清单与完成状态) 后由负责人设为 `true`；未签收时不设置或保持关闭 |
 
 名称必须完全一致。当前工作流读取 repository Secrets 与 Variable；它没有配置 GitHub Environment，因此只放在某个 Environment 下的 Secrets 不会自动注入。`RELEASE_CERT_SHA256` 须设置在 Variables，其他四项须设置在 Secrets。
 
@@ -78,9 +79,9 @@ Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路�
 
 ## 5. 重新构建与下载
 
-将最新工作流和源码推送到仓库后，进入 **Actions → 自动编译安卓安装包(APK) → Run workflow**，选择 `main` 或 `master` 后运行。仅修改 GitHub Secrets 不会自动触发构建。
+推送和普通手动运行只验证，包括网页、后台、Debug APK、单测与仪表源码编译。它们不会上传正式 APK 或部署。签名 APK 预验可在受控构建机按同一候选构建；当前不批准生产发布。
 
-正常流程为测试、前端构建、签名配置、Gradle release 构建、实际 APK 签名校验以及上传安装包。缺少配置时会列出所有缺项；密码、别名或指纹不匹配时仍会停止发布。
+达到 [发布门槛](../docs/refactor-test-plan.md#10-发布清单与完成状态) 后，核实候选源码、目标和审批，再由负责人设置 `RELATIONAL_RELEASE_APPROVED=true`，在 Actions 的 Run workflow 中显式勾选 `release`。具备两者才配置正式签名、校验证书并生成发布产物；配置 SSH 时同一正式运行还会部署，启动前须确认维护窗口、目标和已读回备份。
 
 成功后在该次运行页面 **Artifacts** 下载 `member-manager-版本号`，解压获得 APK 和 `update-manifest.json`。安装包覆盖升级要求保持同一包名、签名密钥，并使用更高的 `versionCode`。
 
@@ -88,7 +89,7 @@ Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路�
 
 ## 6. 自动 SSH 部署的服务器主机密钥
 
-启用自动部署需要两个 repository Secrets：`SERVER_SSH_KEY` 和 `SERVER_KNOWN_HOSTS`。两者均从 GitHub Actions 读取，服务器公钥不再从仓库文件加载。此前构建已通过签名和产物上传，只因缺少 `SERVER_KNOWN_HOSTS` 停止部署；已有签名 Secrets、SSH 私钥和证书 Variable 应沿用。
+启用自动部署需要两个 repository Secrets：`SERVER_SSH_KEY` 和 `SERVER_KNOWN_HOSTS`。两者均从 GitHub Actions 读取，服务器公钥不再从仓库文件加载。两个密钥都应由运维按目标主机核验；持有 SSH 机密本身不会触发部署，还必须满足正式发布闸门。已有签名与证书按原包维护。
 
 在 [仓库 Actions Secrets 设置](https://github.com/suxinjson/hairstudio-member/settings/secrets/actions) 点击 **New repository secret**。自动构建并部署需保存以下六项 Secrets（已存在的保留原值）：
 

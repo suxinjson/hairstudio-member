@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, mkdir, readFile, writeFile, symlink, access, rm } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, writeFile, symlink, access, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,11 +31,11 @@ function run(script, cwd, env = {}, timeout = 60000) {
   });
 }
 
-async function deployment(t, { domain = 'member.example.com', validationFails = false, health = 'ok', ipConfig = true } = {}) {
+async function deployment(t, { domain = 'member.example.com', validationFails = false, health = 'ok', ipConfig = true, licenseKey = '', licensingConfig = true, environmentLicenseKey } = {}) {
   const directory = await fixture(t), bin = join(directory, 'bin');
   await Promise.all([mkdir(bin), mkdir(join(directory, 'deploy')), mkdir(join(directory, 'releases'))]);
   await Promise.all([
-    writeFile(join(directory, '.env'), `PUBLIC_DOMAIN=${domain}\n`),
+    writeFile(join(directory, '.env'), `PUBLIC_DOMAIN=${domain}\nLICENSE_PRIVATE_KEY_HOST_FILE=${licenseKey}\n`),
     writeFile(join(directory, 'compose.yaml'), 'services: {}\n'),
     writeFile(join(directory, 'releases/member-manager-v1.0.1.apk'), 'test-apk'),
     writeFile(join(directory, 'releases/update-manifest.json'), JSON.stringify({ versionName: '1.0.1' }, null, 2)),
@@ -65,10 +65,12 @@ if [ "$REVIEW_HEALTH" = redirect ]; then printf '302'; else printf '200'; fi
     writeFile(join(bin, 'flock'), '#!/usr/bin/env bash\nprintf "flock %s\\n" "$*" >> "$REVIEW_LOG"\n', { mode: 0o755 })
   ]);
   if (ipConfig) await writeFile(join(directory, 'deploy/compose.ip.yaml'), 'services: {}\n');
+  if (licensingConfig) await writeFile(join(directory, 'deploy/compose.licensing.yaml'), 'services: {}\n');
   const result = run('export PATH="$REVIEW_BIN:$PATH"\nsource deploy/deploy-update.sh', directory, {
     REVIEW_BIN: process.platform === 'win32' ? unix(bin).replace(/^([A-Za-z]):/, (_, drive) => '/' + drive.toLowerCase()) : bin,
     REVIEW_LOG: unix(join(directory, 'commands.log')), REVIEW_COUNT: unix(join(directory, 'health-count')),
-    REVIEW_VALIDATION_FAILS: validationFails ? '1' : '0', REVIEW_HEALTH: health
+    REVIEW_VALIDATION_FAILS: validationFails ? '1' : '0', REVIEW_HEALTH: health,
+    ...(environmentLicenseKey !== undefined ? { LICENSE_PRIVATE_KEY_HOST_FILE: environmentLicenseKey } : {})
   });
   const commands = await readFile(join(directory, 'commands.log'), 'utf8').catch(error => {
     if (error.code !== 'ENOENT') throw error;
@@ -220,6 +222,29 @@ test('missing IP certificate configuration stops before restarting containers', 
   assert.ok(!result.commands.includes('docker compose '));
 });
 
+test('signed licensing keeps its secret mount through domain and IPv4 upgrades without logging key paths', { skip: !bashAvailable }, async t => {
+  for (const domain of ['member.example.com', '124.70.184.136']) {
+    const result = await deployment(t, { domain, licenseKey: '"/secure/license key.pem"' });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const composeCalls = result.commands.split('\n').filter(line => line.startsWith('docker compose '));
+    assert.ok(composeCalls.length >= 3);
+    assert.ok(composeCalls.every(line => line.includes('-f deploy/compose.licensing.yaml')));
+    assert.ok(!(result.stdout + result.stderr + result.commands).includes('/secure/'));
+  }
+  const disabled = await deployment(t, { licenseKey: '/secure/key.pem', environmentLicenseKey: '' });
+  assert.equal(disabled.status, 0, disabled.stdout + disabled.stderr);
+  assert.ok(!disabled.commands.includes('compose.licensing.yaml'));
+  const exported = await deployment(t, { environmentLicenseKey: '/secure/key.pem' });
+  assert.equal(exported.status, 0, exported.stdout + exported.stderr);
+  assert.ok(exported.commands.includes('compose.licensing.yaml'));
+});
+
+test('missing licensing configuration stops before restarting a configured signing service', { skip: !bashAvailable }, async t => {
+  const result = await deployment(t, { licenseKey: '/secure/key.pem', licensingConfig: false });
+  assert.notEqual(result.status, 0);
+  assert.ok(!result.commands.includes('docker compose '));
+});
+
 test('Caddy validation failures stop publication and collect web and API logs', { skip: !bashAvailable }, async t => {
   const result = await deployment(t, { validationFails: true });
   assert.notEqual(result.status, 0);
@@ -249,7 +274,7 @@ test('temporary HTTPS failures recover before an APK is published', { skip: !bas
 
 test('the workflow deployment archive builds its Docker frontend without an Android project or preexisting files', { skip: !bashAvailable }, async t => {
   const directory = await fixture(t);
-  for (const name of ['admin', 'server', 'src', 'deploy', 'Dockerfile', 'compose.yaml', 'package.json', 'package-lock.json', 'capacitor.config.json', 'index.html', 'vite.config.js', '.dockerignore', 'vendor']) {
+  for (const name of ['admin', 'server', 'src', 'deploy', 'docs', 'Dockerfile', 'compose.yaml', 'package.json', 'package-lock.json', 'capacitor.config.json', 'index.html', 'vite.config.js', '.dockerignore', 'vendor']) {
     await cp(join(root, name), join(directory, name), { recursive: true });
   }
   await mkdir(join(directory, 'output_apk'));
@@ -276,6 +301,8 @@ test('the workflow deployment archive builds its Docker frontend without an Andr
   await access(join(unpacked, '.dockerignore'));
   assert.equal((await readFile(join(unpacked, 'release-version.txt'), 'utf8')).trim(), '1');
   await access(join(unpacked, 'deploy/install-update.sh'));
+  await access(join(unpacked, 'docs/platform-operations.md'));
+  await access(join(unpacked, 'deploy/compose.licensing.yaml'));
   await symlink(join(root, 'node_modules'), join(unpacked, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   // Execute the actual frontend build instruction shipped in the Dockerfile.
   const dockerfile = await readFile(join(unpacked, 'Dockerfile'), 'utf8');
@@ -294,6 +321,13 @@ test('the API Docker stage includes every relative source dependency of its copi
     .flatMap(match => match[1].split(/\s+/));
   assert.ok(sources.length);
   const copied = new Set(sources.map(source => new URL('../' + source, import.meta.url).href));
+  for (const file of await readdir(new URL('../server/', import.meta.url))) {
+    if (!file.endsWith('.js')) continue;
+    const module = new URL('../server/' + file, import.meta.url);
+    for (const dependency of (await readFile(module, 'utf8')).matchAll(/from ['"](\.\.\/src\/[^'"]+)['"]/g)) {
+      assert.ok(copied.has(new URL(dependency[1], module).href), file + ' requires an uncopied API source: ' + dependency[1]);
+    }
+  }
   for (const module of copied) {
     const contents = await readFile(new URL(module), 'utf8');
     for (const dependency of contents.matchAll(/from ['"](\.[^'"]+)['"]/g)) {
@@ -302,11 +336,32 @@ test('the API Docker stage includes every relative source dependency of its copi
   }
 });
 
-test('voice API has egress while PostgreSQL remains isolated and unexposed', async () => {
+test('domain and IP deployments apply the same platform script and framing restrictions', async () => {
+  const headers = [];
+  for (const file of ['Caddyfile', 'Caddyfile.ip']) {
+    const config = await readFile(new URL('../deploy/' + file, import.meta.url), 'utf8');
+    const rules = config.split(/\r?\n/).map(line => line.trim()).filter(line => line.startsWith('header /admin/platform.html '));
+    assert.equal(rules.length, 2);
+    assert.ok(rules.some(line => line.includes("script-src 'self'") && line.includes("frame-ancestors 'none'")));
+    assert.ok(rules.includes('header /admin/platform.html X-Frame-Options "DENY"'));
+    headers.push(rules);
+  }
+  assert.deepEqual(headers[0], headers[1]);
+});
+
+test('API egress reaches external PostgreSQL and voice providers without publishing the database or API', async () => {
   const compose = await readFile(new URL('../compose.yaml', import.meta.url), 'utf8');
-  const database = compose.slice(compose.indexOf('  db:'), compose.indexOf('  migrate:'));
+  const migration = compose.slice(compose.indexOf('  migrate:'), compose.indexOf('  api:'));
   const api = compose.slice(compose.indexOf('  api:'), compose.indexOf('  web:'));
-  assert.match(api, /networks: \[private, voice_egress\]/); assert.match(api, /VOICE_ALLOWED_ORIGINS:/);
-  assert.match(database, /networks: \[private\]/); assert.doesNotMatch(database, /ports:/);
-  assert.match(compose, /private:\s+internal: true/); assert.match(compose, /voice_egress:\s*$/);
+  assert.doesNotMatch(compose, /^(?:  (?:db|postgres):|    image:.*postgres)|\/var\/lib\/postgresql/m);
+  assert.match(migration, /DATABASE_URL: \$\{MIGRATION_DATABASE_URL:\?/);
+  assert.match(migration, /networks: \[egress\]/);
+  assert.match(api, /DATABASE_URL: \$\{DATABASE_URL:\?/);
+  assert.match(api, /networks: \[private, egress\]/);
+  assert.match(api, /VOICE_ALLOWED_ORIGINS:/);
+  assert.match(api, /read_only: true/);
+  assert.match(api, /volumes: \["packages:\/app\/releases:ro"\]/);
+  assert.doesNotMatch(migration + api, /ports:/);
+  assert.match(compose, /private:\s+internal: true/);
+  assert.match(compose, /^  egress:\s*$/m);
 });

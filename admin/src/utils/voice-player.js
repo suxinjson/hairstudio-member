@@ -1,4 +1,4 @@
-import { adminApi } from '../api/client.js';
+import { adminApi } from '../api/session.js';
 import { VoicePlayer } from '../../../src/voice-player.js';
 
 export const voicePlayer = new VoicePlayer({

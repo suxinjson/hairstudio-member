@@ -3,15 +3,15 @@ import { DEFAULT_VOICE_CONFIG } from './voice.js';
 
 import { transaction } from './database.js';
 import { integrity, digest, ApiError } from './security.js';
-import { replayOperation } from '../src/cloud-storage.js';
-import { mutationPrecondition, canonicalJSON, validateOperation } from '../src/sync-protocol.js';
-import { validateSnapshot } from './service.js';
+import { canonicalJSON } from '../src/canonical-json.js';
 import { moneyToCent } from '../src/money.js';
 import { normalizeVoiceText } from '../src/voice-text.js';
 import { assertJsonBudget } from '../src/data-limits.js';
-import { rechargeGiftCent } from '../src/recharge-settings.js';
 import { readStoreProfile } from './store-profile.js';
 import { storeWelcome } from '../src/store-profile.js';
+import { storeEntitlement, requireFeature } from './entitlements.js';
+import { centsString } from '../src/ledger-domain.js';
+import { createRelationalVoice, voiceYuan } from './relational-voice.js';
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
 
@@ -164,7 +164,7 @@ function normalizeMoneySlot(slot) {
     // the actual spoken amount; do not pick an arbitrary number from the JSON.
     const original = String(slot.originalValue ?? slot.slotValue ?? '').trim();
     if (price.success === true && price.type === 'CNY' && ['元', '块', '块钱'].includes(price.unit) &&
-        (parseAmount(original) !== null || /^(?:0(?:\.0{1,2})?|零)(?:元|块钱|块)?$/.test(original))) return original;
+        parseVoiceCents(original) !== null) return original;
     return typeof standard === 'string' ? standard : JSON.stringify(standard);
   }
   return standard;
@@ -202,15 +202,17 @@ function matchesPlatformConfirmation(preview, current) {
   return canonicalJSON(expected) === canonicalJSON(current);
 }
 
-export function parseAmount(raw) {
+function parseVoiceCents(raw) {
   if (raw === undefined || raw === null) return null;
   const spoken = String(raw).trim();
+  if (spoken.length > 64) return null;
   // NLU can put an unrecognized member's mobile number into the amount slot.
   // A bare mobile number is ambiguous identity input, not an explicit price.
   if (/^1[3-9]\d{9}$/.test(spoken)) return null;
   const str = spoken.replace(/(?:元|块钱|块)$/, '').trim();
   if (/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(str)) {
-    try { const cents = moneyToCent(str); return cents > 0 && moneyToCent(cents / 100) === cents ? cents / 100 : null; } catch { return null; }
+    const [whole, fraction = ''] = str.split('.');
+    try { return centsString(BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))); } catch { return null; }
   }
   if (!/^[零一二两三四五六七八九十百千万]+(?:点[零一二三四五六七八九]{1,2})?$/.test(str)) return null;
   const digits = { 零:0, 一:1, 二:2, 两:2, 三:3, 四:4, 五:5, 六:6, 七:7, 八:8, 九:9 };
@@ -220,7 +222,7 @@ export function parseAmount(raw) {
     if (!text) return null;
     if (!/[十百千]/.test(text)) {
       if (text.length > 1 && !text.startsWith('零')) return null;
-      return Number([...text].map(c => digits[c]).join(''));
+      return BigInt([...text].map(c => digits[c]).join(''));
     }
     let total = 0, digit = null, lastUnit = 10000, zero = false;
     for (let i = 0; i < text.length; i++) {
@@ -237,7 +239,7 @@ export function parseAmount(raw) {
     }
     if (zero && digit === null) return null;
     // Established speech shorthand: 一百五 means 150; 一百零五 means 105.
-    return total + (digit ?? 0) * (!zero && lastUnit > 10 ? lastUnit / 10 : 1);
+    return BigInt(total + (digit ?? 0) * (!zero && lastUnit > 10 ? lastUnit / 10 : 1));
   }
   const parts = integer.split('万');
   if (parts.length > 2) return null;
@@ -245,24 +247,34 @@ export function parseAmount(raw) {
   if (parts.length === 2) {
     // Require explicit units for ambiguous shorthand above ten thousand.
     if (/^[一二两三四五六七八九]$/.test(parts[1])) return null;
-    const high = section(parts[0]), low = parts[1] ? section(parts[1]) : 0;
-    if (high === null || high <= 0 || low === null) return null;
-    result = high * 10000 + low;
+    const high = section(parts[0]), low = parts[1] ? section(parts[1]) : 0n;
+    if (high === null || high <= 0n || low === null) return null;
+    result = high * 10000n + low;
   } else result = section(integer);
   if (result === null) return null;
-  if (fraction) result += Number([...fraction].map(c => digits[c]).join('')) / 10 ** fraction.length;
-  try { return moneyToCent(result) > 0 ? result : null; } catch { return null; }
+  const decimal = fraction ? [...fraction].map(c => digits[c]).join('').padEnd(2, '0') : '0';
+  try { return centsString(result * 100n + BigInt(decimal)); } catch { return null; }
 }
 
-export function extractAmountFromUtterance(utterance, memberName = '') {
+export function parseAmount(raw) {
+  const cents = parseVoiceCents(raw);
+  if (cents === null || cents === '0') return null;
+  const result = Number(cents) / 100;
+  try { return String(moneyToCent(result)) === cents ? result : null; } catch { return null; }
+}
+
+function spokenAmountCandidate(utterance, memberName = '') {
   if (!utterance) return null;
   let text = String(utterance);
   if (memberName) text = text.replaceAll(memberName, '');
-  text = text.replace(/(?:手机|电话)?尾号\s*\d{3,8}|1\d{10}/g, '');
+  text = text.replace(/(?:手机|电话)?尾号\s*[\d零〇一幺二两三四五六七八九]{3,8}(?![\d零〇一幺二两三四五六七八九])|(?<![\d.])1[3-9]\d{9}(?![\d.]|\s*(?:元|块))/g, '');
   const action = text.match(/(?:消费|扣款|扣除|结账|买单|充值|金额|实充|支付|付|充|存|扣)\s*(.+)$/);
   if (!action) return null;
-  const candidate = action[1].trim().replace(/[，。！？!?]$/, '');
-  return parseAmount(candidate);
+  return action[1].trim().replace(/[，。！？!?]$/, '');
+}
+
+export function extractAmountFromUtterance(utterance, memberName = '') {
+  return parseAmount(spokenAmountCandidate(utterance, memberName));
 }
 
 function stripMemberQuery(raw) {
@@ -372,8 +384,13 @@ export function membersFromUtterance(members, utterance) {
       return remaining.includes(m.name);
     });
   }
-  const identity = utterance.match(/(?:尾号\s*([\d零〇一幺二两三四五六七八九]{3,8})(?![\d零〇一幺二两三四五六七八九])|(?:手机|手机号|电话)\s*([\d零〇一幺二两三四五六七八九]{11})(?![\d零〇一幺二两三四五六七八九])|(?<!\d)(1\d{10})(?!\d))/);
-  return identity ? findMatchingMembers(active, identity[1] || identity[2] || identity[3]) : [];
+  const identity = phoneFromUtterance(utterance);
+  return identity ? findMatchingMembers(active, identity) : [];
+}
+
+function phoneFromUtterance(utterance) {
+  const identity = utterance.match(/(?:尾号\s*([\d零〇一幺二两三四五六七八九]{3,8})(?![\d零〇一幺二两三四五六七八九])|(?:手机|手机号|电话)\s*([\d零〇一幺二两三四五六七八九]{11})(?![\d零〇一幺二两三四五六七八九])|(?<![\d.])(1[3-9]\d{9})(?![\d.]|\s*(?:元|块)))/);
+  return identity ? identity[1] || identity[2] || identity[3] : '';
 }
 export function findMemberFromUtterance(members, utterance) {
   const matches = membersFromUtterance(members, utterance);
@@ -453,6 +470,8 @@ function askAliGenieParameter(req, parameterName, text) {
 const PLATFORM_BUSINESS_REPLIES = new Map([
   ['VOICE_ACTOR_UNAVAILABLE', '当前语音记账账号已停用或无权限，请店主在语音设置中选择可用的记账账号。'],
   ['VOICE_ACTOR_CHANGED', '语音记账账号已变化，请重新说完整的消费、充值或查询指令。'],
+  ['VOICE_CONTEXT_CHANGED', '原请求的账本或授权已变化，请重新说完整的指令并确认。'],
+  ['VOICE_PREVIEW_STALE', '语音预览已过期，请重新发起操作并确认。'],
   ['VOICE_LEDGER_INVALID', '门店账本校验失败，暂时无法查询或记账，请店主检查云端账本。'],
   ['VOICE_REQUEST_CONFLICT', '本次语音请求编号与之前的内容冲突，请重新唤起技能后再试。']
 ]);
@@ -492,43 +511,6 @@ export function makeConfirmDirective() {
   };
 }
 
-function pendingOperation(pending, data, actorId, deviceId, requestId) {
-  const method = pending.action;
-  const args = [method === 'consume' ? {
-    memberId: pending.memberId, amount: (pending.amountCent / 100).toFixed(2),
-    itemsSummary: pending.itemsSummary, remark: pending.remark, allowDebt: pending.allowDebt
-  } : {
-    memberId: pending.memberId, actualPay: (pending.actualCent / 100).toFixed(2),
-    giftAmount: (pending.giftCent / 100).toFixed(2), payMethod: '语音充值', remark: '天猫精灵语音充值'
-  }];
-  const operation = { id: 'voice-' + digest(requestId), actorId, deviceId, method, args,
-    precondition: mutationPrecondition(data, method, args),
-    generated: { ids: ['TX' + randomUUID()], times: [new Date().toISOString()] } };
-  validateOperation(operation);
-  return operation;
-}
-
-export async function executeVoiceOperation({ client, storeId, account, operation }) {
-  validateOperation(operation);
-  const { rows: [existing] } = await client.query('SELECT * FROM operations WHERE store_id=$1 AND id=$2', [storeId, operation.id]);
-  const hash = integrity(operation);
-  if (existing) {
-    if (existing.request_hash !== hash) throw new ApiError(409, '语音操作单号冲突');
-    return { result: existing.result };
-  }
-  if (canonicalJSON(operation.precondition) !== canonicalJSON(mutationPrecondition(account.data, operation.method, operation.args))) {
-    throw new ApiError(409, '会员资料、余额或充值规则已变化，请重新发起操作并确认', 'VOICE_PREVIEW_STALE');
-  }
-  const applied = replayOperation(account.data, operation), data = validateSnapshot(applied.data);
-  const revision = account.revision + 1;
-  await client.query('INSERT INTO operations(store_id,id,user_id,device_id,method,request_hash,result,revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-    [storeId, operation.id, operation.actorId, operation.deviceId, operation.method, hash, applied.result, revision]);
-  await client.query('UPDATE accounts SET data=$1,revision=$2,integrity=$3 WHERE store_id=$4', [data, revision, integrity(data), storeId]);
-  await client.query('INSERT INTO audit_events(store_id,user_id,device_id,event,details,occurred_at) VALUES($1,$2,$3,$4,$5,$6)',
-    [storeId, operation.actorId, operation.deviceId, 'voice_' + operation.method, { operationId: operation.id, result: applied.result }, operation.generated.times[0]]);
-  return { result: applied.result };
-}
-
 export function signAliGenieRequest(secret, timestamp, storeId, body) {
   return createHmac('sha256', secret).update(String(timestamp) + '\n' + storeId + '\n' + canonicalJSON(body)).digest('hex');
 }
@@ -556,7 +538,7 @@ async function rememberAliGenieDevice(pool, storeId, req, config) {
   });
 }
 
-export async function handleAliGenieWebhook({ pool, body, headers = {}, platformTokenAuthenticated = false, trace = null }) {
+export async function handleAliGenieWebhook({ pool, body, headers = {}, platformTokenAuthenticated = false, trace = null, executeRelationalVoice }) {
   const storeId = headers['x-store-id'];
   const timestamp = headers['x-aligenie-timestamp'];
   const signature = headers['x-aligenie-signature'];
@@ -610,31 +592,42 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
     throw new ApiError(401, '当前天猫精灵设备未绑定此门店', 'VOICE_DEVICE_UNBOUND');
   }
   const response = await transaction(pool, async client => {
-    const { rows: [actor] } = await client.query('SELECT * FROM users WHERE store_id=$1 AND id=$2 FOR SHARE', [storeId, configured.actorId || null]);
-    if (!actor?.active || actor.role === 'viewer') throw new ApiError(403, '语音记账账号已停用或无权限', 'VOICE_ACTOR_UNAVAILABLE');
-    const { rows: [settings] } = await client.query('SELECT voice_config FROM store_settings WHERE store_id=$1 FOR SHARE', [storeId]);
+    const entitlement = await storeEntitlement(client, storeId, { feature: 'voice' });
+    requireFeature(entitlement, 'members'); requireFeature(entitlement, 'cashier');
+    const { rows: [book] } = await client.query('SELECT ledger_epoch,version FROM stores WHERE id=$1', [storeId]);
+    const { rows: [actor] } = await client.query(
+      "SELECT u.id,u.active,u.platform_disabled,u.historical_only,u.version,EXISTS (SELECT 1 FROM merchant_role_permissions p WHERE p.role_id=u.role AND p.permission_id='account.write') AS can_write FROM users u WHERE u.store_id=$1 AND u.id=$2 FOR SHARE OF u",
+      [storeId, configured.actorId || null]);
+    if (!actor?.active || actor.platform_disabled || actor.historical_only || !actor.can_write) throw new ApiError(403, '语音记账账号已停用或无权限', 'VOICE_ACTOR_UNAVAILABLE');
+    const { rows: [settings] } = await client.query('SELECT voice_config,voice_config_version FROM store_settings WHERE store_id=$1 FOR SHARE', [storeId]);
     authenticate(settings?.voice_config?.aligenie);
     if (settings.voice_config.aligenie.actorId !== actor.id) throw new ApiError(409, '语音记账账号已变化，请重试', 'VOICE_ACTOR_CHANGED');
     trace?.state('account_authorized', { storeRef: digest(storeId).slice(0, 16), actorRef: digest(actor.id).slice(0, 16) });
-    const { rows: [account] } = await client.query('SELECT * FROM accounts WHERE store_id=$1 FOR UPDATE', [storeId]);
-    if (!account || integrity(account.data) !== account.integrity) throw new ApiError(503, '账本完整性检查失败', 'VOICE_LEDGER_INVALID');
-    const scope = digest(canonicalJSON([storeId, actor.id, req.deviceOpenId, req.userOpenId, req.sessionId, integrity(settings.voice_config.aligenie)]));
+    const configHash = integrity(settings.voice_config.aligenie);
+    const scope = digest(canonicalJSON(['relational-v2', storeId, req.deviceOpenId, req.userOpenId, req.sessionId]));
+    const binding = digest(canonicalJSON([book.ledger_epoch, book.version, actor.id, actor.version,
+      entitlement.licenseId, entitlement.version, settings.voice_config_version, configHash]));
+    const deviceId = 'voice-' + digest(req.deviceOpenId);
+    if (typeof executeRelationalVoice !== 'function') throw new ApiError(503, '语音账本服务未配置');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['voice-dialog:' + scope]);
+    const checkLicenseDeadline = () => {
+      if (entitlement.expiresAt && Date.parse(entitlement.expiresAt) <= Date.now()) throw new ApiError(403, '门店授权已到期', 'LICENSE_EXPIRED');
+    };
+    checkLicenseDeadline();
     const receiptId = digest(scope + ':' + req.requestId), hash = integrity(body);
     const { rows: [receipt] } = await client.query('SELECT * FROM voice_requests WHERE store_id=$1 AND id=$2', [storeId, receiptId]);
     if (receipt) {
       if (receipt.request_hash !== hash) throw new ApiError(409, '语音请求单号与原内容不一致', 'VOICE_REQUEST_CONFLICT');
+      if (receipt.response.binding !== binding) throw new ApiError(409, '原请求属于其他账本或授权版本，请重新发起指令', 'VOICE_CONTEXT_CHANGED');
       trace?.state('receipt_replayed');
-      return receipt.response;
+      return receipt.response.result;
     }
-    await client.query('DELETE FROM voice_dialogs WHERE store_id=$1 AND expires_at<=now()', [storeId]);
-    await client.query("DELETE FROM voice_requests WHERE store_id=$1 AND received_at<now()-interval '1 day'", [storeId]);
-    const { rows: [counts] } = await client.query('SELECT (SELECT count(*) FROM voice_dialogs WHERE store_id=$1) AS dialogs,(SELECT count(*) FROM voice_requests WHERE store_id=$1) AS requests', [storeId]);
-    if (Number(counts.requests) >= 10000) throw new ApiError(429, '语音请求过多，请稍后重试');
-    const { rows: [dialog] } = await client.query('SELECT pending FROM voice_dialogs WHERE store_id=$1 AND scope=$2', [storeId, scope]);
-    let nextPending = req.isNew ? null : dialog?.pending || null;
+    const { rows: [dialog] } = await client.query('SELECT pending FROM voice_dialogs WHERE store_id=$1 AND scope=$2 AND expires_at>clock_timestamp()', [storeId, scope]);
+    let nextPending = req.isNew ? null : dialog?.pending || null, marker = null, completedDeadline = null;
     const sessionStore = {
       get: () => nextPending,
       delete: () => { nextPending = null; },
+      complete: expiresAt => { completedDeadline = expiresAt; nextPending = null; },
       set: async (_key, value) => {
         const platformConfirmation = platformTokenAuthenticated && req.version === '1.0' ? req.platformConfirmation : null;
         if (platformTokenAuthenticated && req.version === '1.0') {
@@ -646,286 +639,116 @@ export async function handleAliGenieWebhook({ pool, body, headers = {}, platform
           // Reusing the same slot timestamps AND lifetimes must not create a
           // second operation that a delayed confirmation could authorize.
           const markerId = digest(scope + ':platform-preview:' + canonicalJSON(platformConfirmation));
-          const { rows: [seen] } = await client.query('SELECT id FROM voice_requests WHERE store_id=$1 AND id=$2', [storeId, markerId]);
+          const { rows: [seen] } = await client.query("SELECT id FROM voice_requests WHERE store_id=$1 AND id=$2 AND received_at>=clock_timestamp()-interval '1 day'", [storeId, markerId]);
           if (seen) { nextPending = null; return false; }
-          if (Number(counts.requests) >= 9999) throw new ApiError(429, '语音请求过多，请稍后重试');
-          await client.query('INSERT INTO voice_requests(store_id,id,request_hash,response) VALUES($1,$2,$3,$4)',
-            [storeId, markerId, integrity(platformConfirmation), { previewRequestId: req.requestId }]);
+          marker = [storeId, markerId, integrity(platformConfirmation), { previewRequestId: req.requestId }];
         }
-        nextPending = { ...value, platformConfirmation, previewRequestId: req.requestId,
-          servicesIntegrity: integrity(account.data.services || []),
-          operation: pendingOperation(value, account.data, actor.id, 'voice-' + digest(req.deviceOpenId), receiptId) };
+        nextPending = { ...value, platformConfirmation, previewRequestId: req.requestId, binding };
         return true;
       }
     };
     trace?.state('pending_loaded', { hasPending: Boolean(nextPending), pendingAction: nextPending?.action || null,
       previewRef: nextPending ? digest(nextPending.previewRequestId).slice(0, 16) : null });
-    const response = await dispatchVoiceDialog({ req, account, client, targetStoreId: storeId, sessionStore, platformTokenAuthenticated });
-    if (nextPending && !dialog && Number(counts.dialogs) >= 256) throw new ApiError(429, '语音待确认操作过多，请稍后重试');
+    const params = { req, client, targetStoreId: storeId, sessionStore, platformTokenAuthenticated };
+    const response = await dispatchRelationalVoiceDialog({ ...params, binding,
+      voice: createRelationalVoice({ client, user: { ...actor, store_id: storeId, ledger_epoch: book.ledger_epoch, device_id: deviceId, entitlements: entitlement },
+        req, receiptId, executeCommand: executeRelationalVoice,
+        language: { cleanMemberQuery, stripMemberQuery, phoneFromUtterance, membersFromUtterance, parseVoiceCents, spokenAmountCandidate } }) });
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['voice-quota:' + storeId]);
+    await client.query('DELETE FROM voice_dialogs WHERE store_id=$1 AND expires_at<=clock_timestamp()', [storeId]);
+    await client.query("DELETE FROM voice_requests WHERE store_id=$1 AND received_at<clock_timestamp()-interval '1 day'", [storeId]);
+    const { rows: [counts] } = await client.query('SELECT (SELECT count(*) FROM voice_dialogs WHERE store_id=$1 AND scope<>$2) AS dialogs,(SELECT count(*) FROM voice_requests WHERE store_id=$1) AS requests', [storeId, scope]);
+    if (Number(counts.requests) + (marker ? 2 : 1) > 10000) throw new ApiError(429, '语音请求过多，请稍后重试');
+    if (nextPending && Number(counts.dialogs) >= 256) throw new ApiError(429, '语音待确认操作过多，请稍后重试');
+    if (marker) await client.query('INSERT INTO voice_requests(store_id,id,request_hash,response) VALUES($1,$2,$3,$4)', marker);
     if (nextPending?.previewRequestId === req.requestId) response.confirmationRequestId = req.requestId;
     if (nextPending) await client.query('INSERT INTO voice_dialogs(store_id,scope,pending,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(store_id,scope) DO UPDATE SET pending=$3,expires_at=$4', [storeId, scope, nextPending, new Date(nextPending.expiresAt)]);
     else await client.query('DELETE FROM voice_dialogs WHERE store_id=$1 AND scope=$2', [storeId, scope]);
-    await client.query('INSERT INTO voice_requests(store_id,id,request_hash,response) VALUES($1,$2,$3,$4)', [storeId, receiptId, hash, response]);
+    await client.query('INSERT INTO voice_requests(store_id,id,request_hash,response) VALUES($1,$2,$3,$4)',
+      [storeId, receiptId, hash, { binding, result: response }]);
+    if (completedDeadline !== null && completedDeadline <= Date.now()) throw new ApiError(409, '语音预览已过期，请重新确认', 'VOICE_PREVIEW_STALE');
+    checkLicenseDeadline();
     return response;
   });
   trace?.state('transaction_committed');
   return response;
 }
 
-async function dispatchVoiceDialog({ req, account, client, targetStoreId, sessionStore, platformTokenAuthenticated }) {
-    const now = Date.now(), accountData = account.data;
-    const members = accountData.members || [], services = accountData.services || [];
-    const rechargeSettings = accountData.rechargeSettings;
-    // 3. Multi-turn Session Check (Pending Confirmation)
-    const pending = sessionStore.get(req.sessionId);
-    const dialogReply = getDialogReply(req.utterance);
-
-    if (!pending && (req.confirmationStatus !== 'NONE' || dialogReply)) {
-      return formatAliGenieResponse({ text: '当前没有待确认的操作，请重新说完整的消费或充值指令。' });
-    }
-
-    if (pending && (req.confirmationStatus === 'DENIED' || dialogReply === 'deny')) {
+async function dispatchRelationalVoiceDialog({ req, voice, binding, client, targetStoreId, sessionStore, platformTokenAuthenticated }) {
+  const pending = sessionStore.get(req.sessionId), dialogReply = getDialogReply(req.utterance);
+  const confirm = req.confirmationStatus === 'CONFIRMED' || dialogReply === 'confirm' || req.intentName === 'ConfirmIntent';
+  const deny = req.confirmationStatus === 'DENIED' || dialogReply === 'deny';
+  if (!pending && (confirm || deny)) return formatAliGenieResponse({ text: '当前没有待确认的操作，请重新说完整的消费或充值指令。' });
+  if (pending && deny) {
+    sessionStore.delete(req.sessionId);
+    return formatAliGenieResponse({ text: '已为您取消本次操作。' });
+  }
+  if (pending && confirm) {
+    const explicitMatch = req.confirmationRequestId === pending.previewRequestId;
+    const platformMatch = !req.confirmationRequestId && platformTokenAuthenticated && req.version === '1.0' &&
+      req.confirmationStatus === 'CONFIRMED' && matchesPlatformConfirmation(pending.platformConfirmation, req.platformConfirmation);
+    if (!explicitMatch && !platformMatch) return formatAliGenieResponse({ text: '确认请求与本次预览不匹配，请重新说完整的消费或充值指令。' });
+    if (pending.binding !== binding || pending.expiresAt <= Date.now()) {
       sessionStore.delete(req.sessionId);
-      return formatAliGenieResponse({
-        text: '已为您取消本次操作。',
-        shouldEndSession: true
-      });
+      return formatAliGenieResponse({ text: '原预览的账本或授权已变化，或已过期，请重新发起操作并确认。' });
     }
-
-    if (pending && (req.confirmationStatus === 'CONFIRMED' || dialogReply === 'confirm' || req.intentName === 'ConfirmIntent')) {
-      const explicitMatch = req.confirmationRequestId === pending.previewRequestId;
-      const platformMatch = !req.confirmationRequestId && platformTokenAuthenticated && req.version === '1.0' &&
-        req.confirmationStatus === 'CONFIRMED' && matchesPlatformConfirmation(pending.platformConfirmation, req.platformConfirmation);
-      if (!explicitMatch && !platformMatch) return formatAliGenieResponse({ text: '确认请求与本次预览不匹配，请重新说完整的消费或充值指令。' });
-      if (pending.servicesIntegrity !== integrity(account.data.services || [])) {
-        sessionStore.delete(req.sessionId);
-        return formatAliGenieResponse({ text: '服务价格已变化，请重新发起操作并确认。', shouldEndSession: true });
-      }
-      if (pending.action === 'consume') {
-        try {
-          const { result } = await executeVoiceOperation({ client, storeId: targetStoreId, account, operation: pending.operation });
-          sessionStore.delete(req.sessionId);
-          const balanceYuan = (result.balanceAfter / 100).toFixed(2);
-          const debtText = result.balanceAfter < 0
-            ? `当前已欠款 ${Math.abs(result.balanceAfter / 100).toFixed(2)} 元。`
-            : `卡内当前剩余 ${balanceYuan} 元。`;
-          return formatAliGenieResponse({
-            text: `扣款成功！已为会员${pending.memberName}扣除 ${(pending.amountCent / 100).toFixed(2)} 元，${debtText}`,
-            shouldEndSession: true
-          });
-        } catch (err) {
-          if (err.code === 'VOICE_PREVIEW_STALE') sessionStore.delete(req.sessionId);
-          else throw err;
-          return formatAliGenieResponse({
-            text: `扣款失败：${err.message}`,
-            shouldEndSession: true
-          });
-        }
-      } else if (pending.action === 'recharge') {
-        try {
-          const { result } = await executeVoiceOperation({ client, storeId: targetStoreId, account, operation: pending.operation });
-          sessionStore.delete(req.sessionId);
-          const balanceYuan = (result.balanceAfter / 100).toFixed(2);
-          return formatAliGenieResponse({
-            text: `充值成功！会员${pending.memberName}已到账 ${(result.totalCredit / 100).toFixed(2)} 元，卡内当前余额 ${balanceYuan} 元。`,
-            shouldEndSession: true
-          });
-        } catch (err) {
-          if (err.code === 'VOICE_PREVIEW_STALE') sessionStore.delete(req.sessionId);
-          else throw err;
-          return formatAliGenieResponse({
-            text: `充值失败：${err.message}`,
-            shouldEndSession: true
-          });
-        }
-      }
+    const settled = await voice.execute(pending);
+    if (settled.stale) {
+      sessionStore.delete(req.sessionId);
+      return formatAliGenieResponse({ text: settled.stale + '。' });
     }
+    sessionStore.complete(pending.expiresAt);
+    const { result } = settled, balance = BigInt(result.balanceAfterCents);
+    if (pending.action === 'recharge') return formatAliGenieResponse({ text: '充值成功！会员' + pending.memberName + '已到账 ' +
+      voiceYuan(result.deltaCents) + ' 元，卡内当前余额 ' + voiceYuan(balance) + ' 元。' });
+    const balanceText = balance < 0n ? '当前已欠款 ' + voiceYuan(-balance) : '卡内当前剩余 ' + voiceYuan(balance);
+    return formatAliGenieResponse({ text: '扣款成功！已为会员' + pending.memberName + '扣除 ' + voiceYuan(-BigInt(result.deltaCents)) +
+      ' 元，' + balanceText + ' 元。' });
+  }
+  if (isWelcomeRequest(req)) return welcomeResponse(await readStoreProfile(client, targetStoreId));
 
-    // 4. Intent Dispatch
-    const utterance = req.utterance || '';
-    if (isWelcomeRequest(req)) return welcomeResponse(await readStoreProfile(client, targetStoreId));
-    const intent = resolveBusinessIntent(req, members);
+  const { matches, names, tooMany } = await voice.findMembers();
+  const action = resolveBusinessIntent(req, names);
+  if (!action) return formatAliGenieResponse({ text: '抱歉，暂未理解该指令。您可以说：张三消费38元、李四充值200元、或查询尾号1234余额。' });
+  if (tooMany || matches.length > 1) {
+    const examples = matches.slice(0, 3).map(member => member.name + (member.phone ? '（手机尾号' + member.phone.replace(/\D/g, '').slice(-4) + '）' : '')).join('、');
+    return askAliGenieParameter(req, 'memberQuery', (examples ? '找到多位会员：' + examples + '。' : '找到多位会员。') + '请报完整姓名或手机尾号。');
+  }
+  if (!matches.length) {
+    if (!req.slots.member && !req.utterance) return askAliGenieParameter(req, 'memberQuery', '请说会员姓名或手机尾号。');
+    return formatAliGenieResponse({ text: '未在会员库中找到“' + cleanMemberQuery(req.slots.member || req.utterance) + '”，请核对姓名或报手机尾号重试。' });
+  }
+  const member = matches[0];
+  if (action === 'query') {
+    const summary = await voice.accountSummary(member.id);
+    if (!summary) return formatAliGenieResponse({ text: '会员资料已变化，请重新查询。' });
+    const balance = BigInt(summary.balance_cents);
+    let reply = '会员' + summary.name + (balance < 0n ? '当前卡内欠款 ' + voiceYuan(-balance) + ' 元。' :
+      '当前卡内余额 ' + voiceYuan(balance) + ' 元，切换以来累计充值到账 ' + voiceYuan(summary.recharge_cents) + ' 元。');
+    if (summary.last_visit) reply += ' 上次到店是 ' + formatDate(summary.last_visit) + '。';
+    if (summary.notes.trim()) reply += ' 偏好备注：' + summary.notes.trim() + '。';
+    return formatAliGenieResponse({ text: reply });
+  }
 
-    // B. Query Member / Balance Intent
-    if (intent === 'query') {
-      const memberQuery = req.slots.member || utterance;
-      if (!memberQuery || memberQuery.length < 1) {
-        return askAliGenieParameter(req, 'memberQuery', '请问您想查询哪位会员，或者报手机尾号？');
-      }
-      const matched = req.slots.member ? findMatchingMembers(members, memberQuery) : membersFromUtterance(members, utterance);
-      if (matched.length === 0) {
-        return formatAliGenieResponse({
-          text: `未在会员库中找到“${cleanMemberQuery(memberQuery)}”，请核对姓名或报手机尾号重试。`,
-          shouldEndSession: true
-        });
-      }
-      if (matched.length > 1) {
-        const names = matched.slice(0, 3).map(m => `${m.name}（手机尾号${(m.phone || '').slice(-4)}）`).join('、');
-        return askAliGenieParameter(req, 'memberQuery', `找到多位会员：${names}，请问您要查询哪一位？`);
-      }
-
-      const m = matched[0];
-      const balanceYuan = (m.balance / 100).toFixed(2);
-      let reply = '';
-      if (m.balance < 0) {
-        reply = `会员${m.name}当前卡内欠款 ${Math.abs(m.balance / 100).toFixed(2)} 元。`;
-      } else {
-        reply = `会员${m.name}当前卡内余额 ${balanceYuan} 元，累计充值 ${(m.total_recharge / 100).toFixed(2)} 元。`;
-      }
-
-      const lastConsume = (accountData.ledgers || [])
-        .filter(l => l.memberId === m.id && l.type === 'CONSUME' && !l.isRefunded)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-      if (lastConsume) {
-        const visitDate = formatDate(lastConsume.created_at);
-        if (visitDate) reply += ` 上次到店是 ${visitDate}。`;
-      }
-      if (m.notes && m.notes.trim()) {
-        reply += ` 偏好备注：${m.notes.trim()}。`;
-      }
-      return formatAliGenieResponse({
-        text: reply,
-        shouldEndSession: true
-      });
-    }
-
-    // C. Consume Intent (扣款消费)
-    if (intent === 'consume') {
-      const memberQuery = req.slots.member || utterance;
-      if (!memberQuery) {
-        return askAliGenieParameter(req, 'memberQuery', '请问是哪位会员需要扣款？');
-      }
-
-      const matched = req.slots.member ? findMatchingMembers(members, memberQuery) : membersFromUtterance(members, utterance);
-      if (matched.length === 0) {
-        return formatAliGenieResponse({
-          text: `未在会员库中找到“${cleanMemberQuery(memberQuery)}”，请核对姓名或报手机尾号重试。`,
-          shouldEndSession: true
-        });
-      }
-      if (matched.length > 1) {
-        const names = matched.slice(0, 3).map(m => `${m.name}（手机尾号${(m.phone || '').slice(-4)}）`).join('、');
-        return askAliGenieParameter(req, 'memberQuery', `找到多位会员：${names}，请问是哪一位？`);
-      }
-
-      const m = matched[0];
-      let amount = req.slots.amount !== undefined ? parseAmount(req.slots.amount) : extractAmountFromUtterance(utterance, m.name);
-      let itemsSummary = req.slots.service || '消费';
-
-      // If amount is not explicitly provided, try to look up service price
-      if (!amount && req.slots.amount === undefined && !/(?:消费|扣款|扣除|结账|买单)\s*[-+\d零一二两三四五六七八九十百千万]/.test(utterance.replaceAll(m.name, ''))) {
-        const foundService = lookupServicePrice(services, req.slots.service || utterance);
-        if (foundService) {
-          amount = foundService.price;
-          itemsSummary = foundService.name;
-        }
-      }
-
-      if (!amount) {
-        return askAliGenieParameter(req, 'amount', `已找到会员${m.name}，请问本次消费扣款多少元？请说金额加元，例如一百元。`);
-      }
-
-      const amountCent = moneyToCent(amount);
-      const balanceBefore = m.balance;
-      const balanceAfter = balanceBefore - amountCent;
-      const allowDebt = balanceAfter < 0;
-
-      let confirmPrompt = '';
-      if (allowDebt) {
-        confirmPrompt = `会员${m.name}当前卡内余额仅为 ${(balanceBefore / 100).toFixed(2)} 元，本次扣款 ${(amountCent / 100).toFixed(2)} 元后将产生欠款 ${Math.abs(balanceAfter / 100).toFixed(2)} 元，请问确认扣款并记入欠款吗？`;
-      } else {
-        confirmPrompt = `会员${m.name}本次${itemsSummary === '消费' ? '' : itemsSummary}消费 ${(amountCent / 100).toFixed(2)} 元，扣款后卡内剩余 ${(balanceAfter / 100).toFixed(2)} 元，请问确认扣款吗？`;
-      }
-
-      // Save pending action in session cache
-      const saved = await sessionStore.set(req.sessionId, {
-        action: 'consume',
-        memberId: m.id,
-        memberName: m.name,
-        amountCent,
-        itemsSummary,
-        allowDebt,
-        remark: '天猫精灵语音扣款',
-        expiresAt: now + SESSION_TTL_MS
-      });
-      if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新打开语音技能并说完整的消费指令。' });
-
-      return formatAliGenieResponse({
-        text: confirmPrompt,
-        shouldEndSession: false,
-        expectSpeech: true,
-        directive: makeConfirmDirective()
-      });
-    }
-
-    // D. Recharge Intent (充值储值)
-    if (intent === 'recharge') {
-      const memberQuery = req.slots.member || utterance;
-      if (!memberQuery) {
-        return askAliGenieParameter(req, 'memberQuery', '请问要为哪位会员充值？');
-      }
-
-      const matched = req.slots.member ? findMatchingMembers(members, memberQuery) : membersFromUtterance(members, utterance);
-      if (matched.length === 0) {
-        return formatAliGenieResponse({
-          text: `未在会员库中找到“${cleanMemberQuery(memberQuery)}”，请核对姓名或报手机尾号重试。`,
-          shouldEndSession: true
-        });
-      }
-      if (matched.length > 1) {
-        const names = matched.slice(0, 3).map(m => `${m.name}（手机尾号${(m.phone || '').slice(-4)}）`).join('、');
-        return askAliGenieParameter(req, 'memberQuery', `找到多位会员：${names}，请问是哪一位？`);
-      }
-
-      const m = matched[0];
-      const amount = req.slots.amount !== undefined ? parseAmount(req.slots.amount) : extractAmountFromUtterance(utterance, m.name);
-      if (!amount) {
-        return askAliGenieParameter(req, 'amount', `已找到会员${m.name}，请问充值多少金额？请说金额加元，例如两百元。`);
-      }
-
-      const actualCent = moneyToCent(amount);
-      let giftCent = 0;
-      if (req.slots.giftAmount) {
-        const g = parseAmount(req.slots.giftAmount);
-        if (!g && !/^(?:0(?:\.0{1,2})?|零)(?:元|块钱|块)?$/.test(req.slots.giftAmount)) return formatAliGenieResponse({ text: '赠送金额无效，请重新报金额。', shouldEndSession: false, expectSpeech: true });
-        if (g) giftCent = moneyToCent(g);
-      } else {
-        giftCent = rechargeGiftCent((actualCent / 100).toFixed(2), rechargeSettings);
-      }
-
-      const totalCent = actualCent + giftCent;
-      const balanceAfter = m.balance + totalCent;
-
-      let confirmPrompt = '';
-      if (giftCent > 0) {
-        confirmPrompt = `即将为会员${m.name}实充 ${(actualCent / 100).toFixed(2)} 元，赠送 ${(giftCent / 100).toFixed(2)} 元，合计到账 ${(totalCent / 100).toFixed(2)} 元，到账后卡内余额为 ${(balanceAfter / 100).toFixed(2)} 元，请问确认充值吗？`;
-      } else {
-        confirmPrompt = `即将为会员${m.name}充值 ${(actualCent / 100).toFixed(2)} 元，充值后卡内余额为 ${(balanceAfter / 100).toFixed(2)} 元，请问确认充值吗？`;
-      }
-
-      const saved = await sessionStore.set(req.sessionId, {
-        action: 'recharge',
-        memberId: m.id,
-        memberName: m.name,
-        actualCent,
-        giftCent,
-        expiresAt: now + SESSION_TTL_MS
-      });
-      if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新打开语音技能并说完整的充值指令。' });
-
-      return formatAliGenieResponse({
-        text: confirmPrompt,
-        shouldEndSession: false,
-        expectSpeech: true,
-        directive: makeConfirmDirective()
-      });
-    }
-
-    // E. Fallback
-    return formatAliGenieResponse({
-      text: '抱歉，暂未理解该指令。您可以说：张三消费38元、李四充值200元、或查询尾号1234余额。',
-      shouldEndSession: true
-    });
+  const preview = await voice.prepare(action, member);
+  if (preview.askAmount || preview.askService) return askAliGenieParameter(req, 'amount', preview.askService ?
+    '匹配到多个服务项目，请报本次扣款金额。' : '已找到会员' + member.name + '，请报本次' + (action === 'consume' ? '消费' : '充值') + '金额，例如一百元。');
+  if (preview.businessError) return formatAliGenieResponse({ text: preview.businessError + '。', shouldEndSession: false, expectSpeech: true });
+  const { command, expectedProfileVersion, before, after, label } = preview;
+  let prompt;
+  if (action === 'consume') {
+    const amount = voiceYuan(command.amountCents);
+    prompt = command.allowDebt ? '会员' + member.name + '当前卡内余额 ' + voiceYuan(before) + ' 元，本次扣款 ' + amount +
+      ' 元后将欠款 ' + voiceYuan(-BigInt(after)) + ' 元，请问确认扣款并记入欠款吗？' :
+      '会员' + member.name + '本次' + (label === '消费' ? '' : label) + '消费 ' + amount + ' 元，扣款后卡内剩余 ' + voiceYuan(after) + ' 元，请问确认扣款吗？';
+  } else {
+    const actual = voiceYuan(command.actualPayCents), gift = voiceYuan(command.giftCents);
+    prompt = '即将为会员' + member.name + '实充 ' + actual + ' 元' + (command.giftCents === '0' ? '' : '，赠送 ' + gift + ' 元，合计到账 ' +
+      voiceYuan(BigInt(command.actualPayCents) + BigInt(command.giftCents)) + ' 元') + '，到账后卡内余额为 ' + voiceYuan(after) + ' 元，请问确认充值吗？';
+  }
+  const saved = await sessionStore.set(req.sessionId, { action, command, expectedProfileVersion, memberName: member.name, expiresAt: Date.now() + SESSION_TTL_MS });
+  if (!saved) return formatAliGenieResponse({ text: '本次指令缺少新的可核验确认信息，请重新打开语音技能并说完整的指令。' });
+  return formatAliGenieResponse({ text: prompt, shouldEndSession: false, expectSpeech: true, directive: makeConfirmDirective() });
 }
 
 export async function getAliGenieVerificationContent(fileName, pool) {

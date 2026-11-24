@@ -31,6 +31,9 @@ public class MainActivity extends BridgeActivity {
         // Apply postSplashScreenTheme before AppCompat/WebView create any themed Views.
         SplashScreen.installSplashScreen(this);
         registerPlugin(CloudDevicePlugin.class);
+        registerPlugin(RelationalSqlitePlugin.class);
+        registerPlugin(BackupDocumentsPlugin.class);
+        registerPlugin(ArchiveDocumentsPlugin.class);
         super.onCreate(savedInstanceState);
         installSafeViewport();
         resetSystemBars();

@@ -1,6 +1,6 @@
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
-import { canonicalJSON } from '../src/sync-protocol.js';
+import { canonicalJSON } from '../src/canonical-json.js';
 const scrypt = promisify(scryptCallback);
 // Bound both native scrypt memory and its waiting queue across all requests.
 let passwordJobs = 0;

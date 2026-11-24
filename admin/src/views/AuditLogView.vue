@@ -65,7 +65,7 @@
 <script setup>
 import { storeFilePrefix } from '../../../src/store-profile.js';
 import { ref, onMounted } from 'vue';
-import { adminApi } from '../api/client.js';
+import { adminApi } from '../api/session.js';
 import { exportAuditLogsToExcel } from '../utils/exporter.js';
 
 const logs = ref([]);

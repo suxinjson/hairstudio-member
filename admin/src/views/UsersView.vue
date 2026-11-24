@@ -147,7 +147,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { adminApi } from '../api/client.js';
+import { adminApi } from '../api/session.js';
 
 const users = ref([]);
 const loading = ref(false);

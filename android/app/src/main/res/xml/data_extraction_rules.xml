@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
+        <exclude domain="database" path="member-relational-v2.sqlite" />
+        <exclude domain="database" path="member-relational-v2.sqlite-wal" />
+        <exclude domain="database" path="member-relational-v2.sqlite-shm" />
         <exclude domain="sharedpref" path="member_cloud_vault.xml" />
         <exclude domain="root" path="app_webview" />
     </cloud-backup>
     <device-transfer>
+        <exclude domain="database" path="member-relational-v2.sqlite" />
+        <exclude domain="database" path="member-relational-v2.sqlite-wal" />
+        <exclude domain="database" path="member-relational-v2.sqlite-shm" />
         <exclude domain="sharedpref" path="member_cloud_vault.xml" />
         <exclude domain="root" path="app_webview" />
     </device-transfer>

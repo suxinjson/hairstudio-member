@@ -80,7 +80,7 @@
 
 <script setup>
 import { ref } from 'vue';
-import { adminApi } from '../api/client.js';
+import { adminApi } from '../api/session.js';
 
 const emit = defineEmits(['login-success']);
 

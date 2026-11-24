@@ -2,7 +2,7 @@
   :save-profile="save" :load-profile="load" /></template>
 <script setup>
 import StoreSettings from '../../../src/components/StoreSettings.vue';
-import { adminApi } from '../api/client.js';
+import { adminApi } from '../api/session.js';
 const save = (profile, version) => adminApi.saveStoreProfile(profile, version);
 const load = () => adminApi.loadStoreProfile();
 </script>

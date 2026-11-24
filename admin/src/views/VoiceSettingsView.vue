@@ -4,6 +4,6 @@
 
 <script setup>
 import VoiceSettings from '../../../src/components/VoiceSettings.vue';
-import { adminApi } from '../api/client.js';
+import { adminApi } from '../api/session.js';
 import { voicePlayer } from '../utils/voice-player.js';
 </script>

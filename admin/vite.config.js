@@ -20,6 +20,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     rollupOptions: {
+      input: { main: 'index.html', platform: 'platform.html' },
       output: {
         manualChunks(id) {
           if (id.includes('node_modules/xlsx') || id.includes('xlsx')) return 'xlsx';

@@ -12,7 +12,7 @@
           <span class="text-2xl">💳</span>
           <div>
             <h1 class="font-black text-sm tracking-tight text-white">会员管家</h1>
-            <span class="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800">PC 后台管理系统</span>
+            <span class="text-[10px] text-emerald-400 font-bold bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800">商家经营后台 · 仅当前门店</span>
           </div>
         </div>
 
@@ -21,12 +21,14 @@
           <button
             v-for="item in navItems"
             :key="item.key"
+            :aria-label="item.label"
+            :aria-current="activeTab === item.key ? 'page' : undefined"
             @click="activeTab = item.key"
             class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs transition btn-press"
             :class="activeTab === item.key ? 'bg-emerald-700 text-white shadow-md shadow-emerald-900/40' : 'text-slate-400 hover:text-white hover:bg-slate-800/80'"
           >
             <div class="flex items-center gap-2.5">
-              <span class="text-base">{{ item.icon }}</span>
+              <span class="text-base" aria-hidden="true">{{ item.icon }}</span>
               <span>{{ item.label }}</span>
             </div>
             <span
@@ -75,28 +77,9 @@
 
         <!-- 右侧连接状态与快捷功能 -->
         <div class="flex items-center gap-3">
-          <!-- 云端同步正常指示灯 -->
-          <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border"
-            :class="accountStatus === 'synced' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-200'" role="status">
-            <span>{{ syncLabel }}</span>
-            <span class="text-[10px] text-emerald-500 font-mono">v{{ accountRevision }}</span>
-          </div>
-          <button v-if="hasPending" @click="retryPending" :disabled="isLoading || isSubmittingOperations"
-            class="h-9 px-3 bg-amber-100 text-amber-900 rounded-xl text-xs font-bold disabled:opacity-50">继续确认待办</button>
-          <button v-if="adminApi.pendingOperation.value" @click="resolvePending" :disabled="isLoading || isSubmittingOperations"
-            class="h-9 px-3 text-rose-700 rounded-xl text-xs font-bold disabled:opacity-50">核对并取消未入账操作</button>
-          <button v-if="pendingImport?.canCancel" @click="cancelRemainingImport" :disabled="isLoading"
-            class="h-9 px-3 text-rose-700 rounded-xl text-xs font-bold">取消剩余导入</button>
-
-          <!-- 刷新数据 -->
-          <button
-            @click="loadAccountData"
-            :disabled="isLoading"
-            class="h-9 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1"
-            title="手动刷新最新数据"
-          >
-            <span>🔄</span> 刷新
-          </button>
+          <div role="status" class="text-xs text-emerald-800">{{ syncLabel }}</div>
+          <button @click="workspace.connect" :disabled="workspace.state.status === 'loading' || workspace.state.busy || isLocked"
+            class="h-9 px-3 bg-slate-100 rounded-xl text-xs font-bold" title="重新连接账本">刷新</button>
 
           <!-- 退出登录 -->
           <button
@@ -109,50 +92,21 @@
         </div>
       </header>
 
-      <!-- 动态路由工作台主体 -->
-      <div v-if="accountError" class="px-6 py-3 bg-amber-50 text-amber-900 text-sm" role="alert">{{ accountError }}</div>
-      <div v-if="adminApi.headConflict.value && currentUser.role === 'owner'" class="px-6 py-3 bg-amber-50">
-        <button @click="reconcileAccount" :disabled="isLoading || isSubmittingOperations" class="h-9 px-3 bg-amber-200 rounded-xl text-sm font-bold">导出版本冲突并核对账本</button>
-      </div>
-      <main :key="currentUser.storeId + ':' + currentUser.id" class="flex-1 overflow-y-auto p-6">
-        <div v-if="!accountData" class="p-8 text-center text-slate-600">
-          {{ isLoading ? '正在加载当前门店账本…' : '账本尚未加载，请点击刷新重试。' }}
-        </div>
-        <DashboardView
-          v-else-if="activeTab === 'dashboard'"
-          :members="members"
-          :ledgers="ledgers"
-          @switch-tab="tab => activeTab = tab"
-        />
-
-        <MembersView
-          v-else-if="activeTab === 'members'"
-          :members="members"
-          @switch-tab="tab => activeTab = tab"
-          :submit-operations="handleSyncOperations"
-        />
-
-        <LedgersView
-          v-else-if="activeTab === 'ledgers'"
-          :ledgers="ledgers"
-          :members="members"
-          :submit-operations="handleSyncOperations"
-        />
-
-        <ImportExportView
-          v-else-if="activeTab === 'import-export'"
-          :members="members"
-          :ledgers="ledgers"
-          @refresh-data="loadAccountData"
-        />
-
-        <ServicesView
-          v-else-if="activeTab === 'services'"
-          :services="services"
-          :recharge-plans="rechargePlans"
-          :recharge-settings="accountData.rechargeSettings"
-          :submit-operations="handleSyncOperations"
-        />
+      <main v-if="!isLocked" :key="bookKey" class="flex-1 overflow-y-auto p-6 book-stack" style="align-content: start">
+        <RelationalPending v-if="workspace.state.book" :workspace="workspace" />
+        <template v-if="businessTabs.has(activeTab)">
+          <div v-if="!workspace.state.book" class="book-panel book-stack">
+            <p :role="workspace.state.error ? 'alert' : 'status'">{{ workspace.state.error || '正在连接当前门店账本…' }}</p>
+            <button v-if="workspace.state.status !== 'loading'" type="button" @click="workspace.connect()">重试连接</button>
+          </div>
+          <RelationalReports v-else-if="activeTab === 'dashboard'" :workspace="workspace" />
+          <RelationalMembers v-else-if="activeTab === 'members'" :workspace="workspace" :owner="owner" :writable="writable" :feature="feature" :announce="announce" @history="openHistory" />
+          <RelationalLedger v-else-if="activeTab === 'ledgers'" :workspace="workspace" :owner="owner" :member-id="history.id" :member-name="history.name" @all-members="history = {}" />
+          <RelationalConfiguration v-else-if="activeTab === 'services'" :workspace="workspace" :owner="owner" />
+          <RelationalBatches v-else-if="activeTab === 'batches'" :workspace="workspace" :writable="writable" />
+          <RelationalExportView v-else-if="activeTab === 'export' && owner" :workspace="workspace" :feature="feature" :jobs="exportJobs" />
+          <RelationalBackup v-else-if="activeTab === 'backup' && owner" :workspace="workspace" :controller="archive" />
+        </template>
 
         <VoiceSettingsView
           v-else-if="activeTab === 'voice'"
@@ -216,61 +170,75 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { adminApi } from './api/client.js';
+import { adminApi } from './api/session.js';
 import { voicePlayer } from './utils/voice-player.js';
 import { useAutoLock } from './utils/security.js';
 import LoginView from './views/LoginView.vue';
-import DashboardView from './views/DashboardView.vue';
-import MembersView from './views/MembersView.vue';
-import LedgersView from './views/LedgersView.vue';
-import ImportExportView from './views/ImportExportView.vue';
-import ServicesView from './views/ServicesView.vue';
+import RelationalMembers from '../../src/components/RelationalMembers.vue';
+import RelationalLedger from '../../src/components/RelationalLedger.vue';
+import RelationalReports from '../../src/components/RelationalReports.vue';
+import RelationalConfiguration from '../../src/components/RelationalConfiguration.vue';
+import RelationalPending from '../../src/components/RelationalPending.vue';
+import RelationalBatches from '../../src/components/RelationalBatches.vue';
+import RelationalBackup from '../../src/components/RelationalBackup.vue';
+import RelationalExportView from './views/RelationalExportView.vue';
+import { createLedgerExportClient } from './utils/ledger-export-jobs.js';
+import { createOnlineWorkspace } from '../../src/relational-online-workspace.js';
+import { createServerArchiveFiles } from '../../src/relational-server-files.js';
+import { announceRelationalSale } from '../../src/relational-presentation.js';
 import VoiceSettingsView from './views/VoiceSettingsView.vue';
 import UsersView from './views/UsersView.vue';
 import DevicesView from './views/DevicesView.vue';
 import StoreSettingsView from './views/StoreSettingsView.vue';
 import AuditLogView from './views/AuditLogView.vue';
+import { allowsFeature } from '../../src/license-policy.js';
 
 const currentUser = computed(() => adminApi.user.value);
-watch(() => [currentUser.value?.storeId, currentUser.value?.id, currentUser.value?.role, adminApi.isLocked.value], () => voicePlayer.stop(), { flush: 'sync' });
-onUnmounted(() => voicePlayer.stop());
+const workspace = createOnlineWorkspace(adminApi);
+const archive = createServerArchiveFiles({ workspace, api: adminApi });
+const exportJobs = createLedgerExportClient({ workspace, api: adminApi });
+watch([() => currentUser.value?.storeId, () => currentUser.value?.id, () => currentUser.value?.role, adminApi.isLocked],
+  () => voicePlayer.stop(), { flush: 'sync' });
+onUnmounted(() => { voicePlayer.stop(); workspace.dispose(); });
 const activeTab = ref('dashboard');
-const accountData = adminApi.accountData;
-const accountStatus = adminApi.accountStatus;
-const accountError = adminApi.accountError;
-const hasPending = adminApi.hasPending;
-const pendingImport = adminApi.pendingImport;
-const isLoading = computed(() => ['loading', 'saving'].includes(accountStatus.value) || adminApi.importing.value);
-const members = computed(() => accountData.value?.members || []);
-const ledgers = computed(() => accountData.value?.ledgers || []);
-const services = computed(() => accountData.value?.services || []);
-const rechargePlans = computed(() => accountData.value?.rechargePlans || []);
-const accountRevision = adminApi.accountRevision;
-const isSubmittingOperations = ref(false);
-const syncLabel = computed(() => ({ idle: '账本尚未加载', loading: '正在加载账本', saving: '正在确认操作',
-  synced: '云端账本已加载', pending: '有待确认操作', error: '账本加载或提交失败，请重试' }[accountStatus.value]));
+const businessTabs = new Set(['dashboard', 'members', 'ledgers', 'services', 'batches', 'export', 'backup']);
+const history = ref({});
+const owner = computed(() => currentUser.value?.role === 'owner');
+const writable = computed(() => Boolean(currentUser.value && currentUser.value.role !== 'viewer'));
+const feature = name => !adminApi.entitlements.value || allowsFeature(adminApi.entitlements.value.features, name);
+const bookKey = computed(() => [currentUser.value?.storeId, currentUser.value?.id, currentUser.value?.role, workspace.state.book?.ledgerEpoch].join(':'));
+const syncLabel = computed(() => workspace.state.pending ? '有一笔操作待确认' : ({ idle: '账本待连接', loading: '正在连接', ready: '在线账本', error: '账本连接失败' }[workspace.state.status]));
+watch(bookKey, () => { history.value = {}; });
+function openHistory(id, name) { history.value = { id, name }; activeTab.value = 'ledgers'; }
+function announce(result, draft, member) {
+  if (feature('voice')) return announceRelationalSale(voicePlayer, result, draft, member);
+}
 
 const isLocked = adminApi.isLocked;
 const unlockPassword = ref('');
 const unlockError = ref('');
 const isUnlocking = ref(false);
 watch(() => currentUser.value?.storeId + ':' + currentUser.value?.id, () => {
-  activeTab.value = 'dashboard'; unlockPassword.value = ''; unlockError.value = '';
-  if (currentUser.value && !isLocked.value) loadAccountData();
+  activeTab.value = navItems.value[0]?.key || 'dashboard'; history.value = {}; unlockPassword.value = ''; unlockError.value = '';
 }, { flush: 'post' });
 
 const navItems = computed(() => [
   { key: 'dashboard', label: '经营大盘', icon: '📊' },
   { key: 'members', label: '会员档案', icon: '👥' },
   { key: 'ledgers', label: '财务流水', icon: '📑' },
-  { key: 'import-export', label: '批量导入导出', icon: '📥', badge: '核心' },
+  { key: 'batches', label: '批量资料', icon: '📥' },
+  ...(owner.value ? [{ key: 'export', label: '表格导出', icon: '📤' }, { key: 'backup', label: '备份与恢复', icon: '📁' }] : []),
   { key: 'services', label: '服务与卡项', icon: '💇' },
   { key: 'store', label: '门店设置', icon: '🏪' },
   { key: 'voice', label: '语音播报', icon: '📢' },
   { key: 'users', label: '员工权限', icon: '🛡️' },
   ...(currentUser.value?.role === 'owner' ? [{ key: 'devices', label: '设备授权', icon: '📱' }] : []),
   { key: 'audit', label: '安全审计', icon: '🔍' }
-]);
+].filter(item => {
+  const requirement = { dashboard: 'reports', ledgers: 'cashier', services: 'settings', store: 'settings', voice: 'voice', users: 'staff', devices: 'devices', members: 'members', batches: 'members', backup: 'backup' }[item.key];
+  return !requirement || feature(requirement);
+}));
+watch(navItems, items => { if (!items.some(item => item.key === activeTab.value)) activeTab.value = items[0]?.key || 'dashboard'; });
 
 const currentNavLabel = computed(() => {
   return navItems.value.find(i => i.key === activeTab.value)?.label || '工作台';
@@ -297,70 +265,11 @@ async function handleUnlock() {
     await adminApi.login(currentUser.value.username, unlockPassword.value);
     isLocked.value = false;
     unlockPassword.value = '';
-    await loadAccountData();
   } catch (err) {
     unlockError.value = '密码错误，请重新输入';
   } finally {
     isUnlocking.value = false;
   }
-}
-
-async function loadAccountData() {
-  if (!currentUser.value || isLocked.value) return;
-  try {
-    await adminApi.getAccount();
-  } catch (err) {
-    // The client exposes the error beside the current account; previous identities cannot populate it.
-  }
-}
-
-async function handleSyncOperations(operations) {
-  if (isSubmittingOperations.value) throw new Error('正在处理上一笔操作，请稍后重试');
-  isSubmittingOperations.value = true;
-  try {
-    return await adminApi.sync(operations);
-  } finally {
-    isSubmittingOperations.value = false;
-  }
-}
-
-async function retryPending() {
-  if (isSubmittingOperations.value) return;
-  isSubmittingOperations.value = true;
-  try { await adminApi.retryPending(); }
-  catch (error) { alert('待办确认失败：' + error.message); }
-  finally { isSubmittingOperations.value = false; }
-}
-
-async function cancelRemainingImport() {
-  if (!confirm('已经入库的记录将保留。取消尚未入库的部分后，请重新预检剩余数据。确定继续吗？')) return;
-  try { await adminApi.cancelRemainingImport(); await loadAccountData(); }
-  catch (error) { alert(error.message); }
-}
-
-async function resolvePending() {
-  if (isSubmittingOperations.value || !confirm('服务器会核对原操作：已入账的保留，未入账的取消。完成后请按最新账本重新核对。确定继续吗？')) return;
-  isSubmittingOperations.value = true;
-  try {
-    const result = await adminApi.resolvePending();
-    activeTab.value = 'dashboard';
-    alert(`已核对：${result.resolved.filter(row => row.status === 'committed').length} 笔已入账，${result.resolved.filter(row => row.status === 'cancelled').length} 笔已取消。${pendingImport.value ? '请取消剩余导入后重新预检。' : '可重新核对后记账。'}`);
-  } catch (error) { alert('原操作核对尚未完成：' + error.message); }
-  finally { isSubmittingOperations.value = false; }
-}
-
-async function reconcileAccount() {
-  if (isSubmittingOperations.value) return;
-  isSubmittingOperations.value = true;
-  try {
-    const backup = await adminApi.reconciliationBackup();
-    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
-    const link = document.createElement('a'); link.href = url; link.download = '账本版本冲突核对-' + new Date().toISOString().slice(0, 10) + '.json';
-    link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-    if (!confirm(`已发起下载本机记录、待办和云端账本。请确认文件已保存并核对内容。是否采用云端 v${backup.remote.revision} 作为新的版本基准？原待办及导入记录将保留，后续须继续核对。`)) return;
-    await adminApi.reconcileAccount(backup);
-  } catch (error) { alert('账本核对失败：' + error.message); }
-  finally { isSubmittingOperations.value = false; }
 }
 
 async function handleLogout() {
@@ -370,8 +279,7 @@ async function handleLogout() {
 }
 
 onMounted(() => {
-  if (currentUser.value && !isLocked.value) {
-    loadAccountData();
-  }
+  if (!navItems.value.some(item => item.key === activeTab.value)) activeTab.value = navItems.value[0]?.key || 'dashboard';
+  if (currentUser.value && !isLocked.value) void workspace.connect();
 });
 </script>

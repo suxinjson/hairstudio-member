@@ -27,7 +27,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
-import { adminApi } from '../api/client.js';
+import { adminApi } from '../api/session.js';
 const devices = ref([]), loading = ref(false), saving = ref(false), error = ref(''), message = ref('');
 function localDate(value) { if (!value) return ''; const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
 async function load() {
