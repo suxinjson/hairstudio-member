@@ -9,13 +9,26 @@ elif [ -f "$SCRIPT_DIR/../compose.yaml" ]; then
   cd "$SCRIPT_DIR/.."
 fi
 
-if [ "${1:-}" != '--lock-held' ]; then
+LOCK_HELD=0
+SERVER_ONLY=0
+for deploy_arg in "$@"; do
+  case "$deploy_arg" in
+    --lock-held) LOCK_HELD=1 ;;
+    --server-only) SERVER_ONLY=1 ;;
+    *) echo "Unknown deployment option: $deploy_arg"; exit 1 ;;
+  esac
+done
+if [ "$LOCK_HELD" -ne 1 ]; then
   exec 9>"$PWD/.member-deploy.lock"
 fi
 flock 9
 
 echo "=========================================================="
-echo "  会员管家 - 服务器自动部署与 APK 发布更新"
+if [ "$SERVER_ONLY" -eq 1 ]; then
+  echo '  会员管家 - 仅部署服务器，不发布手机版'
+else
+  echo '  会员管家 - 服务器部署与 APK 发布更新'
+fi
 echo "=========================================================="
 
 if [ ! -f .env ]; then
@@ -66,7 +79,7 @@ if [ -n "$LICENSE_PRIVATE_KEY_HOST_FILE" ] && [ "$LICENSE_PRIVATE_KEY_HOST_FILE"
   COMPOSE_ARGS+=("-f" "deploy/compose.licensing.yaml")
 fi
 
-echo ">>> [1/3] 正在重新构建并平滑重启服务容器 (Web & API)..."
+echo ">>> 正在重新构建并更新服务容器 (Web & API)..."
 $SUDO docker compose "${COMPOSE_ARGS[@]}" up -d --build
 
 # 若宿主机上运行有《钢了钢》(ganglegang) 容器，自动将其接入 Web 反代网络
@@ -79,7 +92,7 @@ fi
 echo ">>> [2/3] 正在验证 HTTPS 与反向代理服务状态..."
 # 配置校验失败时保留日志并停止发布。
 if ! $SUDO docker compose "${COMPOSE_ARGS[@]}" exec -T web caddy validate --config /etc/caddy/Caddyfile; then
-  echo "❌ Caddy 配置校验失败，停止 APK 发布。"
+  echo "❌ Caddy 配置校验失败，停止后续部署操作。"
   $SUDO docker compose "${COMPOSE_ARGS[@]}" logs --tail=50 web api || true
   exit 1
 fi
@@ -96,11 +109,31 @@ for attempt in {1..12}; do
   if [ "$attempt" -lt 12 ]; then sleep 5; fi
 done
 if [ "$HTTPS_READY" -ne 1 ]; then
-  echo "❌ HTTPS 健康检查持续失败，停止 APK 发布。"
+  echo "❌ HTTPS 健康检查持续失败，停止后续部署操作。"
   $SUDO docker compose "${COMPOSE_ARGS[@]}" logs --tail=50 web api || true
   exit 1
 fi
 echo "✅ HTTPS 服务正常且证书有效！($HEALTH_URL 响应 200 OK)"
+
+if [ "$SERVER_ONLY" -eq 1 ]; then
+  READY_URL="https://${PUBLIC_DOMAIN}/api/ready"
+  API_READY=0
+  for attempt in {1..12}; do
+    if READY_STATUS=$(curl -fsS --connect-timeout 8 --max-time 15 -o /dev/null -w '${http_code}' "$READY_URL" 2>/dev/null) && [ "$READY_STATUS" = '200' ]; then
+      API_READY=1
+      break
+    fi
+    if [ "$attempt" -lt 12 ]; then sleep 5; fi
+  done
+  if [ "$API_READY" -ne 1 ]; then
+    echo '❌ API 数据库就绪检查失败，服务器部署未完成。'
+    $SUDO docker compose "${COMPOSE_ARGS[@]}" logs --tail=50 web api || true
+    exit 1
+  fi
+  echo '✅ Web 与 API 已更新，HTTPS 与数据库就绪检查通过。'
+  echo '✅ 本次仅部署服务器，手机版更新清单和版本记录保持原样。'
+  exit 0
+fi
 
 echo ">>> [3/3] 正在自动发布最新安卓 APK 到云端更新库..."
 # 按本次清单选取 APK，不能按修改时间误选其他运行留下的安装包。

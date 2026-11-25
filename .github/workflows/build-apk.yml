@@ -1,21 +1,25 @@
-name: 自动编译安卓安装包(APK)
+name: 编译安装包与服务器部署
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
     inputs:
+      operation:
+        description: 'build_apk=编译下载；deploy_server=仅部署服务器；deploy_server_and_app=服务器和手机版一起发布'
+        type: choice
+        options:
+          - build_apk
+          - deploy_server
+          - deploy_server_and_app
+        default: build_apk
       apk_type:
-        description: '安装包类型：release 用于覆盖升级，debug 用于测试'
+        description: '安装包类型（仅部署服务器时忽略）：release 用于覆盖升级，debug 用于测试'
         type: choice
         options:
           - release
           - debug
         default: release
-      release:
-        description: '编译后发布到服务器（需批准变量；不勾选则仅生成下载包）'
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -26,7 +30,7 @@ concurrency:
 
 jobs:
   build:
-    name: 编译并上传安装包
+    name: 编译安装包或部署服务器
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -45,9 +49,11 @@ jobs:
     env:
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: 1.0.${{ github.run_number }}
-      APK_VARIANT: ${{ github.event_name == 'workflow_dispatch' && (inputs.apk_type == 'release' || inputs.release == true) && 'release' || 'debug' }}
+      APK_VARIANT: ${{ github.event_name == 'workflow_dispatch' && (inputs.apk_type == 'release' || inputs.operation == 'deploy_server_and_app') && 'release' || 'debug' }}
+      SERVER_ONLY_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy_server' }}
       SERVER_DEPLOY_ENABLED: ${{ secrets.SERVER_SSH_KEY != '' }}
-      RELEASE_APPROVED: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true && vars.RELATIONAL_RELEASE_APPROVED == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
+      RELEASE_APPROVED: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy_server_and_app' && vars.RELATIONAL_RELEASE_APPROVED == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
+      SERVER_ONLY_APPROVED: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy_server' && vars.RELATIONAL_RELEASE_APPROVED == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
 
     steps:
     - name: 1. 拉取项目源码
@@ -57,9 +63,23 @@ jobs:
 
     - name: 检查安装包类型与发布状态
       env:
-        RELEASE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true }}
+        RELEASE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'deploy_server_and_app' }}
       run: |
-        if [ "$APK_VARIANT" = 'release' ]; then
+        if [ "$SERVER_ONLY_REQUESTED" = 'true' ] || [ "$RELEASE_REQUESTED" = 'true' ]; then
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/heads/master) ;;
+            *) echo '::error::服务器部署只允许从 main/master 执行'; exit 1 ;;
+          esac
+          if [ "$SERVER_ONLY_APPROVED" != 'true' ] && [ "$RELEASE_APPROVED" != 'true' ]; then
+            echo '::error::服务器部署尚未批准；请核验后将仓库 Variable RELATIONAL_RELEASE_APPROVED 设为 true'
+            exit 1
+          fi
+          if [ "$SERVER_DEPLOY_ENABLED" != 'true' ]; then
+            echo '::error::服务器部署缺少 SERVER_SSH_KEY；请配置现有部署密钥和 SERVER_KNOWN_HOSTS'
+            exit 1
+          fi
+        fi
+        if [ "$SERVER_ONLY_REQUESTED" != 'true' ] && [ "$APK_VARIANT" = 'release' ]; then
           case "$GITHUB_REF" in
             refs/heads/main|refs/heads/master) ;;
             *) echo '::error::正式签名包只允许从 main/master 编译；其他分支请选择 debug'; exit 1 ;;
@@ -68,13 +88,12 @@ jobs:
         {
           echo '## 本次安装包'
           echo "编译类型：$APK_VARIANT"
-          if [ "$RELEASE_APPROVED" = 'true' ]; then
+          if [ "$SERVER_ONLY_APPROVED" = 'true' ]; then
+            echo '仅更新服务器 Web 与 API，不编译 APK，不发布手机版更新。'
+          elif [ "$RELEASE_APPROVED" = 'true' ]; then
             echo '编译成功后执行已批准的服务器发布。'
           else
             echo '本次仅编译并上传安装包，可在 Artifacts 下载。'
-            if [ "$RELEASE_REQUESTED" = 'true' ]; then
-              echo '服务器发布尚未批准，发布步骤将跳过；安装包仍会生成并上传。'
-            fi
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
@@ -113,12 +132,16 @@ jobs:
       env:
         VITE_LICENSE_PUBLIC_KEYS: ${{ vars.LICENSE_PUBLIC_KEYS }}
       run: |
-        npm run build
+        if [ "$SERVER_ONLY_REQUESTED" = 'true' ]; then
+          npm run build:web
+        else
+          npm run build
+        fi
         npm run admin:build
         node scripts/check-public-credentials.mjs
 
     - name: 6. 配置发布签名
-      if: ${{ env.APK_VARIANT == 'release' }}
+      if: ${{ env.SERVER_ONLY_REQUESTED != 'true' && env.APK_VARIANT == 'release' }}
       env:
         SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
         RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
@@ -145,16 +168,18 @@ jobs:
         echo "RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
     - name: 7. 接受 Android SDK 协议与修复执行权限
+      if: ${{ env.SERVER_ONLY_REQUESTED != 'true' }}
       run: |
         yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
         sed -i -e 's/\r$//' ./android/gradlew
         chmod +x ./android/gradlew
 
     - name: 8. 编译 Android 安装包与测试
+      if: ${{ env.SERVER_ONLY_REQUESTED != 'true' }}
       env:
-        RELEASE_STORE_PASSWORD: ${{ env.APK_VARIANT == 'release' && secrets.RELEASE_STORE_PASSWORD || '' }}
-        RELEASE_KEY_ALIAS: ${{ env.APK_VARIANT == 'release' && secrets.RELEASE_KEY_ALIAS || '' }}
-        RELEASE_KEY_PASSWORD: ${{ env.APK_VARIANT == 'release' && secrets.RELEASE_KEY_PASSWORD || '' }}
+        RELEASE_STORE_PASSWORD: ${{ env.SERVER_ONLY_REQUESTED != 'true' && env.APK_VARIANT == 'release' && secrets.RELEASE_STORE_PASSWORD || '' }}
+        RELEASE_KEY_ALIAS: ${{ env.SERVER_ONLY_REQUESTED != 'true' && env.APK_VARIANT == 'release' && secrets.RELEASE_KEY_ALIAS || '' }}
+        RELEASE_KEY_PASSWORD: ${{ env.SERVER_ONLY_REQUESTED != 'true' && env.APK_VARIANT == 'release' && secrets.RELEASE_KEY_PASSWORD || '' }}
       run: |
         cd android
         if [ "$APK_VARIANT" = 'release' ]; then
@@ -168,7 +193,7 @@ jobs:
       run: rm -f -- "$RUNNER_TEMP/hairstudio-release.jks"
 
     - name: 9. 校验 APK 签名
-      if: ${{ env.APK_VARIANT == 'release' }}
+      if: ${{ env.SERVER_ONLY_REQUESTED != 'true' && env.APK_VARIANT == 'release' }}
       env:
         RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
       run: |
@@ -185,6 +210,7 @@ jobs:
         }
 
     - name: 10. 收集生成好的 APK
+      if: ${{ env.SERVER_ONLY_REQUESTED != 'true' }}
       env:
         RELEASE_CERT_SHA256: ${{ env.APK_VARIANT == 'release' && vars.RELEASE_CERT_SHA256 || '' }}
       run: |
@@ -209,12 +235,18 @@ jobs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: 11. 打包生成服务器更新包
-      if: ${{ env.RELEASE_APPROVED == 'true' }}
+      if: ${{ env.RELEASE_APPROVED == 'true' || env.SERVER_ONLY_APPROVED == 'true' }}
       run: |
-        mkdir -p deploy_bundle/releases
+        mkdir -p output_apk deploy_bundle
         cp -r admin server src deploy docs Dockerfile compose.yaml package.json package-lock.json capacitor.config.json index.html vite.config.js .dockerignore vendor deploy_bundle/
-        cp "output_apk/member-manager-v${VERSION_NAME}.apk" deploy_bundle/releases/
-        cp output_apk/update-manifest.json deploy_bundle/releases/
+        if [ "${SERVER_ONLY_APPROVED:-false}" = 'true' ]; then
+          printf '%s\n' 'server' > deploy_bundle/deployment-mode.txt
+        else
+          printf '%s\n' 'app' > deploy_bundle/deployment-mode.txt
+          mkdir -p deploy_bundle/releases
+          cp "output_apk/member-manager-v${VERSION_NAME}.apk" deploy_bundle/releases/
+          cp output_apk/update-manifest.json deploy_bundle/releases/
+        fi
         printf '%s\n' "$VERSION_CODE" > deploy_bundle/release-version.txt
         chmod +x deploy_bundle/deploy/deploy-update.sh
         tar -czf "output_apk/server-update-v${VERSION_NAME}.tar.gz" -C deploy_bundle .
@@ -222,13 +254,13 @@ jobs:
     - name: 12. 上传安装包与服务端更新产物供备用下载
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
-        name: ${{ env.APK_VARIANT == 'release' && format('member-manager-{0}', env.VERSION_NAME) || format('member-manager-debug-{0}', env.VERSION_NAME) }}
+        name: ${{ env.SERVER_ONLY_REQUESTED == 'true' && format('member-server-{0}', env.VERSION_NAME) || env.APK_VARIANT == 'release' && format('member-manager-{0}', env.VERSION_NAME) || format('member-manager-debug-{0}', env.VERSION_NAME) }}
         path: output_apk/*
         if-no-files-found: error
         retention-days: 30
 
-    - name: 13. [方案B] 自动 SSH 远程部署到云服务器并发布新版 APK
-      if: ${{ env.RELEASE_APPROVED == 'true' && env.SERVER_DEPLOY_ENABLED == 'true' }}
+    - name: 13. [方案B] 自动 SSH 部署服务器及所选发布内容
+      if: ${{ (env.RELEASE_APPROVED == 'true' || env.SERVER_ONLY_APPROVED == 'true') && env.SERVER_DEPLOY_ENABLED == 'true' }}
       env:
         SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
         SERVER_HOST: ${{ secrets.SERVER_HOST || '124.70.184.136' }}
@@ -264,12 +296,16 @@ jobs:
         scp "${SCP_OPTS[@]}" deploy/install-update.sh "$SERVER_USER@$SERVER_HOST:$REMOTE_INSTALLER"
 
         # 远程解压并运行一键更新发布脚本
-        echo ">>> [2/2] 正在远程解压、重启容器并发布最新 APK..."
+        echo ">>> [2/2] 正在远程解压、更新容器并执行所选部署操作..."
         printf -v REMOTE_COMMAND 'bash %q %q %q' "$REMOTE_INSTALLER" "$SERVER_DEPLOY_PATH" "$REMOTE_BUNDLE"
         ssh "${SSH_OPTS[@]}" "$SERVER_USER@$SERVER_HOST" "$REMOTE_COMMAND"
         printf -v CLEANUP_COMMAND 'rm -f -- %q %q' "$REMOTE_INSTALLER" "$REMOTE_BUNDLE"
         ssh "${SSH_OPTS[@]}" "$SERVER_USER@$SERVER_HOST" "$CLEANUP_COMMAND"
-        echo ">>> 🎉 云服务器自动部署及 APK 发布成功完成！手机端已可检查更新！"
+        if [ "${SERVER_ONLY_APPROVED:-false}" = 'true' ]; then
+          echo '>>> 服务器部署成功；未发布手机版更新。'
+        else
+          echo '>>> 云服务器与手机版更新发布成功。'
+        fi
 
     - name: 清理 SSH 部署临时凭据
       if: ${{ always() }}

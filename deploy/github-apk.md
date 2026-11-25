@@ -79,15 +79,23 @@ Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路�
 
 ## 5. 重新构建与下载
 
-在 Actions 选择本工作流并点击 **Run workflow**。分支选择 `main` 或 `master`，安装包类型默认 `release`，保留“编译后发布到服务器”不勾选即可编译、校验证书并上传正式签名 APK，供下载和覆盖升级。编译下载不要求设置 `RELATIONAL_RELEASE_APPROVED`，但需要前述四项签名 Secrets 和 `RELEASE_CERT_SHA256`。
+先提交并推送到 `main`，再在 Actions 选择“编译安装包与服务器部署”，点击新的 **Run workflow**。推送默认只运行测试、编译和上传 Debug 包，不会自动更新服务器，也不会向手机发布更新。
 
-推送代码会编译并上传 `debug` 测试包；手动选择 `debug` 也会生成同类包。Debug 使用测试签名，不能覆盖原正式签名版本。两种类型均执行网页、后台、Android 单测和仪表源码编译。第 8、10、12 步分别负责编译、收集和上传安装包，成功运行不会因服务器发布未批准而跳过这些步骤。
+手动运行的 `operation` 默认 `build_apk`，安装包类型默认 `release`。按本次变更选择操作：
 
-正式签名产物在 **Artifacts** 中名为 `member-manager-版本号`，包含 APK 和 `update-manifest.json`；调试产物名为 `member-manager-debug-版本号`，包含名称带 `debug` 的 APK。安装包覆盖升级要求保持同一包名、签名密钥，并使用更高的 `versionCode`。
+| operation | 操作与用户感知 |
+| --- | --- |
+| `build_apk`（默认） | 仅编译下载安装包。选 `release` 得到固定签名正式包，选 `debug` 得到测试包；不部署、不向手机发布更新。 |
+| `deploy_server` | 仅部署服务器 Web、后台和 API。忽略安装包类型，不编译或发布 APK，保留手机更新清单与版本记录；无需用户安装新版 App。 |
+| `deploy_server_and_app` | 部署服务器并发布手机新版，强制编译固定签名正式包。成功后手机可在“检查更新”下载并确认系统安装。 |
 
-服务器发布仍需达到 [发布门槛](../docs/refactor-test-plan.md#10-发布清单与完成状态)，核实候选源码、目标和审批，由负责人设置 `RELATIONAL_RELEASE_APPROVED=true` 后，在 **Run workflow** 显式勾选“编译后发布到服务器”。勾选发布时自动采用正式签名类型；同时满足批准变量、手动发布选择及主分支条件后，第 11、13 步才打包服务器更新并部署。未批准时仍可下载已编译的安装包，运行摘要会说明服务器发布被跳过的原因。
+两种部署操作仅允许 `main/master`，需要现有 `SERVER_SSH_KEY`、`SERVER_KNOWN_HOSTS`，并由负责人核验后将仓库 Variable `RELATIONAL_RELEASE_APPROVED` 设为 `true`。未批准或缺少 SSH 配置会在准备步骤明确失败，避免误以为部署已完成。只编译下载不要求部署批准。
 
-“Re-run jobs” 保留原运行的触发方式、源码提交和安装包类型。要切换为正式签名包，应发起新的 **Run workflow**；修改工作流后须先提交并推送，再发起新运行。
+正式签名编译还需要前述四项签名 Secrets 和 `RELEASE_CERT_SHA256`，沿用原来的签名文件和指纹。正式产物名为 `member-manager-版本号`，包含 APK 和 `update-manifest.json`；Debug 产物名为 `member-manager-debug-版本号`，不能覆盖原正式签名 App。仅服务器产物名为 `member-server-版本号`，只有服务器更新包。
+
+服务器/后台/在线网页的改动通常选择 `deploy_server`；只改测试、说明或 CI 流程提交推送即可。Android 使用 APK 内的 `dist` 资源，修改手机本地页面、共享组件、离线记账或原生桥后，要在已安装手机上生效必须发布并安装一次新 APK；服务器部署不能替换这些本地文件。普通 Android 安装更新需要用户确认，不支持本项目直接无感安装 APK。
+
+“Re-run jobs” 保留原源码、触发方式和输入。切换操作或使用新工作流时，应提交推送后发起新的 **Run workflow**。正式包覆盖升级保持原包名、签名，并使用更高的 `versionCode`；正常更新无需卸载 App。
 
 仅使用网页版不需要 APK 签名；配置缺失不会影响已部署网站的账号登录和记账。需要向云服务器发布 APK 更新时，再按 [部署维护说明](README.md#发布-apk-更新)填写服务器 `.env` 中同一个 Android 签名指纹并发布安装包。
 
@@ -144,4 +152,4 @@ sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 
 若 `SERVER_PORT` 为非默认端口，例如 2222，主机字段使用 `[124.70.184.136]:2222`；域名部署则使用实际 `SERVER_HOST`。可保存多行公钥。不要仅凭未经核验的 `ssh-keyscan` 结果建立信任，不要复制服务器私钥。更换服务器主机密钥后，需要核对新指纹并更新此 Secret。
 
-工作流按仓库串行发布，每次运行和重试使用独立的远程临时文件。服务器的 `deploy/install-update.sh` 在同一把锁内检查版本、安装代码、更新容器和发布 APK；旧版本任务会在覆盖代码前跳过。部署失败后可重试相同版本，同版且同内容的 APK 发布也可重试。
+工作流按仓库串行部署，每次运行和重试使用独立的远程临时文件。服务器的 `deploy/install-update.sh` 在同一把锁内检查版本、安装代码、更新容器并执行所选发布范围；旧版本任务会在覆盖代码前跳过。仅服务器包不能携带 `releases`，部署后不调用 APK 发布器。部署失败可重试相同版本，同版且同内容的 APK 发布也可重试。

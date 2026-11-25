@@ -31,7 +31,7 @@ function run(script, cwd, env = {}, timeout = 60000) {
   });
 }
 
-async function deployment(t, { domain = 'member.example.com', validationFails = false, health = 'ok', ipConfig = true, licenseKey = '', licensingConfig = true, environmentLicenseKey } = {}) {
+async function deployment(t, { domain = 'member.example.com', validationFails = false, health = 'ok', ipConfig = true, licenseKey = '', licensingConfig = true, environmentLicenseKey, serverOnly = false, readyFails = false } = {}) {
   const directory = await fixture(t), bin = join(directory, 'bin');
   await Promise.all([mkdir(bin), mkdir(join(directory, 'deploy')), mkdir(join(directory, 'releases'))]);
   await Promise.all([
@@ -53,11 +53,13 @@ exec "$@"
 `, { mode: 0o755 }),
     writeFile(join(bin, 'curl'), `#!/usr/bin/env bash
 printf 'curl\\n' >> "$REVIEW_LOG"
+printf '%s\\n' "$*" >> "$REVIEW_CURL_ARGS"
 count=0
 if [ -f "$REVIEW_COUNT" ]; then read -r count < "$REVIEW_COUNT"; fi
 count=$((count+1))
 printf '%s\\n' "$count" > "$REVIEW_COUNT"
 if [ "$REVIEW_HEALTH" = failed ]; then exit 22; fi
+if [[ "$*" == *"/api/ready"* ]] && [ "$REVIEW_READY_FAILS" = 1 ]; then exit 22; fi
 if [ "$REVIEW_HEALTH" = transient ] && [ "$count" -lt 3 ]; then exit 22; fi
 if [ "$REVIEW_HEALTH" = redirect ]; then printf '302'; else printf '200'; fi
 `, { mode: 0o755 }),
@@ -66,17 +68,19 @@ if [ "$REVIEW_HEALTH" = redirect ]; then printf '302'; else printf '200'; fi
   ]);
   if (ipConfig) await writeFile(join(directory, 'deploy/compose.ip.yaml'), 'services: {}\n');
   if (licensingConfig) await writeFile(join(directory, 'deploy/compose.licensing.yaml'), 'services: {}\n');
-  const result = run('export PATH="$REVIEW_BIN:$PATH"\nsource deploy/deploy-update.sh', directory, {
+  const result = run('export PATH="$REVIEW_BIN:$PATH"\nsource deploy/deploy-update.sh' + (serverOnly ? ' --server-only' : ''), directory, {
     REVIEW_BIN: process.platform === 'win32' ? unix(bin).replace(/^([A-Za-z]):/, (_, drive) => '/' + drive.toLowerCase()) : bin,
     REVIEW_LOG: unix(join(directory, 'commands.log')), REVIEW_COUNT: unix(join(directory, 'health-count')),
     REVIEW_VALIDATION_FAILS: validationFails ? '1' : '0', REVIEW_HEALTH: health,
+    REVIEW_CURL_ARGS: unix(join(directory, 'curl-args.log')), REVIEW_READY_FAILS: readyFails ? '1' : '0',
     ...(environmentLicenseKey !== undefined ? { LICENSE_PRIVATE_KEY_HOST_FILE: environmentLicenseKey } : {})
   });
   const commands = await readFile(join(directory, 'commands.log'), 'utf8').catch(error => {
     if (error.code !== 'ENOENT') throw error;
     return '';
   });
-  return { ...result, commands };
+  const curlArgs = await readFile(join(directory, 'curl-args.log'), 'utf8').catch(() => '');
+  return { ...result, commands, curlArgs, directory };
 }
 
 test('domain deployment keeps the standard Caddy configuration when Certbot is installed', { skip: !bashAvailable }, async t => {
@@ -96,13 +100,17 @@ async function installation(t, { realLock = false } = {}) {
   if (!realLock) await writeFile(join(bin, 'flock'), '#!/usr/bin/env bash\nprintf "lock\\n" >> "$REVIEW_LOG"\n', { mode: 0o755 });
   const env = { REVIEW_INSTALLER: shellPath(join(root, 'deploy/install-update.sh')), REVIEW_TARGET: shellPath(target),
     REVIEW_LOG: shellPath(join(directory, 'install.log')), REVIEW_BIN: shellPath(bin) };
-  async function bundle(version, manifestVersion = version) {
+  async function bundle(version, manifestVersion = version, mode = 'app', includeReleases = mode !== 'server') {
     const payload = join(directory, 'payload-' + version), archive = join(directory, 'bundle-' + version + '.tar.gz');
-    await mkdir(join(payload, 'deploy'), { recursive: true }); await mkdir(join(payload, 'releases'));
+    await mkdir(join(payload, 'deploy'), { recursive: true });
+    if (mode !== 'app') await writeFile(join(payload, 'deployment-mode.txt'), mode + '\n');
     await writeFile(join(payload, 'release-version.txt'), String(version) + '\n');
     await writeFile(join(payload, 'source.txt'), 'source-' + version);
-    await writeFile(join(payload, 'releases/update-manifest.json'), JSON.stringify({ versionCode: manifestVersion, versionName: '1.0.' + manifestVersion }, null, 2));
-    await writeFile(join(payload, 'deploy/deploy-update.sh'), '#!/usr/bin/env bash\nversion=$(cat release-version.txt)\nprintf "deploy-%s\\n" "$version" >> "$REVIEW_LOG"\nsleep "${REVIEW_DELAY:-0}"\nprintf "finished-%s-%s\\n" "$version" "$(cat release-version.txt)" >> "$REVIEW_LOG"\n');
+    if (includeReleases) {
+      await mkdir(join(payload, 'releases'));
+      await writeFile(join(payload, 'releases/update-manifest.json'), JSON.stringify({ versionCode: manifestVersion, versionName: '1.0.' + manifestVersion }, null, 2));
+    }
+    await writeFile(join(payload, 'deploy/deploy-update.sh'), '#!/usr/bin/env bash\nversion=$(cat release-version.txt)\nprintf "deploy-%s\\n" "$version" >> "$REVIEW_LOG"\nif [[ "$*" == *--server-only* ]]; then printf "server-only\\n" >> "$REVIEW_LOG"; fi\nsleep "${REVIEW_DELAY:-0}"\nprintf "finished-%s-%s\\n" "$version" "$(cat release-version.txt)" >> "$REVIEW_LOG"\n');
     const result = run('tar -czf "$REVIEW_BUNDLE" -C "$REVIEW_PAYLOAD" .', directory, { REVIEW_BUNDLE: shellPath(archive), REVIEW_PAYLOAD: shellPath(payload) });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     return shellPath(archive);
@@ -125,6 +133,41 @@ test('installation rejects stale archives before replacing code and permits the 
   const retry = run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: newest });
   assert.equal(retry.status, 0, retry.stdout + retry.stderr);
   assert.equal((await readFile(join(setup.directory, 'install.log'), 'utf8')).split('\n').filter(line => line === 'deploy-3').length, 2);
+});
+
+test('server-only installation preserves the existing mobile release and orders later combined deployments', { skip: !bashAvailable }, async t => {
+  const setup = await installation(t);
+  await mkdir(join(setup.target, 'releases'));
+  const manifest = JSON.stringify({ versionCode: 1, versionName: '1.0.1' }, null, 2);
+  await writeFile(join(setup.target, 'releases/update-manifest.json'), manifest);
+  await writeFile(join(setup.target, 'releases/current.apk'), 'existing mobile APK');
+  const server = await setup.bundle(3, 3, 'server');
+  const result = run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: server });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(await readFile(join(setup.target, 'releases/update-manifest.json'), 'utf8'), manifest);
+  assert.equal(await readFile(join(setup.target, 'releases/current.apk'), 'utf8'), 'existing mobile APK');
+  assert.equal((await readFile(join(setup.target, 'deployment-mode.txt'), 'utf8')).trim(), 'server');
+  assert.ok((await readFile(join(setup.directory, 'install.log'), 'utf8')).includes('server-only'));
+  const older = await setup.bundle(2);
+  assert.equal(run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: older }).status, 0);
+  assert.equal(await readFile(join(setup.target, 'source.txt'), 'utf8'), 'source-3');
+  const app = await setup.bundle(4);
+  assert.equal(run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: app }).status, 0);
+  assert.equal(JSON.parse(await readFile(join(setup.target, 'releases/update-manifest.json'), 'utf8')).versionCode, 4);
+  assert.equal((await readFile(join(setup.target, 'deployment-mode.txt'), 'utf8')).trim(), 'app');
+  assert.equal(await readFile(join(setup.target, '.env'), 'utf8'), 'PRIVATE_VALUE=retained\n');
+});
+
+test('server-only archives reject included mobile releases and unknown modes before replacing code', { skip: !bashAvailable }, async t => {
+  const setup = await installation(t);
+  await writeFile(join(setup.target, 'source.txt'), 'keep existing code');
+  for (const [version, mode, includeReleases] of [[3, 'server', true], [4, 'invalid', false]]) {
+    const archive = await setup.bundle(version, version, mode, includeReleases);
+    const result = run(setup.script, setup.directory, { ...setup.env, REVIEW_BUNDLE: archive });
+    assert.notEqual(result.status, 0);
+    assert.equal(await readFile(join(setup.target, 'source.txt'), 'utf8'), 'keep existing code');
+    await assert.rejects(access(join(setup.target, '.member-deployment-version')));
+  }
 });
 
 test('a legacy installed manifest also prevents rollback, and inconsistent archive metadata cannot replace code', { skip: !bashAvailable }, async t => {
@@ -272,6 +315,27 @@ test('temporary HTTPS failures recover before an APK is published', { skip: !bas
   assert.ok(result.commands.lastIndexOf('curl\n') < result.commands.indexOf('server/publish-release.js'));
 });
 
+test('server-only deployments verify readiness and never invoke the APK publisher', { skip: !bashAvailable }, async t => {
+  for (const domain of ['member.example.com', '124.70.184.136']) {
+    const result = await deployment(t, { domain, serverOnly: true });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.ok(result.commands.includes('up -d --build'));
+    assert.ok(!result.commands.includes('server/publish-release.js'));
+    assert.ok(result.curlArgs.includes('/api/health'));
+    assert.ok(result.curlArgs.includes('/api/ready'));
+    assert.equal(await readFile(join(result.directory, 'releases/member-manager-v1.0.1.apk'), 'utf8'), 'test-apk');
+    assert.equal(JSON.parse(await readFile(join(result.directory, 'releases/update-manifest.json'), 'utf8')).versionName, '1.0.1');
+  }
+});
+
+test('server-only deployments fail a database readiness check without publishing mobile software', { skip: !bashAvailable }, async t => {
+  const result = await deployment(t, { serverOnly: true, readyFails: true });
+  assert.notEqual(result.status, 0);
+  assert.ok(result.commands.includes('logs --tail=50 web api'));
+  assert.ok(!result.commands.includes('server/publish-release.js'));
+  assert.equal(result.curlArgs.split('\n').filter(line => line.includes('/api/ready')).length, 12);
+});
+
 test('the workflow deployment archive builds its Docker frontend without an Android project or preexisting files', { skip: !bashAvailable }, async t => {
   const directory = await fixture(t);
   for (const name of ['admin', 'server', 'src', 'deploy', 'docs', 'Dockerfile', 'compose.yaml', 'package.json', 'package-lock.json', 'capacitor.config.json', 'index.html', 'vite.config.js', '.dockerignore', 'vendor']) {
@@ -313,6 +377,33 @@ test('the workflow deployment archive builds its Docker frontend without an Andr
   assert.equal(built.status, 0, (built.error?.message || '') + built.stdout + built.stderr);
   const html = await readFile(join(unpacked, 'dist/index.html'), 'utf8');
   assert.match(html, /<script[^>]+src="\/assets\//);
+});
+
+test('server-only workflow builds a deployment archive without APK or mobile update metadata', { skip: !bashAvailable }, async t => {
+  const directory = await fixture(t);
+  for (const name of ['admin', 'server', 'src', 'deploy', 'docs', 'Dockerfile', 'compose.yaml', 'package.json', 'package-lock.json', 'capacitor.config.json', 'index.html', 'vite.config.js', '.dockerignore', 'vendor']) {
+    await cp(join(root, name), join(directory, name), { recursive: true });
+  }
+  await writeFile(join(directory, '.env'), 'PRIVATE_TEST_VALUE=not-for-upload\n');
+  const lines = (await readFile(join(root, '.github/workflows/build-apk.yml'), 'utf8')).replaceAll('\r\n', '\n').split('\n');
+  const step = lines.findIndex(line => line.includes('11. 打包生成服务器更新包'));
+  const start = lines.findIndex((line, index) => index > step && line.trim() === 'run: |');
+  const script = [];
+  for (let index = start + 1; index < lines.length; index++) {
+    if (lines[index] && !lines[index].startsWith('        ')) break;
+    script.push(lines[index].slice(8));
+  }
+  const built = run('set -e\n' + script.join('\n'), directory, { VERSION_NAME: '1.0.95', VERSION_CODE: '95', SERVER_ONLY_APPROVED: 'true' });
+  assert.equal(built.status, 0, built.stdout + built.stderr);
+  const unpacked = join(directory, 'server-unpacked'); await mkdir(unpacked);
+  const extracted = run('tar -xzf output_apk/server-update-v1.0.95.tar.gz -C server-unpacked', directory);
+  assert.equal(extracted.status, 0, extracted.stdout + extracted.stderr);
+  assert.equal((await readFile(join(unpacked, 'deployment-mode.txt'), 'utf8')).trim(), 'server');
+  assert.equal((await readFile(join(unpacked, 'release-version.txt'), 'utf8')).trim(), '95');
+  await access(join(unpacked, 'deploy/install-update.sh'));
+  await assert.rejects(access(join(unpacked, 'releases')));
+  await assert.rejects(access(join(unpacked, 'android')));
+  await assert.rejects(access(join(unpacked, '.env')));
 });
 
 test('the API Docker stage includes every relative source dependency of its copied modules', async () => {

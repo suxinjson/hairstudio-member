@@ -46,6 +46,8 @@ function fixture(t) {
   return { directory, env: {
     ...process.env, RUNNER_TEMP: unix(directory), GITHUB_ENV: unix(join(directory, 'github-env')),
     GITHUB_STEP_SUMMARY: unix(join(directory, 'github-summary')), GITHUB_REF: 'refs/heads/main',
+    SERVER_ONLY_REQUESTED: 'false', SERVER_ONLY_APPROVED: 'false', SERVER_DEPLOY_ENABLED: 'true',
+    RELEASE_APPROVED: 'false', RELEASE_REQUESTED: 'false',
     SIGNING_KEYSTORE_BASE64: '', RELEASE_STORE_PASSWORD: '', RELEASE_KEY_ALIAS: '', RELEASE_KEY_PASSWORD: '', RELEASE_CERT_SHA256: ''
   } };
 }
@@ -55,24 +57,28 @@ function run(script, directory, env) {
 
 test('manual APK compilation and artifact upload do not depend on server publication approval', () => {
   assert.match(workflow, /apk_type:[\s\S]*?default: release/);
-  assert.match(workflow, /release:\n\s+description:[^\n]+\n\s+type: boolean\n\s+default: false/);
-  for (const name of ['8. 编译 Android 安装包与测试', '10. 收集生成好的 APK', '12. 上传安装包与服务端更新产物供备用下载']) {
-    assert.doesNotMatch(stepBlock(name), /^\s+if:/m, name + ' must run after successful prerequisites');
+  assert.match(workflow, /operation:[\s\S]*?default: build_apk/);
+  for (const name of ['8. 编译 Android 安装包与测试', '10. 收集生成好的 APK']) {
+    assert.equal(expression(stepBlock(name), 'if', { env: { SERVER_ONLY_REQUESTED: 'false' } }), true);
+    assert.equal(expression(stepBlock(name), 'if', { env: { SERVER_ONLY_REQUESTED: 'true' } }), false);
   }
+  assert.doesNotMatch(stepBlock('12. 上传安装包与服务端更新产物供备用下载'), /^\s+if:/m);
   assert.match(stepBlock('12. 上传安装包与服务端更新产物供备用下载'), /if-no-files-found: error/);
   for (const event_name of ['push', 'workflow_dispatch'])
     for (const ref of ['refs/heads/main', 'refs/heads/master', 'refs/heads/feature'])
       for (const apk_type of ['release', 'debug'])
-        for (const release of [false, true])
+        for (const operation of ['build_apk', 'deploy_server', 'deploy_server_and_app'])
           for (const approved of [undefined, 'false', 'true']) {
-            const context = { github: { event_name, ref }, inputs: { apk_type, release }, vars: { RELATIONAL_RELEASE_APPROVED: approved } };
+            const context = { github: { event_name, ref }, inputs: { apk_type, operation }, vars: { RELATIONAL_RELEASE_APPROVED: approved } };
             const variant = expression(workflow, 'APK_VARIANT', context);
             const publication = expression(workflow, 'RELEASE_APPROVED', context);
-            assert.equal(variant, event_name === 'workflow_dispatch' && (apk_type === 'release' || release) ? 'release' : 'debug');
-            assert.equal(publication, event_name === 'workflow_dispatch' && release && approved === 'true' && ref !== 'refs/heads/feature');
-            const env = { APK_VARIANT: variant, RELEASE_APPROVED: String(publication), SERVER_DEPLOY_ENABLED: 'true' };
-            assert.equal(expression(stepBlock('11. 打包生成服务器更新包'), 'if', { env }), publication);
-            assert.equal(expression(stepBlock('13. [方案B] 自动 SSH'), 'if', { env }), publication);
+            const serverOnly = expression(workflow, 'SERVER_ONLY_APPROVED', context);
+            assert.equal(variant, event_name === 'workflow_dispatch' && (apk_type === 'release' || operation === 'deploy_server_and_app') ? 'release' : 'debug');
+            assert.equal(publication, event_name === 'workflow_dispatch' && operation === 'deploy_server_and_app' && approved === 'true' && ref !== 'refs/heads/feature');
+            assert.equal(serverOnly, event_name === 'workflow_dispatch' && operation === 'deploy_server' && approved === 'true' && ref !== 'refs/heads/feature');
+            const env = { APK_VARIANT: variant, RELEASE_APPROVED: String(publication), SERVER_ONLY_APPROVED: String(serverOnly), SERVER_DEPLOY_ENABLED: 'true' };
+            assert.equal(expression(stepBlock('11. 打包生成服务器更新包'), 'if', { env }), publication || serverOnly);
+            assert.equal(expression(stepBlock('13. [方案B] 自动 SSH'), 'if', { env }), publication || serverOnly);
           }
 });
 
@@ -83,6 +89,22 @@ test('debug builds never receive fixed signing passwords and artifact names iden
     for (const key of Object.keys(secrets)) assert.equal(expression(step, key, { env: { APK_VARIANT }, secrets }), APK_VARIANT === 'release' ? secrets[key] : '');
     assert.equal(expression(stepBlock('12. 上传安装包与服务端更新产物供备用下载'), 'name', { env: { APK_VARIANT, VERSION_NAME: '1.0.95' } }),
       APK_VARIANT === 'release' ? 'member-manager-1.0.95' : 'member-manager-debug-1.0.95');
+  }
+  for (const key of Object.keys(secrets)) assert.equal(expression(step, key, { env: { APK_VARIANT: 'release', SERVER_ONLY_REQUESTED: 'true' }, secrets }), '');
+  assert.equal(expression(stepBlock('12. 上传安装包与服务端更新产物供备用下载'), 'name', { env: { APK_VARIANT: 'release', SERVER_ONLY_REQUESTED: 'true', VERSION_NAME: '1.0.95' } }), 'member-server-1.0.95');
+});
+
+test('server-only preflight requires approval and SSH but not APK signing credentials', { skip: !bashAvailable }, t => {
+  const { directory, env } = fixture(t);
+  const configured = { ...env, APK_VARIANT: 'release', SERVER_ONLY_REQUESTED: 'true' };
+  const script = stepScript('检查安装包类型与发布状态');
+  assert.notEqual(run(script, directory, configured).status, 0);
+  assert.notEqual(run(script, directory, { ...configured, SERVER_ONLY_APPROVED: 'true', SERVER_DEPLOY_ENABLED: 'false' }).status, 0);
+  const allowed = run(script, directory, { ...configured, SERVER_ONLY_APPROVED: 'true' });
+  assert.equal(allowed.status, 0, allowed.stdout + allowed.stderr);
+  assert.ok(readFileSync(join(directory, 'github-summary'), 'utf8').includes('不发布手机版更新'));
+  for (const name of ['6. 配置发布签名', '7. 接受 Android SDK', '8. 编译 Android', '9. 校验 APK', '10. 收集生成好的 APK']) {
+    assert.equal(expression(stepBlock(name), 'if', { env: configured }), false);
   }
 });
 

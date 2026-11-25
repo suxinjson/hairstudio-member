@@ -22,8 +22,23 @@ tar -xzf "$BUNDLE" --no-same-owner -C "$STAGING"
 read -r INCOMING_VERSION < "$STAGING/release-version.txt"
 [[ "$INCOMING_VERSION" =~ ^[1-9][0-9]{0,9}$ ]] && (( INCOMING_VERSION <= 2100000000 )) || { echo 'Invalid release version'; exit 1; }
 test -f "$STAGING/deploy/deploy-update.sh"
-MANIFEST_VERSION=$(sed -nE 's/^[[:space:]]*"versionCode"[[:space:]]*:[[:space:]]*([0-9]+),?[[:space:]]*$/\1/p' "$STAGING/releases/update-manifest.json")
-[ "$MANIFEST_VERSION" = "$INCOMING_VERSION" ] || { echo 'Archive and APK manifest versions differ'; exit 1; }
+DEPLOYMENT_MODE='app'
+if [ -f "$STAGING/deployment-mode.txt" ]; then
+  read -r DEPLOYMENT_MODE < "$STAGING/deployment-mode.txt"
+fi
+case "$DEPLOYMENT_MODE" in
+  app)
+    MANIFEST_VERSION=$(sed -nE 's/^[[:space:]]*"versionCode"[[:space:]]*:[[:space:]]*([0-9]+),?[[:space:]]*$/\1/p' "$STAGING/releases/update-manifest.json")
+    [ "$MANIFEST_VERSION" = "$INCOMING_VERSION" ] || { echo 'Archive and APK manifest versions differ'; exit 1; }
+    ;;
+  server)
+    if [ -e "$STAGING/releases" ] || [ -L "$STAGING/releases" ]; then
+      echo 'Server-only archive must not contain APK releases or an update manifest'
+      exit 1
+    fi
+    ;;
+  *) echo 'Invalid deployment mode'; exit 1 ;;
+esac
 
 CURRENT_VERSION=0
 for version_file in "$TARGET_DIR/.member-deployment-version" "$TARGET_DIR/release-version.txt"; do
@@ -46,7 +61,12 @@ fi
 
 # 先记录版本下限，失败重试只能采用相同或更新版本，避免回退已启动的服务。
 printf '%s\n' "$INCOMING_VERSION" > "$STAGING/.member-deployment-version"
+printf '%s\n' "$DEPLOYMENT_MODE" > "$STAGING/deployment-mode.txt"
 mv -- "$STAGING/.member-deployment-version" "$TARGET_DIR/.member-deployment-version"
 cp -a "$STAGING/." "$TARGET_DIR/"
 cd -- "$TARGET_DIR"
-bash deploy/deploy-update.sh --lock-held
+if [ "$DEPLOYMENT_MODE" = 'server' ]; then
+  bash deploy/deploy-update.sh --lock-held --server-only
+else
+  bash deploy/deploy-update.sh --lock-held
+fi

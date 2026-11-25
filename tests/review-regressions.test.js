@@ -71,18 +71,18 @@ async function until(check) {
 const membersProps = extra => ({ workspace, owner: true, writable: true, cashierWritable: true, feature: () => true, ...extra });
 function evidence(t, facts) { t.diagnostic(JSON.stringify(facts)); }
 
-test('release approval requires dispatch, an explicit release, the approval variable and a main branch', async () => {
+test('release approval requires dispatch, an explicit publication target, the approval variable and a main branch', async () => {
   const workflow = await readFile(new URL('../.github/workflows/build-apk.yml', import.meta.url), 'utf8');
   const expression = workflow.match(/RELEASE_APPROVED: \$\{\{ (.+) \}\}/)?.[1];
   assert.ok(expression);
   const approved = new Function('github', 'inputs', 'vars', 'return Boolean(' + expression + ')');
   for (const event_name of ['push', 'workflow_dispatch'])
     for (const ref of ['refs/heads/main', 'refs/heads/master', 'refs/heads/feature'])
-      for (const release of [undefined, false, true])
+      for (const operation of [undefined, 'build_apk', 'deploy_server', 'deploy_server_and_app'])
         for (const approval of [undefined, 'false', 'true']) {
-          assert.equal(approved({ event_name, ref }, { release }, { RELATIONAL_RELEASE_APPROVED: approval }),
-            event_name === 'workflow_dispatch' && release === true && approval === 'true' && ref !== 'refs/heads/feature',
-            JSON.stringify({ event_name, ref, release, approval }));
+          assert.equal(approved({ event_name, ref }, { operation }, { RELATIONAL_RELEASE_APPROVED: approval }),
+            event_name === 'workflow_dispatch' && operation === 'deploy_server_and_app' && approval === 'true' && ref !== 'refs/heads/feature',
+            JSON.stringify({ event_name, ref, operation, approval }));
         }
 });
 
