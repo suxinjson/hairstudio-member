@@ -5,8 +5,15 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
     inputs:
+      apk_type:
+        description: '安装包类型：release 用于覆盖升级，debug 用于测试'
+        type: choice
+        options:
+          - release
+          - debug
+        default: release
       release:
-        description: '发布门槛核验完成后，生成并发布正式签名 APK'
+        description: '编译后发布到服务器（需批准变量；不勾选则仅生成下载包）'
         type: boolean
         default: false
 
@@ -19,7 +26,7 @@ concurrency:
 
 jobs:
   build:
-    name: 编译安装包与自动发布
+    name: 编译并上传安装包
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -38,6 +45,7 @@ jobs:
     env:
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: 1.0.${{ github.run_number }}
+      APK_VARIANT: ${{ github.event_name == 'workflow_dispatch' && (inputs.apk_type == 'release' || inputs.release == true) && 'release' || 'debug' }}
       SERVER_DEPLOY_ENABLED: ${{ secrets.SERVER_SSH_KEY != '' }}
       RELEASE_APPROVED: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true && vars.RELATIONAL_RELEASE_APPROVED == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
 
@@ -46,6 +54,29 @@ jobs:
       uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       with:
         persist-credentials: false
+
+    - name: 检查安装包类型与发布状态
+      env:
+        RELEASE_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true }}
+      run: |
+        if [ "$APK_VARIANT" = 'release' ]; then
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/heads/master) ;;
+            *) echo '::error::正式签名包只允许从 main/master 编译；其他分支请选择 debug'; exit 1 ;;
+          esac
+        fi
+        {
+          echo '## 本次安装包'
+          echo "编译类型：$APK_VARIANT"
+          if [ "$RELEASE_APPROVED" = 'true' ]; then
+            echo '编译成功后执行已批准的服务器发布。'
+          else
+            echo '本次仅编译并上传安装包，可在 Artifacts 下载。'
+            if [ "$RELEASE_REQUESTED" = 'true' ]; then
+              echo '服务器发布尚未批准，发布步骤将跳过；安装包仍会生成并上传。'
+            fi
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: 2. 安装 Node.js 22
       uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -87,7 +118,7 @@ jobs:
         node scripts/check-public-credentials.mjs
 
     - name: 6. 配置发布签名
-      if: ${{ env.RELEASE_APPROVED == 'true' }}
+      if: ${{ env.APK_VARIANT == 'release' }}
       env:
         SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
         RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
@@ -119,28 +150,25 @@ jobs:
         sed -i -e 's/\r$//' ./android/gradlew
         chmod +x ./android/gradlew
 
-    - name: 编译调试 APK 与 Android 测试
-      if: ${{ env.RELEASE_APPROVED != 'true' }}
-      run: |
-        cd android
-        ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac --no-daemon --stacktrace
-
-    - name: 8. 执行 Gradle 编译生成 APK
-      if: ${{ env.RELEASE_APPROVED == 'true' }}
+    - name: 8. 编译 Android 安装包与测试
       env:
-        RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-        RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-        RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        RELEASE_STORE_PASSWORD: ${{ env.APK_VARIANT == 'release' && secrets.RELEASE_STORE_PASSWORD || '' }}
+        RELEASE_KEY_ALIAS: ${{ env.APK_VARIANT == 'release' && secrets.RELEASE_KEY_ALIAS || '' }}
+        RELEASE_KEY_PASSWORD: ${{ env.APK_VARIANT == 'release' && secrets.RELEASE_KEY_PASSWORD || '' }}
       run: |
         cd android
-        ./gradlew validateReleaseSigning assembleRelease --no-daemon --stacktrace
+        if [ "$APK_VARIANT" = 'release' ]; then
+          ./gradlew :app:validateReleaseSigning :app:assembleRelease :app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac --no-daemon --stacktrace
+        else
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac --no-daemon --stacktrace
+        fi
 
     - name: 清理发布签名临时文件
       if: ${{ always() }}
       run: rm -f -- "$RUNNER_TEMP/hairstudio-release.jks"
 
     - name: 9. 校验 APK 签名
-      if: ${{ env.RELEASE_APPROVED == 'true' }}
+      if: ${{ env.APK_VARIANT == 'release' }}
       env:
         RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
       run: |
@@ -157,14 +185,28 @@ jobs:
         }
 
     - name: 10. 收集生成好的 APK
-      if: ${{ env.RELEASE_APPROVED == 'true' }}
       env:
-        RELEASE_CERT_SHA256: ${{ vars.RELEASE_CERT_SHA256 }}
+        RELEASE_CERT_SHA256: ${{ env.APK_VARIANT == 'release' && vars.RELEASE_CERT_SHA256 || '' }}
       run: |
         mkdir -p output_apk
-        cp android/app/build/outputs/apk/release/app-release.apk "output_apk/member-manager-v${VERSION_NAME}.apk"
-        export APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
-        node tools/update-manifest.js "output_apk/member-manager-v${VERSION_NAME}.apk" output_apk/update-manifest.json
+        if [ "$APK_VARIANT" = 'release' ]; then
+          APK="android/app/build/outputs/apk/release/app-release.apk"
+          APK_DEST="output_apk/member-manager-v${VERSION_NAME}.apk"
+        else
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          APK_DEST="output_apk/member-manager-debug-v${VERSION_NAME}.apk"
+        fi
+        test -f "$APK" || { echo "::error::未找到本次编译的安装包: $APK"; exit 1; }
+        cp "$APK" "$APK_DEST"
+        if [ "$APK_VARIANT" = 'release' ]; then
+          export APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          node tools/update-manifest.js "$APK_DEST" output_apk/update-manifest.json
+        fi
+        {
+          echo '## 安装包下载'
+          echo "安装包：$APK_DEST"
+          echo '打开本次运行的 Artifacts，下载 member-manager 对应产物并解压。'
+        } >> "$GITHUB_STEP_SUMMARY"
 
     - name: 11. 打包生成服务器更新包
       if: ${{ env.RELEASE_APPROVED == 'true' }}
@@ -178,11 +220,11 @@ jobs:
         tar -czf "output_apk/server-update-v${VERSION_NAME}.tar.gz" -C deploy_bundle .
 
     - name: 12. 上传安装包与服务端更新产物供备用下载
-      if: ${{ env.RELEASE_APPROVED == 'true' }}
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
-        name: member-manager-${{ env.VERSION_NAME }}
+        name: ${{ env.APK_VARIANT == 'release' && format('member-manager-{0}', env.VERSION_NAME) || format('member-manager-debug-{0}', env.VERSION_NAME) }}
         path: output_apk/*
+        if-no-files-found: error
         retention-days: 30
 
     - name: 13. [方案B] 自动 SSH 远程部署到云服务器并发布新版 APK

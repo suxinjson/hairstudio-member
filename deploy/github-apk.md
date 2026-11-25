@@ -79,11 +79,15 @@ Windows PowerShell 可用以下命令把 Base64 复制到剪贴板，文件路�
 
 ## 5. 重新构建与下载
 
-推送和普通手动运行只验证，包括网页、后台、Debug APK、单测与仪表源码编译。它们不会上传正式 APK 或部署。签名 APK 预验可在受控构建机按同一候选构建；当前不批准生产发布。
+在 Actions 选择本工作流并点击 **Run workflow**。分支选择 `main` 或 `master`，安装包类型默认 `release`，保留“编译后发布到服务器”不勾选即可编译、校验证书并上传正式签名 APK，供下载和覆盖升级。编译下载不要求设置 `RELATIONAL_RELEASE_APPROVED`，但需要前述四项签名 Secrets 和 `RELEASE_CERT_SHA256`。
 
-达到 [发布门槛](../docs/refactor-test-plan.md#10-发布清单与完成状态) 后，核实候选源码、目标和审批，再由负责人设置 `RELATIONAL_RELEASE_APPROVED=true`，在 Actions 的 Run workflow 中显式勾选 `release`。具备两者才配置正式签名、校验证书并生成发布产物；配置 SSH 时同一正式运行还会部署，启动前须确认维护窗口、目标和已读回备份。
+推送代码会编译并上传 `debug` 测试包；手动选择 `debug` 也会生成同类包。Debug 使用测试签名，不能覆盖原正式签名版本。两种类型均执行网页、后台、Android 单测和仪表源码编译。第 8、10、12 步分别负责编译、收集和上传安装包，成功运行不会因服务器发布未批准而跳过这些步骤。
 
-成功后在该次运行页面 **Artifacts** 下载 `member-manager-版本号`，解压获得 APK 和 `update-manifest.json`。安装包覆盖升级要求保持同一包名、签名密钥，并使用更高的 `versionCode`。
+正式签名产物在 **Artifacts** 中名为 `member-manager-版本号`，包含 APK 和 `update-manifest.json`；调试产物名为 `member-manager-debug-版本号`，包含名称带 `debug` 的 APK。安装包覆盖升级要求保持同一包名、签名密钥，并使用更高的 `versionCode`。
+
+服务器发布仍需达到 [发布门槛](../docs/refactor-test-plan.md#10-发布清单与完成状态)，核实候选源码、目标和审批，由负责人设置 `RELATIONAL_RELEASE_APPROVED=true` 后，在 **Run workflow** 显式勾选“编译后发布到服务器”。勾选发布时自动采用正式签名类型；同时满足批准变量、手动发布选择及主分支条件后，第 11、13 步才打包服务器更新并部署。未批准时仍可下载已编译的安装包，运行摘要会说明服务器发布被跳过的原因。
+
+“Re-run jobs” 保留原运行的触发方式、源码提交和安装包类型。要切换为正式签名包，应发起新的 **Run workflow**；修改工作流后须先提交并推送，再发起新运行。
 
 仅使用网页版不需要 APK 签名；配置缺失不会影响已部署网站的账号登录和记账。需要向云服务器发布 APK 更新时，再按 [部署维护说明](README.md#发布-apk-更新)填写服务器 `.env` 中同一个 Android 签名指纹并发布安装包。
 

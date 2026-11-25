@@ -22,6 +22,20 @@ function stepScript(name) {
   }
   return 'set -e\n' + script.join('\n');
 }
+function stepBlock(name) {
+  const lines = workflow.split('\n'), start = lines.findIndex(line => line.includes(name));
+  assert.ok(start >= 0, 'Missing workflow step: ' + name);
+  let end = start + 1;
+  while (end < lines.length && !/^    - name:/.test(lines[end])) end++;
+  return lines.slice(start, end).join('\n');
+}
+function expression(text, key, context = {}) {
+  const raw = text.match(new RegExp('^\\s+' + key + ': \\$\\{\\{ (.+) \\}\\}', 'm'))?.[1];
+  assert.ok(raw, 'Missing expression: ' + key);
+  return new Function('github', 'inputs', 'vars', 'env', 'secrets', 'format', 'return (' + raw + ')')(
+    context.github || {}, context.inputs || {}, context.vars || {}, context.env || {}, context.secrets || {},
+    (pattern, value) => pattern.replace('{0}', value));
+}
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'member-signing-test-'));
   t.after(() => {
@@ -31,12 +45,93 @@ function fixture(t) {
   const unix = path => path.replaceAll('\\', '/');
   return { directory, env: {
     ...process.env, RUNNER_TEMP: unix(directory), GITHUB_ENV: unix(join(directory, 'github-env')),
+    GITHUB_STEP_SUMMARY: unix(join(directory, 'github-summary')), GITHUB_REF: 'refs/heads/main',
     SIGNING_KEYSTORE_BASE64: '', RELEASE_STORE_PASSWORD: '', RELEASE_KEY_ALIAS: '', RELEASE_KEY_PASSWORD: '', RELEASE_CERT_SHA256: ''
   } };
 }
 function run(script, directory, env) {
   return spawnSync(bash, ['--noprofile', '--norc', '-c', script], { cwd: directory, env, encoding: 'utf8' });
 }
+
+test('manual APK compilation and artifact upload do not depend on server publication approval', () => {
+  assert.match(workflow, /apk_type:[\s\S]*?default: release/);
+  assert.match(workflow, /release:\n\s+description:[^\n]+\n\s+type: boolean\n\s+default: false/);
+  for (const name of ['8. 编译 Android 安装包与测试', '10. 收集生成好的 APK', '12. 上传安装包与服务端更新产物供备用下载']) {
+    assert.doesNotMatch(stepBlock(name), /^\s+if:/m, name + ' must run after successful prerequisites');
+  }
+  assert.match(stepBlock('12. 上传安装包与服务端更新产物供备用下载'), /if-no-files-found: error/);
+  for (const event_name of ['push', 'workflow_dispatch'])
+    for (const ref of ['refs/heads/main', 'refs/heads/master', 'refs/heads/feature'])
+      for (const apk_type of ['release', 'debug'])
+        for (const release of [false, true])
+          for (const approved of [undefined, 'false', 'true']) {
+            const context = { github: { event_name, ref }, inputs: { apk_type, release }, vars: { RELATIONAL_RELEASE_APPROVED: approved } };
+            const variant = expression(workflow, 'APK_VARIANT', context);
+            const publication = expression(workflow, 'RELEASE_APPROVED', context);
+            assert.equal(variant, event_name === 'workflow_dispatch' && (apk_type === 'release' || release) ? 'release' : 'debug');
+            assert.equal(publication, event_name === 'workflow_dispatch' && release && approved === 'true' && ref !== 'refs/heads/feature');
+            const env = { APK_VARIANT: variant, RELEASE_APPROVED: String(publication), SERVER_DEPLOY_ENABLED: 'true' };
+            assert.equal(expression(stepBlock('11. 打包生成服务器更新包'), 'if', { env }), publication);
+            assert.equal(expression(stepBlock('13. [方案B] 自动 SSH'), 'if', { env }), publication);
+          }
+});
+
+test('debug builds never receive fixed signing passwords and artifact names identify the chosen package', () => {
+  const step = stepBlock('8. 编译 Android 安装包与测试');
+  const secrets = { RELEASE_STORE_PASSWORD: 'synthetic-store', RELEASE_KEY_ALIAS: 'synthetic-alias', RELEASE_KEY_PASSWORD: 'synthetic-key' };
+  for (const APK_VARIANT of ['debug', 'release']) {
+    for (const key of Object.keys(secrets)) assert.equal(expression(step, key, { env: { APK_VARIANT }, secrets }), APK_VARIANT === 'release' ? secrets[key] : '');
+    assert.equal(expression(stepBlock('12. 上传安装包与服务端更新产物供备用下载'), 'name', { env: { APK_VARIANT, VERSION_NAME: '1.0.95' } }),
+      APK_VARIANT === 'release' ? 'member-manager-1.0.95' : 'member-manager-debug-1.0.95');
+  }
+});
+
+test('formal package branch checks report an error while debug packages allow feature branches', { skip: !bashAvailable }, t => {
+  const { directory, env } = fixture(t);
+  const configured = { ...env, APK_VARIANT: 'release', RELEASE_APPROVED: 'false', RELEASE_REQUESTED: 'false' };
+  for (const GITHUB_REF of ['refs/heads/main', 'refs/heads/master', 'refs/heads/feature']) {
+    const result = run(stepScript('检查安装包类型与发布状态'), directory, { ...configured, GITHUB_REF });
+    assert.equal(result.status, GITHUB_REF === 'refs/heads/feature' ? 1 : 0, result.stdout + result.stderr);
+  }
+  assert.equal(run(stepScript('检查安装包类型与发布状态'), directory, { ...configured, APK_VARIANT: 'debug', GITHUB_REF: 'refs/heads/feature' }).status, 0);
+  assert.ok(readFileSync(join(directory, 'github-summary'), 'utf8').includes('Artifacts'));
+});
+
+test('both APK modes compile native tests and collect downloadable files without publication approval', { skip: !bashAvailable }, t => {
+  for (const APK_VARIANT of ['release', 'debug']) {
+    const { directory, env } = fixture(t);
+    mkdirSync(join(directory, 'android'), { recursive: true });
+    mkdirSync(join(directory, 'build-tools', '35.0.0'), { recursive: true });
+    writeFileSync(join(directory, 'build-tools', '35.0.0', 'apksigner'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    writeFileSync(join(directory, 'android', 'gradlew'), '#!/usr/bin/env bash\nset -e\nprintf "%s\\n" "$*" > ../gradle-calls\n' +
+      'if [[ "$*" == *:app:assembleRelease* ]]; then variant=release; else variant=debug; fi\n' +
+      'mkdir -p "app/build/outputs/apk/$variant"\nprintf "synthetic APK %s" "$variant" > "app/build/outputs/apk/$variant/app-$variant.apk"\n', { mode: 0o755 });
+    const script = stepScript('8. 编译 Android 安装包与测试') + '\ncd ..\n' +
+      'node() { printf "%s\\n" "$*" >> manifest-calls; printf "{}\\n" > "$3"; }\n' + stepScript('10. 收集生成好的 APK');
+    const result = run(script, directory, { ...env, APK_VARIANT, RELEASE_APPROVED: 'false', VERSION_NAME: '1.0.95', VERSION_CODE: '95', ANDROID_HOME: directory.replaceAll('\\', '/') });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const calls = readFileSync(join(directory, 'gradle-calls'), 'utf8');
+    assert.ok(calls.includes(':app:assemble' + (APK_VARIANT === 'release' ? 'Release' : 'Debug')));
+    assert.ok(calls.includes(':app:testDebugUnitTest'));
+    assert.ok(calls.includes(':app:compileDebugAndroidTestJavaWithJavac'));
+    assert.equal(calls.includes(':app:validateReleaseSigning'), APK_VARIANT === 'release');
+    const apk = 'member-manager-' + (APK_VARIANT === 'debug' ? 'debug-' : '') + 'v1.0.95.apk';
+    assert.equal(readFileSync(join(directory, 'output_apk', apk), 'utf8'), 'synthetic APK ' + APK_VARIANT);
+    assert.equal(existsSync(join(directory, 'output_apk', 'update-manifest.json')), APK_VARIANT === 'release');
+    assert.equal(existsSync(join(directory, 'manifest-calls')), APK_VARIANT === 'release');
+    assert.ok(readFileSync(join(directory, 'github-summary'), 'utf8').includes(apk));
+  }
+});
+
+test('missing compiled APK fails collection instead of uploading an empty or wrong variant artifact', { skip: !bashAvailable }, t => {
+  const { directory, env } = fixture(t);
+  mkdirSync(join(directory, 'android', 'app', 'build', 'outputs', 'apk', 'debug'), { recursive: true });
+  writeFileSync(join(directory, 'android', 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk'), 'wrong variant');
+  const result = run(stepScript('10. 收集生成好的 APK'), directory, { ...env, APK_VARIANT: 'release', VERSION_NAME: '1.0.95' });
+  assert.notEqual(result.status, 0);
+  assert.ok(result.stdout.includes('未找到本次编译的安装包'));
+  assert.equal(existsSync(join(directory, 'output_apk', 'member-manager-v1.0.95.apk')), false);
+});
 
 test('release signing refuses missing credentials or fingerprint and never generates a fallback key', { skip: !bashAvailable }, t => {
   const { directory, env } = fixture(t);

@@ -21,7 +21,7 @@ cd android
 
 测试覆盖启动到运行的主题叠加、冷启动/重建/返回前台后的 Activity/Application/WebView 主题、框架和 AppCompat 菜单、PopupWindow、操作模式，以及实际打开的框架和 AppCompat 对话框。将背景绘制到位图，核对圆角外部透明、内容半透明及颜色一致，避免仅比较主题名称而漏掉图片继承。
 
-发布工作流同时执行 `assembleDebugAndroidTest`，确保设备测试代码可编译；此步骤仅编译测试包，不等于在设备上执行测试，也不会上传 debug 安装包作为发布产物。
+安装包工作流执行 `compileDebugAndroidTestJavaWithJavac`，确保设备测试 Java 源码可编译；这不等于在设备上执行测试。正式包使用固定发布签名，Debug 测试包使用测试签名，分别作为对应的 Artifacts 提供下载。
 
 ## 真机逐项检查
 
