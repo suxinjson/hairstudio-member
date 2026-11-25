@@ -124,9 +124,74 @@ test('signed offline codes encode fixed days or perpetual terms, and reject muta
   const parts = result.code.split('.'); parts[2] = Buffer.from(JSON.stringify({ ...payload, expiresAt: null })).toString('base64url');
   await assert.rejects(verifyOfflineLicense(parts.join('.'), { deviceId, keys }), { code: 'LICENSE_INVALID' });
   const permanent = await platform.issueOfflineLicense(identity, shop.storeId, offlineInput({ permanent: true, days: null }));
+  assert.notEqual(permanent.payload.id, result.payload.id);
+  assert.equal(permanent.payload.user.id, result.payload.user.id);
   assert.equal((await verifyOfflineLicense(permanent.code, { deviceId, keys })).expiresAt, null);
   const audit = JSON.stringify(await platform.logs(identity)); assert.equal(audit.includes(result.code), false); assert.equal(audit.includes(password), false);
 });
+test('offline renewal preserves the issuer identity and recovers a committed original after expiry', async t => {
+  const first = await platform.issueOfflineLicense(identity, shop.storeId, offlineInput({ days: 1 }));
+  let book, wall = Date.now(), tick = 0, saved = null;
+  t.after(async () => book?.dispose());
+  const file = await nativeFile(t), device = nativeCredentials(deviceId), storage = memoryStorage();
+  const access = createDeviceAccess({ vault: { async load() { return saved; }, async save(value) { saved = structuredClone(value); } },
+    licenseKeys: keys, now: () => wall, monotonic: () => tick });
+  const session = createRelationalNativeSession({ device, access, isOnline: () => false });
+  book = createNativeWorkspace(session, { openDriver: file.open, storage });
+  await session.activateOffline(first.code, password); await nextTick(); await book.connect();
+  const member = await book.submit('task', { type: 'member.create', data: { name: '续期合成会员' } }, book.getScope());
+  file.failCommit('after');
+  await assert.rejects(book.submit('command', { type: 'recharge', memberId: member.id, actualPayCents: '100', giftCents: '0', expectedAccountVersion: '0' }, book.getScope()), /commit response unavailable/);
+  const original = book.state.pending; assert.ok(original?.local);
+  wall += 86400001; tick += 86400001; session.publishAccess();
+  assert.equal(session.state.deviceAccess.allowed, false);
+  await session.logout();
+  const renewal = await platform.issueOfflineLicense(identity, shop.storeId, offlineInput());
+  assert.equal(renewal.payload.user.id, first.payload.user.id);
+  await session.activateOffline(renewal.code, password); await nextTick(); await book.connect();
+  assert.equal(book.state.pending.id, original.id);
+  assert.equal((await book.read('getMember', member.id)).balanceCents, '100');
+  const receipt = await book.retryPending();
+  assert.equal(receipt.commandId, original.id);
+  assert.equal(receipt.balanceAfterCents, '100');
+  assert.equal(book.state.pending, null);
+  assert.equal((await book.read('listLedger', {})).items.length, 1);
+  const anotherDevice = await platform.issueOfflineLicense(identity, shop.storeId, offlineInput({ deviceId: 'another-device-20261125' }));
+  const anotherUser = await platform.issueOfflineLicense(identity, shop.storeId, offlineInput({ username: 'another-local-owner' }));
+  assert.notEqual(anotherDevice.payload.user.id, first.payload.user.id);
+  assert.notEqual(anotherUser.payload.user.id, first.payload.user.id);
+});
+
+test('legacy changed-actor renewals keep uncertain originals visible and recover them without rebinding', async t => {
+  const first = await platform.issueOfflineLicense(identity, shop.storeId, offlineInput());
+  let book, saved = null;
+  t.after(async () => book?.dispose());
+  const file = await nativeFile(t), device = nativeCredentials(deviceId), storage = memoryStorage();
+  const access = createDeviceAccess({ vault: { async load() { return saved; }, async save(value) { saved = structuredClone(value); } }, licenseKeys: keys });
+  const session = createRelationalNativeSession({ device, access, isOnline: () => false });
+  book = createNativeWorkspace(session, { openDriver: file.open, storage });
+  await session.activateOffline(first.code, password); await nextTick(); await book.connect();
+  const member = await book.submit('task', { type: 'member.create', data: { name: '历史续期合成会员' } }, book.getScope());
+  file.failCommit('after');
+  await assert.rejects(book.submit('command', { type: 'recharge', memberId: member.id, actualPayCents: '100', giftCents: '0', expectedAccountVersion: '0' }, book.getScope()), /commit response unavailable/);
+  const original = book.state.pending;
+  await session.logout();
+  const legacy = { ...first.payload, id: randomUUID(), user: { ...first.payload.user, id: randomUUID() } };
+  await session.activateOffline(signer.sign(legacy), password); await nextTick(); await book.connect();
+  assert.equal(book.state.pendingError, '');
+  assert.ok(book.state.pending);
+  assert.equal(book.state.pending.id, original.id);
+  assert.equal(book.state.pending.foreignIdentity, true);
+  await assert.rejects(book.submit('task', { type: 'member.create', data: { name: '尚不能换号重做' } }, book.getScope()), { code: 'PENDING_IN_PROGRESS' });
+  await assert.rejects(book.repository.getCommand(original.id, { ledgerEpoch: original.ledgerEpoch }), { code: 'COMMAND_NOT_FOUND' });
+  const receipt = await book.retryPending();
+  assert.equal(receipt.commandId, original.id);
+  assert.equal(book.state.pending, null);
+  const backup = await book.repository.exportBackup();
+  assert.equal(backup.tables.command_receipts.find(row => row.command_id === original.id).actor_id, first.payload.user.id);
+  assert.equal((await book.read('getMember', member.id)).balanceCents, '100');
+});
+
 test('offline signing is unavailable without a configured private key and fails closed', async () => {
   const unsigned = createPlatformService(pool, { signer: null });
   await assert.rejects(unsigned.issueOfflineLicense(identity, shop.storeId, offlineInput()), { code: 'SIGNER_UNAVAILABLE' });

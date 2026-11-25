@@ -8,6 +8,7 @@ import { openNodeSqlite } from '../tools/sqlite-node-driver.mjs';
 import { createRelationalSqlite, sha256 } from '../src/relational-sqlite.js';
 import { canonicalJSON } from '../src/canonical-json.js';
 import { LICENSE_FEATURES } from '../src/license-policy.js';
+import { verifyMemberTotals } from './helpers/member-totals.mjs';
 
 const ledgerEpoch = '00000000-0000-4000-8000-000000000001';
 const storeId = 'sqlite-test-store', deviceId = 'sqlite-test-device-2026';
@@ -31,6 +32,46 @@ async function fixture(t, mode = 'standalone') {
 }
 async function recharge(db, memberId, extra = {}) { const member = await db.getMember(memberId); return db.executeCommand({ id: randomUUID(), ledgerEpoch: (await db.getBook()).ledgerEpoch, type: 'recharge', memberId, expectedAccountVersion: member.accountVersion, actualPayCents: '1010', giftCents: '101', ...extra }); }
 async function restore(f, backup) { return f.db.restoreBackup(backup, { id: randomUUID(), ...await f.db.getBook(), actorId: 'local-owner', deviceId, digest: backup.digest }); }
+
+test('SQLite member totals are complete, reverse-aware and exact beyond signed BIGINT', async t => {
+  const f = await fixture(t), book = await f.db.getBook();
+  const result = await verifyMemberTotals({
+    create: data => f.db.createMember(data, { ...book, id: randomUUID() }),
+    async command(memberId, type, data) {
+      const member = await f.db.getMember(memberId);
+      return f.db.executeCommand({ ...book, id: randomUUID(), memberId, type, expectedAccountVersion: member.accountVersion, ...data });
+    },
+    totals: id => f.db.getMemberTotals(id),
+    history: memberId => f.db.listLedger({ memberId, limit: 15 })
+  });
+  await assert.rejects(f.db.getMemberTotals('missing-member'), { status: 404 });
+  f.features(['core', 'members', 'cashier']);
+  assert.deepEqual(await f.db.getMemberTotals(result.member.id), result.expected);
+  f.features(['core', 'members']);
+  await assert.rejects(f.db.getMemberTotals(result.member.id), { code: 'FEATURE_DISABLED' });
+  f.features(['core', 'cashier']);
+  await assert.rejects(f.db.getMemberTotals(result.member.id), { code: 'FEATURE_DISABLED' });
+});
+
+test('only a standalone owner can inspect a previous actor receipt and another device cannot read it', async t => {
+  let other;
+  t.after(async () => other?.close());
+  const f = await fixture(t), book = await f.db.getBook(), task = { ...book, id: randomUUID() };
+  const member = await f.db.createMember({ name: '旧身份合成会员' }, task);
+  const original = await recharge(f.db, member.id);
+  f.actor('renewed-owner');
+  await assert.rejects(f.db.getCommand(original.commandId, book), { code: 'COMMAND_NOT_FOUND' });
+  assert.deepEqual(await f.db.getCommand(original.commandId, { ...book, actorId: 'local-owner' }), original);
+  assert.equal((await f.db.getTask(task.id, { ...book, actorId: 'local-owner' })).result.id, member.id);
+  f.role('clerk');
+  await assert.rejects(f.db.getCommand(original.commandId, { ...book, actorId: 'local-owner' }), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(f.db.getTask(task.id, { ...book, actorId: 'local-owner' }), { status: 403, code: 'FORBIDDEN' });
+  other = createRelationalSqlite({ driver: openNodeSqlite(f.path), ...book, mode: 'standalone',
+    authorize: () => ({ storeId, id: 'renewed-owner', deviceId: 'another-device-2026', role: 'owner', features: LICENSE_FEATURES }) });
+  await other.init();
+  await assert.rejects(other.getCommand(original.commandId, { ...book, actorId: 'local-owner' }), { code: 'COMMAND_NOT_FOUND' });
+  await assert.rejects(other.getTask(task.id, { ...book, actorId: 'local-owner' }), { code: 'TASK_NOT_FOUND' });
+});
 
 test('SQLite archive reversal safeguards phone ownership and survives rollback and backup', async t => {
   const f = await fixture(t), book = await f.db.getBook(), task = () => ({ ...book, id: randomUUID() });

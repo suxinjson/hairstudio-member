@@ -25,7 +25,7 @@ COPY src/money.js src/data-limits.js src/voice-text.js src/store-profile.js src/
 COPY capacitor.config.json ./
 COPY src/relational-backup-rows.js src/relational-task-result-tables.js src/relational-restore.js ./src/
 COPY src/relational-batches.js src/relational-archive.js src/relational-pg-archive-tables.js src/relational-opening-contract.js src/relational-replica.js ./src/
-COPY src/relational-export-sheet.js src/relational-presentation.js ./src/
+COPY src/relational-export-sheet.js src/relational-presentation.js src/relational-member-totals.js ./src/
 RUN mkdir -p /app/releases && chown -R node:node /app
 USER node
 EXPOSE 48927

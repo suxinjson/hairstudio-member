@@ -1,24 +1,28 @@
 <template>
-  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none pb-28 max-w-full overflow-x-hidden">
+  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none max-w-full overflow-x-hidden">
     <!-- 顶部状态栏与大搜索框 (AppHeader 经典复刻) -->
     <AppHeader
       :active-tab="workbench?.activeTab || 'members'"
+      :ledger-view="workbench?.ledgerView || 'summary'"
+      :show-member-filter="false"
+      :show-create-member="state.user?.role !== 'viewer' && feature('members')"
       v-model:customer-filter="headerCustomerFilter"
       v-model:filter-open="headerFilterOpen"
       :notices="notices.headerItems.value"
       :store-name="state.storeProfile.name"
-      :connection-label="state.user ? state.user.displayName + ' · ' + (standalone ? '独立离线账本' : (state.online ? '云端已连接 · 本机 SQLite' : '离线运行 · 本机 SQLite')) : (standalone ? '独立离线账本' : '云端账本')"
+      :connection-label="connectionLabel"
       :cloud-locked="!unlocked"
       :cloud-online="Boolean(state.online)"
       :has-storage-error="Boolean(workspace.state.error)"
-      :can-create-member="canWrite && Boolean(workspace.state.book) && !workspace.state.busy && !workspace.state.pending"
+      :can-create-member="canWrite && Boolean(workspace.state.book) && !workspace.state.busy && !workspace.state.pending && !workspace.state.pendingError"
       v-model:search-query="headerSearchQuery"
       @open-notices="noticesOpen = true"
       @create-member="openNewMember"
-      @clear-search="headerSearchQuery = ''"
+      @clear-search="clearSearch"
+      @search="refreshSearch"
     />
 
-    <main class="w-full max-w-4xl mx-auto px-2.5 py-3 sm:px-4 sm:py-4 space-y-3.5 flex-1 min-w-0">
+    <main class="cashier-content w-full max-w-4xl mx-auto space-y-3.5 flex-1 min-w-0">
       <p v-if="message || state.error" class="book-panel book-alert" role="alert">{{ message || state.error }}</p>
       <div v-if="!state.ready" class="book-panel book-stack">
         <p role="status">正在读取设备授权…</p><button v-if="state.error" type="button" @click="start">重试</button>
@@ -28,13 +32,13 @@
           <h2>{{ standalone ? '登录本地账号' : '登录门店账号' }}</h2>
           <label v-if="!standalone">服务器<input v-model.trim="origin" type="url" autocomplete="url" :readonly="Boolean(state.binding)" required></label>
           <label>账号<input v-model.trim="username" autocomplete="username" autocapitalize="none" required></label>
-          <label>密码<input v-model="password" type="password" autocomplete="current-password" required></label>
+          <label>密码<PasswordField v-model="password" autocomplete="current-password" :disabled="accountBusy || state.busy" required /></label>
           <button class="book-primary" type="submit" :disabled="accountBusy || state.busy">登录</button>
         </form>
         <div v-else class="book-panel book-stack bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200">
           <p role="status">{{ state.deviceAccess.reason }}</p>
           <button type="button" :disabled="accountBusy || state.busy" @click="resume">重新核验使用授权</button>
-          <button type="button" :disabled="accountBusy || state.busy" @click="signOut">退出并重新登录</button>
+          <button type="button" :disabled="accountBusy || state.busy || workspace.state.busy" @click="signOut">{{ standalone ? '退出并续期 / 重新登录' : '退出并重新登录' }}</button>
         </div>
         <div v-if="state.binding?.mode !== 'cloud' && !state.user" class="book-panel bg-white rounded-2xl p-4 sm:p-6 shadow-sm border border-slate-200">
           <OfflineActivation :state="state" :activate-offline="session.activateOffline" :copy-text="copyText" />
@@ -46,6 +50,7 @@
         <div v-show="!noticesOpen" class="book-stack">
           <RelationalWorkbench ref="workbench" :workspace="workspace" :identity="identity" :owner="owner" :writable="canWrite"
             :profile-writable="canWrite && (standalone || state.online)" :feature="feature" :announce="announce" :backup="standalone ? archive : null"
+            :store-name="state.storeProfile.name" :connection-label="connectionLabel" :online="state.online" :can-update="!standalone" :copy-text="copyText"
             v-model:search-query="headerSearchQuery" v-model:balance-filter="headerCustomerFilter">
             <template #connection>
               <RelationalNativeSync v-if="workspace.state.book && !standalone" :workspace="workspace" :online="state.online" :owner="owner" @reconnect="resume" />
@@ -58,7 +63,7 @@
                     {{ standalone ? '独立离线账本' : state.online ? '云端已连接' : '离线可用' }}
                   </span>
                 </div>
-                <p class="text-xs text-slate-600 m-0">店员：<strong>{{ state.user.displayName }}</strong>（{{ owner ? '店主' : '收银员' }}）</p>
+                <p class="text-xs text-slate-600 m-0">当前账号：<strong>{{ state.user.displayName }}</strong>（{{ owner ? '店主' : state.user.role === 'viewer' ? '只读账号' : '收银员' }}）</p>
                 <div class="pt-2">
                   <label class="text-xs font-bold text-slate-500 block mb-1">设备标识</label>
                   <div class="flex items-center gap-2">
@@ -67,6 +72,7 @@
                   </div>
                 </div>
                 <p v-if="state.deviceAccess.authorizedUntil" class="text-xs text-slate-500 m-0">授权有效期至：{{ new Date(state.deviceAccess.authorizedUntil).toLocaleString() }}</p>
+                <button type="button" :disabled="accountBusy || state.busy || workspace.state.busy" @click="signOut" class="account-signout">退出登录 / 切换账号</button>
                 <div class="pt-2 border-t border-slate-100">
                   <a v-if="!standalone && state.online" :href="state.serverUrl + '/admin/'" target="_blank" rel="noopener noreferrer" class="text-xs font-bold text-emerald-700 hover:text-emerald-800 block">
                     打开电脑端商家后台（员工、设备、审计和云端备份） ›
@@ -80,7 +86,7 @@
             </template>
             <template #voice>
               <VoiceSettings v-if="feature('voice') && !standalone && state.online" :api="session" :player="voice"
-                :user="state.user" :server-url="state.serverUrl" :copy-text="copyText" @saved="voice.stop()" />
+                :user="state.user" :server-url="state.serverUrl" :copy-text="copyText" :can-read-users="feature('staff')" @saved="voice.stop()" />
             </template>
             <template #update>
               <NativeUpdate v-if="!standalone" :api="updateApi" :origin="state.serverUrl" :can-check="state.online" :check-update="updateCheck.checkManually"
@@ -96,7 +102,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Bell } from 'lucide-vue-next';
 import { createRelationalNativeSession, cloudDeviceBridge } from './relational-native-session.js';
@@ -120,13 +126,17 @@ import RelationalNativeSync from './components/RelationalNativeSync.vue';
 import RelationalWorkbench from './components/RelationalWorkbench.vue';
 import StoreSettings from './components/StoreSettings.vue';
 import VoiceSettings from './components/VoiceSettings.vue';
+import PasswordField from './components/PasswordField.vue';
+import { useModalLayers } from './composables/useModalLayers.js';
 
 const session = createRelationalNativeSession(), state = session.state;
 const workspace = createNativeWorkspace(session), archive = createNativeArchiveController(workspace), updateApi = createNativeUpdate(session);
 const standalone = computed(() => state.binding?.mode === 'standalone');
-const unlocked = computed(() => Boolean(state.user && (!state.deviceAccess.disabled || state.deviceAccess.allowed)));
+const connectionLabel = computed(() => state.user ? state.user.displayName + ' · ' +
+  (!state.deviceAccess.allowed ? '授权待核验' : standalone.value ? '独立离线' : state.online ? '云端已连接' : '离线可用') : standalone.value ? '本地账号' : '门店账号');
+const unlocked = computed(() => Boolean(state.user && state.deviceAccess.allowed));
 const owner = computed(() => state.user?.role === 'owner');
-const canWrite = computed(() => state.user?.role !== 'viewer' && workspace.state.replicaReady && !workspace.state.blockedEpoch && !state.busy);
+const canWrite = computed(() => unlocked.value && state.user?.role !== 'viewer' && workspace.state.replicaReady && !workspace.state.blockedEpoch && !state.busy);
 const identity = computed(() => JSON.stringify([state.user?.storeId, state.user?.id, state.generation]));
 const feature = name => allowsFeature(state.deviceAccess.features, name);
 const copyText = text => cloudDeviceBridge.copyText({ text });
@@ -134,6 +144,7 @@ const workbench = ref(null), noticesOpen = ref(false), message = ref('');
 const headerSearchQuery = ref(''), headerCustomerFilter = ref('all'), headerFilterOpen = ref(false);
 const accountBusy = ref(false), origin = ref(DEFAULT_CLOUD_SERVER_URL), username = ref(''), password = ref('');
 const foregroundToken = ref(0), autoStartDownload = ref(false), confirmation = shallowRef(null);
+useModalLayers({ onEscape: () => { if (closeTop()) backCount = 0; } });
 const voice = new VoicePlayer({ api: session, context: () => identity.value,
   canBroadcast: () => unlocked.value && !standalone.value && state.online && feature('voice') });
 const announce = (...values) => { if (voice.canBroadcast()) return announceRelationalSale(voice, ...values); };
@@ -151,6 +162,7 @@ const systemItems = computed(() => systemNotices({ state: noticeState.value, sto
   availableUpdate: updateCheck.availableUpdate.value }));
 const notices = useNotices({ state: noticeState, systemItems, ledgerReady: computed(() => Boolean(balances.value)) });
 watch([identity, unlocked], () => { voice.stop(); password.value = ''; balances.value = null; noticesOpen.value = false; finishConfirm(false); });
+watch(identity, () => { headerSearchQuery.value = ''; headerCustomerFilter.value = 'all'; headerFilterOpen.value = false; });
 watch(() => [workspace.state.revision, identity.value, unlocked.value, feature('reports')], async (_, _old, onCleanup) => {
   if (!unlocked.value || !workspace.state.replicaReady || !feature('reports')) return;
   let live = true; onCleanup(() => { live = false; });
@@ -166,8 +178,10 @@ function noticeAction(action) {
   else workbench.value?.openAccount();
 }
 function finishConfirm(accept) { const ask = confirmation.value; confirmation.value = null; ask?.resolve(accept); }
-function openUpdate() { workbench.value?.openAccount(); autoStartDownload.value = true; }
+function openUpdate() { workbench.value?.openUpdate(); autoStartDownload.value = true; }
 function openNewMember() { workbench.value?.openCreateMember(); }
+async function refreshSearch() { await nextTick(); workbench.value?.search(); }
+async function clearSearch() { headerSearchQuery.value = ''; await refreshSearch(); }
 async function beforeInstall() {
   if (!unlocked.value || standalone.value || workspace.state.status !== 'ready' || workspace.state.busy) throw new Error('请先打开账本并完成当前操作');
   if (workspace.state.pendingCount && state.online) await workspace.sync();
@@ -182,7 +196,7 @@ async function account(action) {
   finally { accountBusy.value = false; password.value = ''; }
 }
 function signIn() { return account(() => standalone.value ? session.loginOffline(username.value, password.value) : session.login(origin.value, username.value, password.value)); }
-function signOut() { return account(session.logout); }
+function signOut() { if (!state.busy && !workspace.state.busy) return account(session.logout); }
 async function copyDevice() { try { await copyText(state.deviceId); message.value = '设备标识已复制'; } catch (error) { message.value = error.message; } }
 
 let live = true, timer, reconnecting, backCount = 0, backAt = 0;

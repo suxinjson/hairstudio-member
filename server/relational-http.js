@@ -62,6 +62,7 @@ export async function relationalRoute({ ledger, identity, request, response, url
   if (request.method === 'GET' && (match = /^\/api\/v2\/tasks\/([a-zA-Z0-9-]{16,80})$/.exec(path))) return { status: 200, value: await ledger.getTask(identity, match[1], query) };
   if (route === 'GET /api/v2/members') return { status: 200, value: await ledger.listMembers(identity, query) };
   if (route === 'POST /api/v2/members/check-names') return { status: 200, value: await ledger.findActiveNames(identity, await readBody(request, DATA_LIMITS.operationBytes)) };
+  if (request.method === 'GET' && (match = /^\/api\/v2\/members\/([a-zA-Z0-9_-]{1,128})\/totals$/.exec(path))) return { status: 200, value: await ledger.getMemberTotals(identity, match[1], query) };
   if ((match = /^\/api\/v2\/members\/([a-zA-Z0-9_-]{1,128})$/.exec(path))) {
     if (request.method === 'GET') return { status: 200, value: await ledger.getMember(identity, match[1], query) };
   }

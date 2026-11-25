@@ -80,9 +80,6 @@ export class MerchantSessionClient {
 
   setAutoLock(enabled) {
     this.autoLock = Boolean(enabled);
-    if (!this.autoLock && this.isLocked.value) {
-      this.isLocked.value = false;
-    }
   }
 
   restoreSession() {

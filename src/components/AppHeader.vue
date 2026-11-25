@@ -7,20 +7,21 @@
         <div class="header-brand flex items-center gap-2.5 min-w-0 flex-1">
           <span class="brand-icon w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-600 text-white flex items-center justify-center font-black text-lg shadow-xs shrink-0" aria-hidden="true">💳</span>
           <div class="brand-copy min-w-0">
-            <h1 class="brand-title text-base font-black text-slate-900 tracking-tight m-0 truncate leading-tight" aria-label="会员管家" title="会员管家">
-              会员管家
+            <h1 class="brand-title text-base font-black text-slate-900 tracking-tight m-0 truncate leading-tight" :aria-label="storeName || '会员管家'" :title="storeName || '会员管家'">
+              {{ storeName || '会员管家' }}
             </h1>
             <p class="header-meta m-0 text-xs text-slate-500 font-medium flex items-center gap-1.5 mt-0.5 truncate">
               <span class="w-2 h-2 rounded-full shrink-0" :class="cloudOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'"></span>
-              <span class="truncate">{{ storeName }} · {{ connectionLabel || (cloudOnline ? '云端已连接' : '本机离线') }}</span>
+              <span class="truncate">{{ connectionLabel || (cloudOnline ? '云端已连接' : '本机离线') }}</span>
             </p>
           </div>
         </div>
 
         <div v-if="!cloudLocked" class="header-actions flex items-center gap-2 shrink-0">
           <button
+            v-if="showNotices"
             type="button"
-            class="notice-entry relative w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center border border-slate-200/90 btn-press shrink-0"
+            class="notice-entry relative w-11 h-11 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center justify-center border border-slate-200/90 btn-press shrink-0"
             :class="{ 'has-notices': notices.length }"
             :aria-label="notices.length ? `提醒中心，${notices.length} 条待看提醒` : '提醒中心，暂无待看提醒'"
             :aria-current="activeTab === 'notices' ? 'page' : undefined"
@@ -32,11 +33,11 @@
             </span>
           </button>
           <button
-            v-if="['customers', 'members'].includes(activeTab) && !cloudLocked"
+            v-if="['customers', 'members'].includes(activeTab) && showCreateMember && !cloudLocked"
             type="button"
             @click="emit('create-member')"
             :disabled="hasStorageError || !canCreateMember"
-            class="register-member h-9 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 text-white text-xs font-black rounded-xl shadow-xs flex items-center gap-1 btn-press transition-all shrink-0"
+            class="register-member h-11 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 text-white text-xs font-black rounded-xl shadow-xs flex items-center gap-1 btn-press transition-all shrink-0"
             aria-label="新增会员"
           >
             <span class="text-sm font-black leading-none">+</span>
@@ -52,30 +53,28 @@
             <span class="sr-only">搜索会员</span>
             <input
               v-model="searchModel"
-              @input="emit('search', $event)"
-              @change="emit('search', $event)"
-              @blur="emit('search', $event)"
               @keyup.enter="emit('search', searchModel)"
               type="text"
+              enterkeyhint="search"
               :placeholder="placeholder || (['ledgers', 'ledger'].includes(activeTab) ? '搜索交易明细（会员、手机、项目）' : '姓名、电话或备注')"
               maxlength="64"
               class="header-search-input pl-10 pr-9 text-sm w-full h-10 bg-slate-100 hover:bg-slate-100/90 focus:bg-white border border-slate-200/90 rounded-xl text-slate-900 placeholder:text-slate-400 font-medium focus:border-emerald-600 outline-none transition-colors"
               :aria-label="['ledgers', 'ledger'].includes(activeTab) ? '搜索交易明细' : '搜索会员'"
-              aria-describedby="header-search-hint"
+              :aria-describedby="searchHint ? 'header-search-hint' : undefined"
             />
             <Search :size="17" class="absolute left-3 top-2.5 text-slate-400 pointer-events-none" aria-hidden="true" />
             <button
               v-if="searchModel"
               type="button"
               @click="emit('clear-search')"
-              class="absolute right-2 top-2 text-slate-400 hover:text-slate-600 text-xs w-6 h-6 flex items-center justify-center rounded-full bg-slate-200 active:bg-slate-300"
+              class="header-search-clear absolute text-slate-400 hover:text-slate-600 text-xs flex items-center justify-center rounded-full"
               aria-label="清空搜索"
             >
               ✕
             </button>
           </div>
           <CustomerFilter
-            v-if="['customers', 'members'].includes(activeTab)"
+            v-if="showMemberFilter && ['customers', 'members'].includes(activeTab)"
             :filter="customerFilter"
             :open="filterOpen"
             @update:filter="emit('update:customerFilter', $event)"
@@ -113,6 +112,9 @@ const props = defineProps({
   cloudOnline: Boolean,
   hasStorageError: Boolean,
   canCreateMember: { type: Boolean, default: true },
+  showCreateMember: { type: Boolean, default: true },
+  showMemberFilter: { type: Boolean, default: true },
+  showNotices: { type: Boolean, default: true },
   connectionLabel: { type: String, default: '' },
   currentDateText: { type: String, default: '' },
   searchQuery: { type: String, default: '' },

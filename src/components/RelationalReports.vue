@@ -11,11 +11,13 @@
       </div>
 
       <!-- 快速周期胶囊切换 -->
-      <div class="flex gap-1 overflow-x-auto pb-1 no-scrollbar" role="tablist" aria-label="统计周期快捷切换">
+      <div class="report-period-options" role="tablist" aria-label="统计周期快捷切换">
         <button
           v-for="p in periodOptions"
           :key="p.value"
           type="button"
+          role="tab"
+          :aria-selected="period === p.value"
           class="px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0"
           :class="period === p.value ? 'bg-emerald-700 text-white shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'"
           @click="selectPeriod(p.value)"
@@ -25,7 +27,7 @@
       </div>
 
       <!-- 自选日期区间 -->
-      <form v-if="period === 'custom'" class="mt-2.5 pt-2.5 border-t border-slate-100 flex flex-wrap items-center gap-2" @submit.prevent="refresh">
+      <form v-if="period === 'custom'" class="report-custom-range mt-2.5 pt-2.5 border-t border-slate-100 gap-2" @submit.prevent="refresh">
         <label class="text-xs font-bold text-slate-600 flex items-center gap-1">
           起<input v-model="first" type="date" required class="text-xs p-1.5 border border-slate-200 rounded-lg bg-slate-50 font-medium" />
         </label>
@@ -46,7 +48,7 @@
 
     <template v-if="result">
       <!-- 1. 核心经营业绩 KPI 四宫格 -->
-      <div class="grid grid-cols-2 gap-2.5">
+      <div class="report-kpis grid grid-cols-2 gap-2.5">
         <!-- 充值到账 -->
         <div class="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs">
           <span class="text-[11px] font-bold text-slate-500 flex items-center gap-1">
@@ -127,6 +129,8 @@
             <line x1="10" x2="350" y1="20" y2="20" stroke="#f1f5f9" stroke-width="1" />
             <line x1="10" x2="350" y1="70" y2="70" stroke="#f1f5f9" stroke-width="1" />
             <line x1="10" x2="350" y1="120" y2="120" stroke="#f1f5f9" stroke-width="1" />
+            <line x1="10" x2="350" :y1="chartY('0')" :y2="chartY('0')" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3" data-zero-baseline />
+            <text v-if="chartRange.min < 0n" x="10" :y="chartY('0') - 4" font-size="9" fill="#64748b">0 元</text>
 
             <!-- 充值折线 (绿色) -->
             <polyline
@@ -217,7 +221,7 @@
           <div class="p-3 bg-rose-50/70 border border-rose-200/60 rounded-xl">
             <span class="text-[11px] font-bold text-rose-800">待收欠款总额</span>
             <strong class="block text-base font-black text-rose-600 mt-0.5">
-              ¥{{ displayCents(result.balances.debtCents) }}
+              ¥{{ displayAbsoluteCents(result.balances.debtCents) }}
             </strong>
           </div>
         </div>
@@ -340,8 +344,8 @@
 </template>
 
 <script setup>
-import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue';
-import { displayCents, businessDays, todayBusiness, BUSINESS_OFFSET } from '../relational-presentation.js';
+import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue';
+import { displayAbsoluteCents, displayCents, businessDays, todayBusiness, BUSINESS_OFFSET } from '../relational-presentation.js';
 import { useRelationalPage } from '../composables/useRelationalPage.js';
 
 const props = defineProps({ workspace: Object });
@@ -356,16 +360,20 @@ const periodOptions = [
 ];
 
 const period = ref('month');
-const today = todayBusiness();
-const last = ref(today);
-const first = ref(today.slice(0, 7) + '-01');
+const initialDay = todayBusiness();
+const last = ref(initialDay);
+const first = ref(initialDay.slice(0, 7) + '-01');
 const kind = ref('payment');
 const result = shallowRef(null);
 const loading = ref(false);
 const error = ref('');
 
-let scope = businessDays(first.value, last.value), sequence = 0;
-onScopeDispose(() => { sequence++; });
+let scope = businessDays(first.value, last.value), sequence = 0, rolloverTimer;
+onScopeDispose(() => {
+  sequence++;
+  clearTimeout(rolloverTimer);
+  document.removeEventListener('visibilitychange', onForeground);
+});
 
 const breakdown = useRelationalPage(cursor => props.workspace.read('reportBreakdown', { ...scope, kind: kind.value, cursor, limit: 25 }));
 
@@ -386,22 +394,18 @@ const metrics = computed(() => {
 });
 
 function computeDates(p) {
-  const now = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const today = todayBusiness();
+  const daysAgo = n => new Date(Date.parse(today + 'T00:00:00Z') - n * 86400000).toISOString().slice(0, 10);
 
   if (p === 'today') {
     return { start: today, end: today };
   } else if (p === 'yesterday') {
-    const y = new Date(now.getTime() - 86400000);
-    const yStr = fmt(y);
+    const yStr = daysAgo(1);
     return { start: yStr, end: yStr };
   } else if (p === 'week') {
-    const w = new Date(now.getTime() - 6 * 86400000);
-    return { start: fmt(w), end: today };
+    return { start: daysAgo(6), end: today };
   } else if (p === 'last30') {
-    const m = new Date(now.getTime() - 29 * 86400000);
-    return { start: fmt(m), end: today };
+    return { start: daysAgo(29), end: today };
   } else if (p === 'month') {
     return { start: today.slice(0, 7) + '-01', end: today };
   }
@@ -419,11 +423,15 @@ function selectPeriod(p) {
 }
 
 // 图表辅助计算
-const chartMax = computed(() => {
+const chartRange = computed(() => {
   const list = result.value?.trend || [];
-  if (!list.length) return 100;
-  const max = Math.max(100, ...list.flatMap(d => [Number(d.netRechargeCreditCents || 0), Number(d.netConsumptionCents || 0)]));
-  return max;
+  let min = 0n, max = 0n;
+  for (const day of list) for (const key of ['netRechargeCreditCents', 'netConsumptionCents']) {
+    const amount = BigInt(day[key] || '0');
+    if (amount < min) min = amount;
+    if (amount > max) max = amount;
+  }
+  return { min, max: max === min ? min + 100n : max };
 });
 
 function chartX(idx) {
@@ -433,9 +441,8 @@ function chartX(idx) {
 }
 
 function chartY(amountCents) {
-  const val = Number(amountCents || 0);
-  const ratio = Math.min(1, Math.max(0, val / chartMax.value));
-  return 120 - ratio * 95;
+  const val = BigInt(amountCents || '0'), { min, max } = chartRange.value;
+  return 120 - Number((val - min) * 9500n / (max - min)) / 100;
 }
 
 function chartPoints(field) {
@@ -469,6 +476,11 @@ async function load() {
 
 function refresh() {
   try {
+    if (period.value !== 'custom') {
+      const dates = computeDates(period.value);
+      first.value = dates.start;
+      last.value = dates.end;
+    }
     scope = businessDays(first.value, last.value);
     void load();
   } catch (cause) {
@@ -477,6 +489,23 @@ function refresh() {
 }
 
 watch(() => props.workspace.state.revision, () => {
-  if (props.workspace.state.book) void load();
+  if (props.workspace.state.book) refresh();
 }, { immediate: true });
+
+function scheduleRollover() {
+  clearTimeout(rolloverTimer);
+  const now = Date.now(), next = (Math.floor((now + BUSINESS_OFFSET * 60000) / 86400000) + 1) * 86400000 - BUSINESS_OFFSET * 60000;
+  rolloverTimer = setTimeout(() => {
+    if (period.value !== 'custom' && props.workspace.state.book) refresh();
+    scheduleRollover();
+  }, Math.max(1, next - now + 50));
+}
+function onForeground() {
+  if (document.visibilityState !== 'hidden' && period.value !== 'custom' && props.workspace.state.book) refresh();
+  scheduleRollover();
+}
+onMounted(() => {
+  document.addEventListener('visibilitychange', onForeground);
+  scheduleRollover();
+});
 </script>

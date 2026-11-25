@@ -28,6 +28,7 @@ beforeEach(t => {
         if (method === 'listMembers') return { items: [member], nextCursor: null };
         if (method === 'listLedger') return { items: [], nextCursor: null };
         if (method === 'getMember') return member;
+        if (method === 'getMemberTotals') return { grossRechargeCents: '0', reversedRechargeCents: '0', netRechargeCents: '0', grossConsumptionCents: '0', reversedConsumptionCents: '0', netConsumptionCents: '0' };
         if (method === 'getConfiguration') return { version: '0', services: [], rechargePlans: [], rechargeSettings: { giftEnabled: false, giftRateBasisPoints: 0 } };
         assert.fail('Unexpected read ' + method);
       }, submit: t.mock.fn(async () => { assert.fail('navigation must never post a command'); }) },
@@ -71,7 +72,7 @@ test('Android back steps through a reviewed sale and its member before counting 
   ui.unmount(); await ui.nextTick(); assert.equal(fixture.listeners.size, 0);
 });
 
-test('a native foreground update waits for the sale to close and opens its installer from the existing notice', async () => {
+test('a native foreground update waits for open sheets to close and opens its installer from the existing notice', async () => {
   await reviewRecharge();
   assert.equal(fixture.update.check.mock.callCount(), 1);
   fixture.manifest = manifest;
@@ -81,6 +82,9 @@ test('a native foreground update waits for the sale to close and opens its insta
   const dialog = () => document.querySelector('[role="alertdialog"]');
   assert.equal(dialog(), null);
   await back(); assert.equal(dialog(), null);
+  await back(); assert.equal(dialog(), null); assert.ok(shown('收起档案'));
+  assert.equal(fixture.update.download.mock.callCount(), 0);
+  assert.equal(fixture.update.install.mock.callCount(), 0);
   await back(); await until(() => dialog()?.textContent.includes('发现新版本 2.0.1'));
   ui.button('前往更新').click();
   await until(() => shown('已打开系统安装界面'));

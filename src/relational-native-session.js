@@ -11,7 +11,7 @@ import { latestStoreProfile, normalizeStoreProfile } from './store-profile.js';
 export const cloudDeviceBridge = registerPlugin('CloudDevice');
 const fault = (message, code, status = 409) => Object.assign(new Error(message), { code, status });
 const sessionChanged = () => fault('手机账号或服务器已变化，请核对原操作', 'AUTH_CONTEXT_CHANGED');
-const denied = new Set(['USER_DISABLED', 'STORE_DISABLED', 'DEVICE_DISABLED', 'DEVICE_EXPIRED', 'LICENSE_REQUIRED', 'LICENSE_EXPIRED']);
+const denied = new Set(['USER_DISABLED', 'STORE_DISABLED', 'DEVICE_DISABLED', 'DEVICE_EXPIRED', 'LICENSE_REQUIRED', 'LICENSE_EXPIRED', 'FEATURE_DISABLED']);
 const validUser = user => typeof user?.storeId === 'string' && ENTITY_ID.test(user.storeId) && typeof user.id === 'string' && ENTITY_ID.test(user.id) && ['owner', 'clerk', 'viewer'].includes(user.role);
 const sameUser = (a, b) => a && b && a.id === b.id && a.storeId === b.storeId;
 function bookBinding(value) {
@@ -66,6 +66,7 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
     if (error.network) { unavailable = true; publishAccess(); return; }
     if (denied.has(error.code) || force) {
       accessToken = ''; refreshToken = ''; unsavedSession = false; state.user = null; state.syncLoginRequired = true; state.generation++;
+      state.error = error.message;
       const ending = state.generation;
       try { await serializeVault(async () => { assertCurrent(ending); try { await access.deny(error.code || 'AUTH_REQUIRED'); } finally { await device.clearSession(); } }); }
       finally { publishAccess(); }
@@ -160,7 +161,7 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
         assertCurrent(generation); if (!sameUser(original, value.user)) throw sessionChanged();
         try { await keepOnline(value, binding, generation); }
         catch (error) { assertCurrent(generation); throw error; }
-      } catch (error) { await revoked(error, generation); throw error; }
+      } catch (error) { await revoked(error, generation, { force: error.status === 401 }); throw error; }
     })().finally(() => { refreshing = null; });
     return refreshing;
   }
@@ -184,7 +185,7 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
     catch (error) {
       if (error.status !== 401) throw error;
       assertCurrent(captured); await refresh(previous); assertCurrent(captured); same();
-      try { return await run(); } catch (cause) { if (cause.status === 401) await revoked(cause, captured); throw cause; }
+      try { return await run(); } catch (cause) { if (cause.status === 401) await revoked(cause, captured, { force: true }); throw cause; }
     }
   }
   const request = (path, init) => requestStream(path, undefined, init);
@@ -256,8 +257,8 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
           assertCurrent(generation); if (!sameUser(original, value.user)) throw sessionChanged();
           await keepOnline(value, state.binding, generation, { saveTokens: false });
         } catch (error) {
-          if (denied.has(error.code)) {
-            await revoked(error, generation);
+          if (denied.has(error.code) || error.status === 401) {
+            await revoked(error, generation, { force: error.status === 401 });
             throw error;
           }
           unavailable = true;

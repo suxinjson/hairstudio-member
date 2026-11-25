@@ -191,9 +191,13 @@ test('blank-phone registration preserves input and makes the operator review ren
   ui.button('保存档案').click(); await waitFor(() => has('有其他同名的在用会员'));
   const book = await service.relational.getBook(storeA.actor);
   await service.relational.updateMember(storeA.actor, 'ui-member', { name: storeA.name, notes: '刚同步的原会员备注', expectedVersion: '0' }, { ...book, id: randomUUID() });
+  assert.equal(ui.button('仍然保存').disabled, true);
+  document.querySelector('form input[type=checkbox]').click(); await ui.nextTick();
   ui.button('仍然保存').click(); await waitFor(() => has('刚同步的原会员备注'));
   assert.equal(requests.filter(({ path, method }) => path === '/api/v2/tasks' && method === 'POST').length, 0);
   assert.equal(document.querySelector('form.book-stack textarea').value, '新档案区分备注');
+  assert.equal(document.querySelector('form input[type=checkbox]').checked, false);
+  document.querySelector('form input[type=checkbox]').click(); await ui.nextTick();
   ui.button('仍然保存').click(); await waitFor(() => has('会员档案已保存'));
   await ui.input('input[placeholder="姓名、电话或备注"]', '新档案区分备注');
   ui.button('查询').click(); await waitFor(() => has('本页 1 条') && has('新档案区分备注'));

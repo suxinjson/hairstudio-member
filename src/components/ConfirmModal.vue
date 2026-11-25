@@ -3,9 +3,6 @@
     v-if="modal"
     class="app-modal-backdrop feedback-backdrop fixed inset-0 z-[75] flex items-center justify-center p-5 animate-fade-in backdrop-blur-xs"
     @click.self="emit('cancel')"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="confirm-modal-title"
   >
     <section
       class="app-modal-surface feedback-dialog confirm-dialog w-full max-w-sm bg-white text-center shadow-2xl"
@@ -30,6 +27,7 @@
         <button
           type="button"
           @click="emit('cancel')"
+          data-initial-focus
           class="h-13 rounded-2xl border-2 border-slate-300 text-base font-bold text-slate-700 active:bg-slate-100 btn-press"
         >
           {{ modal.cancelText || '取消' }}
@@ -39,7 +37,6 @@
           @click="emit('accept')"
           class="confirm-modal-submit h-13 rounded-2xl text-base font-black text-white shadow-md btn-press"
           :class="modal.type === 'danger' ? 'bg-rose-600 hover:bg-rose-700 active:bg-rose-800 shadow-rose-500/25' : 'bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 shadow-indigo-500/25'"
-          autofocus
         >
           {{ modal.confirmText || '确定' }}
         </button>

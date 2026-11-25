@@ -63,7 +63,7 @@ export function createOnlineWorkspace(api, { eventTarget = globalThis.window } =
     if (!scope) throw lostContext();
     const [input, query] = args, epoch = { ledgerEpoch: scope.ledgerEpoch };
     try {
-      const result = method === 'getMember' ? await remote[method](input, { ...query, ...epoch }) : await remote[method]({ ...input, ...epoch });
+      const result = ['getMember', 'getMemberTotals'].includes(method) ? await remote[method](input, { ...query, ...epoch }) : await remote[method]({ ...input, ...epoch });
       check(scope, started);
       return result;
     } catch (error) { needsHandshake(error, started); throw error; }

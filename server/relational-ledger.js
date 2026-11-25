@@ -16,6 +16,7 @@ import { writeRelationalArchive } from '../src/relational-archive.js';
 import { REPLICA_FORMAT, REPLICA_TABLES, validateReplicaRow } from '../src/relational-replica.js';
 import { createBatchService } from './relational-batches.js';
 import { openingPayload, openingSummary, checkOpeningScope } from '../src/relational-opening-contract.js';
+import { memberTotalFields, memberTotals } from '../src/relational-member-totals.js';
 
 const ID = /^[a-zA-Z0-9_-]{1,128}$/;
 const COMMAND_ID = /^[a-zA-Z0-9-]{16,80}$/;
@@ -375,6 +376,19 @@ export function createRelationalLedger({ withAuthorized, audit }) {
           /^[\d+() -]+$/.test(search) ? normalizedPhone(search) : '', sameName]);
         const hasMore = !recent && rows.length > limit, page = rows.slice(0, limit), tags = await memberTags(client, user.store_id, page.map(row => row.id));
         return { items: page.map(row => publicMember(row, tags.get(row.id))), nextCursor: hasMore ? encodeCursor({ at: page.at(-1).page_at, id: page.at(-1).id, ledgerEpoch: user.ledger_epoch, scope }) : null };
+      }, { consistentRead: true });
+    },
+    async getMemberTotals(identity, id, { ledgerEpoch } = {}) {
+      if (typeof id !== 'string' || !ID.test(id)) throw new ApiError(400, '会员单号无效');
+      return withAuthorized(identity, 'read', async (client, user) => {
+        if (ledgerEpoch !== undefined) requireLedgerEpoch(ledgerEpoch, user.ledger_epoch);
+        requireFeature(user.entitlements, 'members');
+        requireFeature(user.entitlements, 'cashier');
+        if (!(await client.query('SELECT id FROM member_profiles WHERE store_id=$1 AND id=$2', [user.store_id, id])).rows.length) throw new ApiError(404, '会员不存在');
+        const sums = Object.entries(memberTotalFields).map(([key, expression]) => 'COALESCE(sum((' + expression + ')::numeric),0)::text AS "' + key + '"');
+        const { rows: [totals] } = await client.query('SELECT ' + sums.join(',') +
+          ' FROM ledger_entries e LEFT JOIN ledger_reversals r ON r.store_id=e.store_id AND r.original_entry_id=e.entry_id WHERE e.store_id=$1 AND e.member_id=$2', [user.store_id, id]);
+        return memberTotals(totals);
       }, { consistentRead: true });
     },
     async getMember(identity, id, { ledgerEpoch } = {}) {

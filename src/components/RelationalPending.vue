@@ -1,10 +1,12 @@
 <template>
-  <aside v-if="pending || workspace.state.pendingError || message" class="book-panel book-alert" aria-label="账本待办">
+  <aside v-if="pending || workspace.state.pendingError || message" class="book-panel" :class="pending || workspace.state.pendingError || failed ? 'book-alert' : 'book-success'" aria-label="账本待办">
     <p v-if="workspace.state.pendingError" role="alert">{{ workspace.state.pendingError }}</p>
     <template v-if="pending">
-      <p><strong>{{ pending.rejection ? '原操作已拒绝' : '有一笔操作待确认' }}</strong> <code>{{ pending.id }}</code></p>
+      <p><strong>{{ pending.rejection ? '原操作已拒绝' : '有一笔操作待确认' }}</strong> <code class="selectable">{{ pending.id }}</code></p>
+      <button type="button" :disabled="workspace.state.busy" @click="copyOriginal">复制原单号</button>
       <p v-if="pending.rejection">确认结束后，按最新资料重新核对。原请求没有入账。</p>
       <p v-else-if="obsolete">原操作属于旧代际。请用原单号与外部备份核对。这笔操作不会提交到新账本。</p>
+      <p v-else-if="pending.foreignIdentity">{{ workspace.mode === 'standalone' && owner ? '这是续期或切换账号前的原单，店主可只读核对原回执。' : '这是切换账号前的原单，请使用原账号核对。' }}</p>
       <p v-else-if="pending.local">只查询本机原回执。没有回执时会提示重新核对金额后操作。</p>
       <p v-else>先查原回执；若服务器尚无回执，会按原号提交同一请求。</p>
       <button v-if="pending.rejection" type="button" :disabled="workspace.state.busy" @click="finish">确认结束</button>
@@ -15,6 +17,7 @@
       </template>
     </template>
     <p v-if="message" :role="failed ? 'alert' : 'status'">{{ message }}</p>
+    <p v-if="copyMessage" role="status">{{ copyMessage }}</p>
   </aside>
 </template>
 
@@ -23,7 +26,7 @@ import { computed, ref, watch } from 'vue';
 import { displayCents } from '../relational-presentation.js';
 import { openPendingWriter } from '../relational-pending-files.js';
 import { androidBackupDocuments } from '../android-backup-documents.js';
-const props = defineProps({ workspace: { type: Object, required: true } });
+const props = defineProps({ workspace: { type: Object, required: true }, owner: Boolean, copyText: Function });
 const pending = computed(() => props.workspace.state.pending);
 const target = computed(() => props.workspace.state.rebuildTarget?.ledgerEpoch ?? props.workspace.state.book?.ledgerEpoch);
 const obsolete = computed(() => pending.value?.generationChanged || Boolean(!pending.value?.local && target.value && pending.value?.ledgerEpoch !== target.value));
@@ -31,6 +34,17 @@ const canArchive = computed(() => !pending.value?.local && props.workspace.archi
 const reviewed = ref(false);
 watch(() => [pending.value?.id, target.value], () => { reviewed.value = false; });
 const message = ref(''), failed = ref(false);
+const copyMessage = ref('');
+async function copyOriginal() {
+  const id = pending.value?.id;
+  if (!id) return;
+  try {
+    if (props.copyText) await props.copyText(id);
+    else if (globalThis.navigator?.clipboard?.writeText) await navigator.clipboard.writeText(id);
+    else throw new Error('暂时无法复制，可长按原单号选择文字。');
+    copyMessage.value = '原单号已复制。';
+  } catch (cause) { copyMessage.value = cause.message; }
+}
 async function act(action, completed) {
   message.value = ''; failed.value = false;
   try { message.value = completed(await action()); }

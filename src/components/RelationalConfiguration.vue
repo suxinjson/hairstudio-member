@@ -42,7 +42,7 @@
 
       <!-- 1. 常用服务项目配置 -->
       <fieldset :disabled="!owner || busy || workspace.state.busy" class="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3.5">
-        <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+        <div class="configuration-heading flex items-center justify-between border-b border-slate-100 pb-2.5">
           <legend class="text-sm sm:text-base font-black text-slate-900 m-0 flex items-center gap-1.5">
             <span>🛍️ 服务项目定价</span>
             <span class="text-xs font-bold text-slate-400">({{ form.services.length }})</span>
@@ -58,11 +58,12 @@
           <div
             v-for="(row, index) in form.services"
             :key="row.id"
-            class="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl transition-all"
+            class="configuration-row flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl transition-all"
           >
             <div class="flex-1 min-w-0">
-              <label class="sr-only">服务项目名称</label>
+              <label :for="'service-name-' + row.id" class="sr-only">服务项目名称</label>
               <input
+                :id="'service-name-' + row.id"
                 v-model.trim="row.name"
                 maxlength="128"
                 placeholder="项目名称（如剪发、染发）"
@@ -71,10 +72,11 @@
               />
             </div>
             <div class="w-28 sm:w-32 shrink-0">
-              <label class="sr-only">单价（元）</label>
+              <label :for="'service-price-' + row.id" class="sr-only">单价（元）</label>
               <div class="flex items-center bg-white border border-slate-200 rounded-lg px-2.5 h-10 focus-within:border-emerald-600">
                 <span class="text-slate-400 font-black text-xs mr-1 shrink-0 select-none">¥</span>
                 <input
+                  :id="'service-price-' + row.id"
                   v-model.trim="row.price"
                   inputmode="decimal"
                   placeholder="0.00"
@@ -86,7 +88,7 @@
             <button
               type="button"
               @click="form.services.splice(index, 1)"
-              class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center justify-center text-xs font-bold btn-press shrink-0"
+              class="w-11 h-11 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center justify-center text-xs font-bold btn-press shrink-0"
               aria-label="移除此服务项目"
             >
               ✕
@@ -106,7 +108,7 @@
 
       <!-- 2. 充值套餐及赠送设置 -->
       <fieldset :disabled="!owner || busy || workspace.state.busy" class="bg-white border border-slate-200/90 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3.5">
-        <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+        <div class="configuration-heading flex items-center justify-between border-b border-slate-100 pb-2.5">
           <legend class="text-sm sm:text-base font-black text-slate-900 m-0">
             🎁 充值套餐及赠送
           </legend>
@@ -131,11 +133,12 @@
         <!-- 全局赠送比例 (仅开启赠送时显示) -->
         <div v-if="form.giftEnabled" class="p-3 bg-emerald-50/60 border border-emerald-200/70 rounded-xl space-y-1.5 animate-fade-in">
           <div class="flex items-center justify-between text-xs font-bold text-emerald-950">
-            <span>默认赠送比例</span>
+            <label for="default-gift-rate">默认赠送比例</label>
             <span class="text-[11px] text-emerald-700 font-medium">手工输入金额时自动折算赠送</span>
           </div>
           <div class="flex items-center bg-white border border-emerald-300 rounded-lg px-3 h-10 focus-within:border-emerald-600">
             <input
+              id="default-gift-rate"
               v-model.trim="form.rate"
               inputmode="decimal"
               placeholder="例如 10.00"
@@ -160,13 +163,14 @@
           <div
             v-for="(row, index) in form.plans"
             :key="row.id"
-            class="flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl transition-all"
+            class="configuration-row flex items-center gap-2 p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl transition-all"
           >
             <div class="flex-1 min-w-0">
-              <label class="text-[10px] text-slate-500 font-bold block mb-0.5">套餐实收（元）</label>
+              <label :for="'plan-pay-' + row.id" class="text-[10px] text-slate-500 font-bold block mb-0.5">套餐实收（元）</label>
               <div class="flex items-center bg-white border border-slate-200 rounded-lg px-2.5 h-10 focus-within:border-emerald-600">
                 <span class="text-slate-400 font-black text-xs mr-1 shrink-0 select-none">¥</span>
                 <input
+                  :id="'plan-pay-' + row.id"
                   v-model.trim="row.pay"
                   inputmode="decimal"
                   placeholder="0.00"
@@ -178,10 +182,11 @@
 
             <!-- 仅在开启赠送时显示套餐赠送金额 -->
             <div v-if="form.giftEnabled" class="w-28 sm:w-36 shrink-0 animate-fade-in">
-              <label class="text-[10px] text-emerald-700 font-bold block mb-0.5">赠送额度（元）</label>
+              <label :for="'plan-gift-' + row.id" class="text-[10px] text-emerald-700 font-bold block mb-0.5">赠送额度（元）</label>
               <div class="flex items-center bg-white border border-slate-200 rounded-lg px-2.5 h-10 focus-within:border-emerald-600">
                 <span class="text-emerald-600 font-black text-xs mr-1 shrink-0 select-none">¥</span>
                 <input
+                  :id="'plan-gift-' + row.id"
                   v-model.trim="row.gift"
                   inputmode="decimal"
                   placeholder="0.00"
@@ -194,7 +199,7 @@
             <button
               type="button"
               @click="form.plans.splice(index, 1)"
-              class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center justify-center text-xs font-bold btn-press shrink-0 self-end mb-1"
+              class="w-11 h-11 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 flex items-center justify-center text-xs font-bold btn-press shrink-0 self-end mb-1"
               aria-label="移除此充值套餐"
             >
               ✕

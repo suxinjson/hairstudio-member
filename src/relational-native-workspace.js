@@ -3,7 +3,7 @@ import { openAndroidSqlite } from './android-sqlite-driver.js';
 import { createRelationalSqlite } from './relational-sqlite.js';
 import { createRelationalSync } from './relational-sync.js';
 import { createOnlineLedgerWrites } from './relational-online-writes.js';
-import { validateFinancialCommand, COMMAND_ID, versionOf } from './relational-contract.js';
+import { validateFinancialCommand, COMMAND_ID, ENTITY_ID, versionOf } from './relational-contract.js';
 import { taskRequest } from './relational-tasks.js';
 import { ledgerEpochOf, requireLedgerEpoch } from './ledger-epoch.js';
 import { canonicalJSON } from './canonical-json.js';
@@ -16,7 +16,7 @@ const replicaBlocks = new Set(['LEDGER_EPOCH_MISMATCH', 'LEDGER_EPOCH_REQUIRED',
 const keyOf = prefix => ({ storeId, actorId, deviceId }) => prefix + [storeId, actorId, deviceId].join(':');
 const localKey = keyOf('hairstudio_v2_native_receipt:');
 const receiptPrefixes = ['hairstudio_v2_native_receipt:', 'hairstudio_v2_pending:'];
-const readers = new Set(['listMembers', 'findActiveNames', 'getMember', 'listLedger', 'getConfiguration', 'report', 'reportBusiness', 'reportBreakdown']);
+const readers = new Set(['listMembers', 'findActiveNames', 'getMember', 'getMemberTotals', 'listLedger', 'getConfiguration', 'report', 'reportBusiness', 'reportBreakdown']);
 
 export function createNativeWorkspace(session, { openDriver = openAndroidSqlite, storage = globalThis.localStorage, id = () => crypto.randomUUID() } = {}) {
   const auth = session.state;
@@ -55,11 +55,23 @@ export function createNativeWorkspace(session, { openDriver = openAndroidSqlite,
       ledgerEpochOf(row.ledgerEpoch); return row;
     } catch { throw fail('原本机待办记录不可读，须保留核对', 'PENDING_INVALID'); }
   }
+  function foreignLocal(scope) {
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (!key?.startsWith(receiptPrefixes[0])) continue;
+      const [storeId, actorId, deviceId] = key.slice(receiptPrefixes[0].length).split(':');
+      if (storeId !== scope.storeId || deviceId !== scope.deviceId || actorId === scope.actorId) continue;
+      if (!ENTITY_ID.test(actorId ?? '')) throw fail('原账号待办标识无效，请保留核对', 'PENDING_INVALID');
+      const row = readLocal({ ...scope, actorId });
+      if (row) return { ...row, actorId, local: true, foreignIdentity: true, generationChanged: row.ledgerEpoch !== scope.ledgerEpoch };
+    }
+    return null;
+  }
   function pendingChanged() {
     state.pendingError = '';
     try {
       const scope = getScope(), local = scope && readLocal(scope);
-      state.pending = local ? { ...local, local: true, generationChanged: local.ledgerEpoch !== scope.ledgerEpoch } : online.pending();
+      state.pending = local ? { ...local, local: true, generationChanged: local.ledgerEpoch !== scope.ledgerEpoch } : online.pending() || (scope && foreignLocal(scope));
     } catch (error) { state.pending = null; state.pendingError = error.message; }
   }
   async function useRepository() {
@@ -193,7 +205,15 @@ export function createNativeWorkspace(session, { openDriver = openAndroidSqlite,
   }
   async function retryPending() {
     const scope = getScope(); if (!scope) throw changed();
-    const row = readLocal(scope);
+    let originalScope = scope, row = readLocal(scope);
+    if (!row && !online.pending()) {
+      const foreign = foreignLocal(scope);
+      if (foreign) {
+        if (auth.binding.mode !== 'standalone' || auth.user.role !== 'owner') throw fail('本机还有原账号的未明操作，请先使用原账号核对', 'PENDING_ACTOR_CHANGED');
+        originalScope = { ...scope, actorId: foreign.actorId };
+        row = readLocal(originalScope);
+      }
+    }
     if (!row) {
       const result = await exact(online.retry, scope, { allowUnknown: true });
       if (auth.binding?.mode === 'cloud' && auth.online) void sync();
@@ -204,7 +224,7 @@ export function createNativeWorkspace(session, { openDriver = openAndroidSqlite,
       const db = await useRepository(); check(current, generation);
       const lookup = async () => {
         try {
-          const value = await db[row.kind === 'command' ? 'getCommand' : 'getTask'](row.id, { ledgerEpoch: row.ledgerEpoch });
+          const value = await db[row.kind === 'command' ? 'getCommand' : 'getTask'](row.id, { ledgerEpoch: row.ledgerEpoch, actorId: originalScope.actorId });
           const [result, receiptId] = row.kind === 'command' ? [value, value.commandId] : [value.result, value.taskId];
           if (receiptId !== row.id || value.ledgerEpoch !== row.ledgerEpoch || value.type !== (row.type === 'reverse' ? 'reversal' : row.type)) throw fail('本机回执与原操作不符', 'RECEIPT_MISMATCH');
           return result;
@@ -213,7 +233,7 @@ export function createNativeWorkspace(session, { openDriver = openAndroidSqlite,
           throw error;
         }
       };
-      const value = await lookup(); check(current, generation); storage.removeItem(localKey(current)); return value;
+      const value = await lookup(); check(current, generation); storage.removeItem(localKey(originalScope)); return value;
     }, scope, { allowUnknown: true });
   }
   async function sync() {

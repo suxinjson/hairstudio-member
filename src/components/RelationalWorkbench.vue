@@ -1,6 +1,6 @@
 <template>
-  <div class="book-workbench book-stack pb-24 max-w-full overflow-x-hidden" :key="bookKey">
-    <RelationalPending v-if="workspace.state.book" :workspace="workspace" />
+  <div class="book-workbench book-stack max-w-full overflow-x-hidden" :key="bookKey">
+    <RelationalPending v-if="workspace.state.book" :workspace="workspace" :owner="owner" :copy-text="copyText" />
     <slot name="connection" />
 
     <div v-if="active !== 'settings' && !workspace.state.book" class="book-panel book-stack">
@@ -18,6 +18,7 @@
       :cashier-writable="writable" 
       :feature="feature" 
       :announce="announce" 
+      :copy-text="copyText"
       :balance-filter="balanceFilter || memberFilter" 
       :search-query="searchQuery"
       @update:balance-filter="memberFilter = $event; $emit('update:balanceFilter', $event)"
@@ -45,12 +46,19 @@
 
       <!-- 今日概览 -->
       <div v-if="ledgerView === 'summary'" class="space-y-3">
-        <DashboardSummary :summary="businessDailySummary" :balances="businessDailyBalances" />
+        <div class="book-inline book-between">
+          <span class="book-muted">今日 {{ overviewDay }}</span>
+          <button type="button" class="book-btn" :disabled="overviewBusy" @click="loadDailyOverview">刷新今日概览</button>
+        </div>
+        <p v-if="overviewBusy" class="book-panel" role="status">正在读取今日概览…</p>
+        <p v-else-if="overviewError" class="book-panel book-alert" role="alert">{{ overviewError }}</p>
+        <DashboardSummary v-else-if="businessDailySummary" :summary="businessDailySummary" :balances="businessDailyBalances" />
         <div class="ledger-shortcuts grid grid-cols-2 gap-2 mt-3">
           <button 
             type="button" 
             class="flex items-center justify-between p-3.5 rounded-2xl bg-white border border-slate-200/90 text-slate-800 font-bold text-xs shadow-xs hover:border-emerald-300 transition-all btn-press"
             @click="ledgerView = 'transactions'"
+            v-if="feature('cashier')"
           >
             <span class="flex items-center gap-2">
               <Receipt :size="17" class="text-emerald-700" aria-hidden="true" />
@@ -97,25 +105,25 @@
       <SettingsOverview
         v-if="settingsSubTab === 'overview'"
         :groups="settingsGroups"
-        :store-name="workspace.state.storeProfile?.name || '我的门店'"
-        :connection-label="workspace.state.user?.displayName || ''"
-        :cloud-online="Boolean(workspace.state.book)"
+        :store-name="storeName"
+        :connection-label="connectionLabel"
+        :cloud-online="online"
         @navigate="settingsSubTab = $event"
       />
 
       <!-- 二级设置项主视图 (带顶部返回条) -->
       <div v-else class="space-y-3">
-        <div class="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-200/90 shadow-xs mb-3">
+        <div class="settings-page-heading flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-200/90 shadow-xs mb-3">
           <button
             type="button"
-            class="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl btn-press"
+            class="settings-back flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl btn-press"
+            :disabled="workspace.state.busy"
             @click="settingsSubTab = 'overview'"
           >
             <ChevronLeft :size="16" aria-hidden="true" />
             <span>返回设置</span>
           </button>
           <h2 class="text-sm font-black text-slate-800 m-0">{{ currentSettingsTitle }}</h2>
-          <span class="w-16"></span>
         </div>
 
         <RelationalConfiguration
@@ -144,19 +152,23 @@
           <slot name="voice"><slot /></slot>
         </div>
 
-        <div v-else-if="settingsSubTab === 'account' || settingsSubTab === 'update'">
+        <div v-else-if="settingsSubTab === 'account'">
           <slot name="account" />
-          <slot name="update" />
           <slot />
+        </div>
+        <div v-else-if="settingsSubTab === 'update'">
+          <slot name="update" />
         </div>
 
         <div v-else-if="settingsSubTab === 'help'" class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-3">
-          <h3 class="text-base font-black text-slate-900 m-0">💡 使用帮助与说明</h3>
+          <h3 class="text-base font-black text-slate-900 m-0">使用帮助</h3>
           <div class="space-y-2.5 text-xs text-slate-600 leading-relaxed">
-            <p class="m-0"><strong>离线与云端双模：</strong>本机具备独立离线账本，断网时仍可顺畅记账扣款；联网后自动与云端服务器比对同步。</p>
-            <p class="m-0"><strong>数据安全与冲正：</strong>每笔消费与充值皆生成唯一单号，已入账记录支持店主安全冲正撤回，不留坏账死账。</p>
-            <p class="m-0"><strong>备份与防丢失：</strong>建议定期在【数据安全 → 数据备份与恢复】中导出账本或保存本地快照，确保数据永久高可用。</p>
-            <p class="m-0"><strong>语音播报：</strong>收银结算后支持高保真语音播报提示，并支持外接智能音箱播报。</p>
+            <p v-if="workspace.mode === 'standalone'" class="m-0"><strong>独立离线：</strong>在离线授权有效期内，本机可读取资料与记账。独立账本不会自动上传云端，请定期保存并核验外部备份。</p>
+            <p v-else-if="workspace.mode === 'cloud'" class="m-0"><strong>离线收银与同步：</strong>使用授权有效时，断网可继续在本机记账；联网后自动同步。存在未明原单时，先按原号核对结果。</p>
+            <p v-else class="m-0"><strong>网页收银：</strong>需要连接服务器才能读取资料和记账。请求结果不明时，先核对原单，再进行下一笔操作。</p>
+            <p class="m-0"><strong>欠款与冲正：</strong>欠款交易须明确勾选同意。店主冲正会保留原记录，只调整账务；实际退款需另行办理。</p>
+            <p class="m-0"><strong>备份：</strong>{{ workspace.mode === 'standalone' ? '从数据备份与恢复保存账本，并确认外部文件读回核验成功。' : '店主可在商家后台执行云端备份，备份结果需核验。' }}</p>
+            <p v-if="feature('voice')" class="m-0"><strong>语音：</strong>交易成功后按门店配置播报，是否入账以交易回执为准。</p>
           </div>
         </div>
 
@@ -169,10 +181,12 @@
 
   <!-- 4. 底部主入口导航栏 (固定居底，三个主功能区，手势安全区适配) -->
   <nav class="app-nav fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200/90 shadow-lg pb-gesture-safe" aria-label="主导航">
-    <div class="grid grid-cols-3 h-16 max-w-lg mx-auto">
+    <div class="grid h-16 max-w-lg mx-auto" :style="{ gridTemplateColumns: 'repeat(' + navigationCount + ', minmax(0, 1fr))' }">
       <button 
         type="button" 
-        @click="active = 'members'" 
+        v-if="showMembers"
+        @click="openPage('members')"
+        :disabled="workspace.state.busy"
         :aria-current="active === 'members' ? 'page' : undefined" 
         aria-label="会员收银" 
         :class="{ 'nav-active': active === 'members' }" 
@@ -185,6 +199,8 @@
       <button 
         type="button" 
         @click="openLedgerView('transactions')" 
+        v-if="showLedger"
+        :disabled="workspace.state.busy"
         :aria-current="active === 'ledger' ? 'page' : undefined" 
         aria-label="财务流水" 
         :class="{ 'nav-active': active === 'ledger' }" 
@@ -196,7 +212,8 @@
 
       <button 
         type="button" 
-        @click="active = 'settings'; settingsSubTab = 'overview'" 
+        @click="openSettings"
+        :disabled="workspace.state.busy"
         :aria-current="active === 'settings' ? 'page' : undefined" 
         aria-label="账号与设置" 
         :class="{ 'nav-active': active === 'settings' }" 
@@ -210,7 +227,7 @@
 </template>
 
 <script setup>
-import { computed, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onScopeDispose, ref, shallowRef, watch } from 'vue';
 import { UsersRound, ChartNoAxesCombined, Settings, Receipt, BarChart3, ChevronLeft } from 'lucide-vue-next';
 import RelationalMembers from './RelationalMembers.vue';
 import RelationalLedger from './RelationalLedger.vue';
@@ -222,6 +239,7 @@ import RelationalBackup from './RelationalBackup.vue';
 import DashboardSummary from './DashboardSummary.vue';
 import SettingsOverview from './SettingsOverview.vue';
 import { todayBusiness, businessDays } from '../relational-presentation.js';
+import { useBusinessDay } from '../composables/useBusinessDay.js';
 
 const props = defineProps({
   workspace: { type: Object, required: true },
@@ -233,7 +251,12 @@ const props = defineProps({
   backup: Object,
   identity: String,
   searchQuery: { type: String, default: '' },
-  balanceFilter: { type: String, default: 'all' }
+  balanceFilter: { type: String, default: 'all' },
+  storeName: { type: String, default: '我的门店' },
+  connectionLabel: { type: String, default: '' },
+  online: Boolean,
+  canUpdate: Boolean,
+  copyText: Function
 });
 
 const emit = defineEmits(['update:searchQuery', 'update:balanceFilter']);
@@ -246,40 +269,51 @@ const settingsSubTab = ref('overview');
 
 const memberPage = ref(null);
 const ledgerPage = ref(null);
+const showMembers = computed(() => props.feature('members'));
+const showLedger = computed(() => props.feature('cashier') || props.feature('reports'));
+const navigationCount = computed(() => 1 + Number(showMembers.value) + Number(showLedger.value));
+watch([showMembers, showLedger], () => {
+  if ((active.value === 'members' && !showMembers.value) || (active.value === 'ledger' && !showLedger.value)) {
+    active.value = showMembers.value ? 'members' : showLedger.value ? 'ledger' : 'settings';
+  }
+}, { immediate: true });
 
 const ledgerViews = computed(() => [
-  { key: 'summary', label: '今日概览' },
-  { key: 'transactions', label: '财务流水' },
+  ...(props.feature('reports') ? [{ key: 'summary', label: '今日概览' }] : []),
+  ...(props.feature('cashier') ? [{ key: 'transactions', label: '财务流水' }] : []),
   ...(props.feature('reports') ? [{ key: 'reports', label: '经营报表' }] : [])
 ]);
+watch(ledgerViews, views => {
+  if (views.length && !views.some(view => view.key === ledgerView.value)) ledgerView.value = views[0].key;
+}, { immediate: true });
 
 const settingsGroups = computed(() => [
   {
     title: '日常经营',
     items: [
-      ...(props.feature('settings') ? [{ page: 'configuration', title: '服务与价格', description: '管理常用项目定价与充值套餐规则', icon: '🛍️' }] : []),
-      ...(props.feature('settings') ? [{ page: 'store', title: '门店设置', description: '门店名称、联系方式与小票通知', icon: '🏪' }] : []),
-      ...(props.feature('voice') ? [{ page: 'voice', title: '语音播报设置', description: '播报开关、音色调节与测试播报', icon: '📢' }] : [])
+      ...(props.feature('settings') ? [{ page: 'configuration', title: '服务与价格', description: '常用项目、充值套餐与赠送规则', icon: 'scissors' }] : []),
+      ...(props.feature('settings') ? [{ page: 'store', title: '门店设置', description: '门店名称与联系方式', icon: 'store' }] : []),
+      ...(props.feature('voice') ? [{ page: 'voice', title: '语音播报设置', description: '播报开关、音色与试听', icon: 'voice' }] : [])
     ]
   },
   {
     title: '账号与云端',
     items: [
-      { page: 'account', title: '账号与连接', description: '当前店员账号、云端连接状态与设备', icon: '☁️' }
+      { page: 'account', title: '账号与连接', description: '查看账号、授权、设备与退出登录', icon: 'account' }
     ]
   },
   {
     title: '数据安全',
     items: [
-      ...(props.owner && props.backup && props.feature('backup') ? [{ page: 'backup', title: '数据备份与恢复', description: '导出完整账本、本地快照与恢复数据', icon: '🛡️' }] : []),
-      ...(props.workspace.batch && props.feature('members') ? [{ page: 'batches', title: '批量资料管理', description: '批量导入会员档案与历史任务', icon: '📁' }] : [])
+      ...(props.owner && props.backup && props.feature('backup') ? [{ page: 'backup', title: '数据备份与恢复', description: '保存、核验完整账本与恢复文件', icon: 'backup' }] : []),
+      ...(props.workspace.batch && props.feature('members') ? [{ page: 'batches', title: '批量资料管理', description: '导入会员资料并核对批次进度', icon: 'batches' }] : [])
     ]
   },
   {
     title: '系统与帮助',
     items: [
-      { page: 'update', title: '检查更新', description: '检查并安装最新客户端版本', icon: '⬆️' },
-      { page: 'help', title: '使用帮助', description: '离线模式、账本同步与常见问题说明', icon: '💡' }
+      ...(props.canUpdate ? [{ page: 'update', title: '检查更新', description: '查看新版本与安装进度', icon: 'update' }] : []),
+      { page: 'help', title: '使用帮助', description: '记账、原单核对与备份说明', icon: 'help' }
     ]
   }
 ].filter(g => g.items.length > 0));
@@ -296,24 +330,36 @@ const settingsTitles = {
 };
 
 const currentSettingsTitle = computed(() => settingsTitles[settingsSubTab.value] || '设置');
+watch(settingsGroups, groups => {
+  if (settingsSubTab.value !== 'overview' && !groups.some(group => group.items.some(item => item.page === settingsSubTab.value))) settingsSubTab.value = 'overview';
+});
 
-const businessDailySummary = shallowRef({});
-const businessDailyBalances = shallowRef({});
+const businessDailySummary = shallowRef(null);
+const businessDailyBalances = shallowRef(null);
+const businessDay = useBusinessDay(), overviewDay = ref(businessDay.value);
+const overviewBusy = ref(false), overviewError = ref('');
+let overviewSequence = 0;
+onScopeDispose(() => { overviewSequence++; });
 
 async function loadDailyOverview() {
   if (!props.workspace.state.book || !props.feature('reports')) return;
+  const request = ++overviewSequence;
+  overviewBusy.value = true; overviewError.value = '';
   const day = todayBusiness();
+  overviewDay.value = day;
   try {
     const report = await props.workspace.read('reportBusiness', businessDays(day, day));
-    if (report) {
+    if (report && request === overviewSequence) {
       businessDailySummary.value = report.summary || {};
       businessDailyBalances.value = report.balances || {};
     }
-  } catch {}
+  } catch (cause) {
+    if (request === overviewSequence) { overviewError.value = cause.message; businessDailySummary.value = null; }
+  } finally { if (request === overviewSequence) overviewBusy.value = false; }
 }
 
 watch(
-  () => [props.workspace.state.revision, active.value, ledgerView.value],
+  () => [props.workspace.state.revision, active.value, ledgerView.value, businessDay.value],
   () => {
     if (active.value === 'ledger' && ledgerView.value === 'summary') {
       void loadDailyOverview();
@@ -322,7 +368,7 @@ watch(
   { immediate: true }
 );
 
-const hasOpenAction = computed(() => Boolean(memberPage.value?.hasOpenAction || ledgerPage.value?.hasOpenAction));
+const hasOpenAction = computed(() => Boolean(memberPage.value?.hasOpenAction || ledgerPage.value?.hasOpenAction || active.value === 'settings' && settingsSubTab.value !== 'overview'));
 const bookKey = computed(() => JSON.stringify([props.identity, props.workspace.state.book?.ledgerEpoch]));
 
 watch(() => props.identity, () => {
@@ -334,6 +380,8 @@ watch(() => props.identity, () => {
 
 watch(bookKey, () => {
   history.value = {};
+  overviewSequence++; overviewBusy.value = false;
+  businessDailySummary.value = null; businessDailyBalances.value = null; overviewError.value = '';
 });
 
 function openHistory(id, name) {
@@ -343,16 +391,20 @@ function openHistory(id, name) {
 }
 
 function openLedgerView(view = 'transactions') {
+  if (props.workspace.state.busy || !showLedger.value) return;
   active.value = 'ledger';
-  ledgerView.value = view;
+  ledgerView.value = ledgerViews.value.some(item => item.key === view) ? view : ledgerViews.value[0].key;
 }
+function openSettings() { if (!props.workspace.state.busy) { active.value = 'settings'; settingsSubTab.value = 'overview'; } }
 
 function openPage(id) {
+  if (props.workspace.state.busy) return false;
+  if ((id === 'members' && !showMembers.value) || (id === 'ledger' && !showLedger.value)) return false;
   if (['members', 'ledger'].includes(id)) {
     active.value = id;
     return true;
   }
-  if (['configuration', 'batches', 'backup', 'account', 'store', 'voice', 'update', 'help'].includes(id)) {
+  if (settingsGroups.value.some(group => group.items.some(item => item.page === id))) {
     active.value = 'settings';
     settingsSubTab.value = id;
     return true;
@@ -368,13 +420,19 @@ watch(() => props.balanceFilter, (val) => {
 
 defineExpose({
   activeTab: active,
+  ledgerView,
   hasOpenAction,
   openAccount: () => openPage('account'),
+  openUpdate: () => openPage('update'),
   openBackup: () => openPage('backup'),
-  openCreateMember: () => {
+  openCreateMember: async () => {
+    if (!openPage('members')) return;
     active.value = 'members';
+    if (memberPage.value) { memberPage.value.create(); return; }
+    await nextTick();
     memberPage.value?.create();
   },
+  search: () => { if (active.value === 'members') memberPage.value?.search(); else if (ledgerView.value === 'transactions') ledgerPage.value?.search(); },
   openMembers: filter => {
     if (openPage('members')) {
       memberFilter.value = filter;

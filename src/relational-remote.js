@@ -31,6 +31,7 @@ export function createRelationalRemote({ request }) {
     listMembers: query => page('/members', query),
     findActiveNames: input => post('/members/check-names', input),
     getMember: (id, query) => get('/members/' + pathId(id), query),
+    getMemberTotals: (id, query) => get('/members/' + pathId(id) + '/totals', query),
     listLedger: query => page('/ledger', query),
     getConfiguration: query => get('/configuration', query),
     report: query => get('/reports/summary', query),

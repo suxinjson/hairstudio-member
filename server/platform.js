@@ -166,12 +166,17 @@ export function createPlatformService(pool, { signer = configuredLicenseSigner()
       const features = normalizeFeatures(input.features);
       if (features.some(feature => !OFFLINE_LICENSE_FEATURES.includes(feature))) throw new ApiError(400, '独立离线授权不支持云端语音、员工或设备管理');
       const issuedAt = new Date(), expiresAt = licenseEnd(input, issuedAt), licenseId = randomUUID();
+      // The store row is locked: concurrent renewals cannot create competing
+      // local identities. Expired licenses still identify the existing account.
+      const previous = (await client.query("SELECT payload FROM offline_licenses WHERE store_id=$1 AND device_id=$2 AND payload->'user'->>'username'=$3 ORDER BY issued_at DESC,id DESC LIMIT 1", [storeId, input.deviceId, username])).rows[0];
+      const actorId = previous ? previous.payload?.user?.id : randomUUID();
+      if (!uuid.test(actorId || '')) throw new ApiError(409, '原离线账号标识无效，请保留原许可核对', 'OFFLINE_IDENTITY_INVALID');
       const payload = { v: 1, mode: 'offline', id: licenseId, storeId, storeName: current.name, deviceId: input.deviceId,
         issuedAt: issuedAt.toISOString(), notBefore: issuedAt.toISOString(), expiresAt, features,
-        user: { id: randomUUID(), username, displayName: input.displayName.trim(), role: 'owner' } };
+        user: { id: actorId, username, displayName: input.displayName.trim(), role: 'owner' } };
       const code = signer.sign(payload);
       await client.query('INSERT INTO offline_licenses(id,store_id,device_id,key_id,payload,code_hash,issued_by) VALUES($1,$2,$3,$4,$5,$6,$7)', [licenseId, storeId, input.deviceId, signer.keyId, payload, digest(code), actor.id]);
-      await audit(client, actor, 'offline_license_issued', storeId, { licenseId, deviceId: input.deviceId, expiresAt, features: payload.features, keyId: signer.keyId });
+      await audit(client, actor, 'offline_license_issued', storeId, { licenseId, actorId, deviceId: input.deviceId, expiresAt, features: payload.features, keyId: signer.keyId });
       return { code, payload };
     }); },
     operators(identity) { return run(identity, 'operators.read', async client => (await client.query('SELECT id,username,display_name,role_id,active,version FROM platform_users ORDER BY username LIMIT 100')).rows.map(publicOperator)); },

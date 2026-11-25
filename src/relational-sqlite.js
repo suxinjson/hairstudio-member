@@ -7,6 +7,8 @@ import { configurationInput, prepareSale, saleSnapshot } from './relational-sale
 import { SQLITE_SALES_SCHEMA, sqliteSales } from './relational-sqlite-sales.js';
 import { BACKUP_TABLES, validateBackupTables, validateSqliteBackup } from './relational-sqlite-backup.js';
 import { sqliteReports } from './relational-sqlite-reports.js';
+import { memberTotalFields, memberTotals } from './relational-member-totals.js';
+import { SQLITE_AGGREGATE_BATCH, SQLITE_AGGREGATE_PAGE, sqliteSums, addSqliteSums } from './relational-sqlite-aggregate.js';
 import { bindTask, mutationTask, taskRequest } from './relational-tasks.js';
 import { SQLITE_TASK_SCHEMA, sqliteTasks } from './relational-sqlite-tasks.js';
 import { ledgerEpochOf, requireLedgerEpoch } from './ledger-epoch.js';
@@ -368,22 +370,26 @@ export function createRelationalSqlite({ driver, storeId, mode, ledgerEpoch, aut
       if (request.type === 'member.archive') return api.archiveMember(request.memberId, metadata);
       return api.updateConfiguration(request.data, metadata);
     },
-    getTask(taskId, { ledgerEpoch } = {}) {
+    getTask(taskId, { ledgerEpoch, actorId } = {}) {
       ledgerEpochOf(ledgerEpoch);
       if (typeof taskId !== 'string' || !COMMAND_ID.test(taskId)) throw invalid('任务号无效');
       return transaction('read', 'read', async user => {
         requireLedgerEpoch(ledgerEpoch, (await book()).ledgerEpoch);
+        const originalActor = actorId === undefined ? user.id : validId(actorId);
+        if (originalActor !== user.id && (mode !== 'standalone' || user.role !== 'owner')) throw Object.assign(new Error('请使用原账号核对该任务'), { status: 403, code: 'FORBIDDEN' });
         const row = await tasks.find(taskId);
-        if (!row || row.actor_id !== user.id || row.device_id !== user.deviceId) throw Object.assign(new Error('未找到当前身份的已提交任务'), { status: 404, code: 'TASK_NOT_FOUND' });
+        if (!row || row.actor_id !== originalActor || row.device_id !== user.deviceId) throw Object.assign(new Error('未找到原身份的已提交任务'), { status: 404, code: 'TASK_NOT_FOUND' });
         requireLedgerEpoch(row.ledger_epoch, ledgerEpoch);
         return { ledgerEpoch, taskId, type: row.task_type, result: await tasks.read(row), completedAt: row.completed_at };
       });
     },
-    getCommand(id, { ledgerEpoch } = {}) {
+    getCommand(id, { ledgerEpoch, actorId } = {}) {
       if (typeof id !== 'string' || !COMMAND_ID.test(id)) throw invalid('命令号无效');
       return transaction('read', 'ledgerRead', async user => {
         requireLedgerEpoch(ledgerEpoch, (await book()).ledgerEpoch);
-        const row = await one('SELECT * FROM command_receipts WHERE store_id=? AND command_id=? AND actor_id=? AND device_id=?', [storeId, id, user.id, user.deviceId]);
+        const originalActor = actorId === undefined ? user.id : validId(actorId);
+        if (originalActor !== user.id && (mode !== 'standalone' || user.role !== 'owner')) throw Object.assign(new Error('请使用原账号核对该资金原单'), { status: 403, code: 'FORBIDDEN' });
+        const row = await one('SELECT * FROM command_receipts WHERE store_id=? AND command_id=? AND actor_id=? AND device_id=?', [storeId, id, originalActor, user.deviceId]);
         if (!row) throw Object.assign(new Error('未找到该身份的本机账务回执'), { status: 404, code: 'COMMAND_NOT_FOUND' });
         requireLedgerEpoch(ledgerEpoch, row.ledger_epoch);
         return receiptResult(row);
@@ -472,6 +478,24 @@ export function createRelationalSqlite({ driver, storeId, mode, ledgerEpoch, aut
       });
     },
     getMember(memberId) { validId(memberId); return transaction('read', 'memberRead', () => readMember(memberId)); },
+    getMemberTotals(memberId) {
+      validId(memberId);
+      return transaction('read', 'ledgerRead', async user => {
+        if (!allowsFeature(user.features, 'members')) throw Object.assign(new Error('许可未包含会员功能'), { status: 403, code: 'FEATURE_DISABLED' });
+        if (!await one('SELECT id FROM member_profiles WHERE store_id=? AND id=?', [storeId, memberId])) throw Object.assign(new Error('会员不存在'), { status: 404 });
+        const totals = {}, fields = Object.keys(memberTotalFields);
+        let after = '-1';
+        for (;;) {
+          const rows = await all('SELECT (e.rowid-1)/' + SQLITE_AGGREGATE_BATCH + ' AS chunk,' + sqliteSums(memberTotalFields) +
+            ' FROM ledger_entries e LEFT JOIN ledger_reversals r ON r.store_id=e.store_id AND r.original_entry_id=e.entry_id' +
+            ' WHERE e.store_id=? AND e.member_id=? AND e.rowid>(CAST(? AS INTEGER)+1)*' + SQLITE_AGGREGATE_BATCH +
+            ' GROUP BY chunk ORDER BY chunk LIMIT ' + SQLITE_AGGREGATE_PAGE, [storeId, memberId, after]);
+          for (const row of rows) { addSqliteSums(totals, row, fields); after = String(row.chunk); }
+          if (rows.length < SQLITE_AGGREGATE_PAGE) break;
+        }
+        return memberTotals(totals);
+      });
+    },
     findActiveNames({ names } = {}) {
       const keys = new Map(batchNames(names).map(name => [normalizeMemberName(name), 0]));
       return transaction('read', 'memberRead', async () => {

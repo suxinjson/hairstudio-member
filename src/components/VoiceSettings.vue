@@ -456,6 +456,7 @@ const props = defineProps({
   api: { type: Object, required: true },
   player: { type: Object, required: true },
   user: { type: Object, default: null },
+  canReadUsers: { type: Boolean, default: true },
   serverUrl: { type: String, default: () => globalThis.location?.origin || '' },
   copyText: { type: Function, default: text => navigator.clipboard.writeText(text) }
 });
@@ -610,7 +611,7 @@ async function loadConfig() {
   const sequence = ++loadSequence;
   loaded.value = false; isLoading.value = true; configChanged.value = false;
   try {
-    const [data, users] = await Promise.all([props.api.getVoiceConfig(), isOwner.value ? props.api.getUsers() : []]);
+    const [data, users] = await Promise.all([props.api.getVoiceConfig(), isOwner.value && props.canReadUsers ? props.api.getUsers() : []]);
     if (!alive || sequence !== loadSequence) return;
     if (!Object.hasOwn(DEFAULTS, data.provider || 'fish_audio')) throw new Error('语音服务商配置无效');
     if (!Number.isSafeInteger(data.version) || data.version < 0) throw new Error('语音配置版本无效，请更新服务器后重试');

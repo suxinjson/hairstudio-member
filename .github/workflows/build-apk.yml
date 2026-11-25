@@ -39,7 +39,7 @@ jobs:
       VERSION_CODE: ${{ github.run_number }}
       VERSION_NAME: 1.0.${{ github.run_number }}
       SERVER_DEPLOY_ENABLED: ${{ secrets.SERVER_SSH_KEY != '' }}
-      RELEASE_APPROVED: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || (github.event_name == 'workflow_dispatch' && inputs.release) }}
+      RELEASE_APPROVED: ${{ github.event_name == 'workflow_dispatch' && inputs.release == true && vars.RELATIONAL_RELEASE_APPROVED == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
 
     steps:
     - name: 1. 拉取项目源码

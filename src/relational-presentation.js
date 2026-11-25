@@ -6,6 +6,11 @@ export function displayCents(raw) {
   return (cents < 0n ? '-' : '') + (absolute / 100n).toString() + '.' + String(absolute % 100n).padStart(2, '0');
 }
 
+export function displayAbsoluteCents(raw) {
+  const value = displayCents(raw);
+  return value.startsWith('-') ? value.slice(1) : value;
+}
+
 export function announceRelationalSale(player, result, draft, member) {
   const common = { name: member.name, balance: displayCents(result.balanceAfterCents) };
   if (draft.type === 'recharge') return player.broadcast('recharge', { ...common, amount: displayCents(draft.actualPayCents),

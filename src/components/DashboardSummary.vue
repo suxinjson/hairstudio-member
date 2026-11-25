@@ -31,7 +31,7 @@
       </div>
       <div>
         <dt class="text-slate-500 font-medium">待收欠款<span v-if="balances?.debtCount"> · {{ balances.debtCount }}人</span></dt>
-        <dd class="text-sm font-black text-rose-600 mt-0.5">¥{{ displayCents(balances?.debtCents || '0') }}</dd>
+        <dd class="text-sm font-black text-rose-600 mt-0.5">¥{{ displayAbsoluteCents(balances?.debtCents || '0') }}</dd>
       </div>
       <div>
         <dt class="text-slate-500 font-medium">在用会员</dt>
@@ -42,7 +42,7 @@
 </template>
 
 <script setup>
-import { displayCents } from '../relational-presentation.js';
+import { displayAbsoluteCents, displayCents } from '../relational-presentation.js';
 
 defineProps({
   summary: { type: Object, default: () => ({}) },

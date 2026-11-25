@@ -5,6 +5,7 @@ import { createService } from './helpers/licensed-service.js';
 import { relationalTestDatabase } from './helpers/relational-database.js';
 import { createApi } from '../http.js';
 import { migrate } from '../database.js';
+import { verifyMemberTotals } from '../../tests/helpers/member-totals.mjs';
 
 let database, pool, service, ledger, identity, accessToken, server, origin;
 const password = 'Relational-Test-2026!';
@@ -29,6 +30,26 @@ beforeEach(async () => {
 
   const session = await service.login({ username: 'relational-owner', password, deviceId: randomUUID() }, '127.0.0.1');
   accessToken = session.accessToken; identity = await service.authenticate(accessToken); identity.ledgerEpoch = (await ledger.getBook(identity)).ledgerEpoch;
+});
+
+test('PostgreSQL member totals preserve full lifetime precision and serve a scoped HTTP aggregate', async () => {
+  const book = await ledger.getBook(identity);
+  const result = await verifyMemberTotals({
+    create: data => ledger.createMember(identity, data, { ...book, id: randomUUID() }),
+    command: (memberId, type, data) => command(memberId, type, data),
+    totals: id => ledger.getMemberTotals(identity, id, book),
+    history: memberId => ledger.listLedger(identity, { memberId, limit: 15 })
+  });
+  const route = origin + '/api/v2/members/' + result.member.id + '/totals?ledgerEpoch=' + book.ledgerEpoch;
+  assert.equal((await fetch(route)).status, 401);
+  const response = await fetch(route, { headers: { Authorization: 'Bearer ' + accessToken } });
+  assert.equal(response.status, 200); assert.deepEqual(await response.json(), result.expected);
+  await assert.rejects(ledger.getMemberTotals(identity, 'missing-member', book), { status: 404 });
+  await assert.rejects(ledger.getMemberTotals(identity, result.member.id, { ledgerEpoch: randomUUID() }), { code: 'LEDGER_EPOCH_MISMATCH' });
+  await pool.query('UPDATE store_licenses SET features=$1::jsonb WHERE store_id=$2', [JSON.stringify(['core', 'members', 'cashier']), book.storeId]);
+  assert.deepEqual(await ledger.getMemberTotals(identity, result.member.id, book), result.expected);
+  await pool.query('UPDATE store_licenses SET features=$1::jsonb WHERE store_id=$2', [JSON.stringify(['core', 'members']), book.storeId]);
+  await assert.rejects(ledger.getMemberTotals(identity, result.member.id, book), { code: 'FEATURE_DISABLED' });
 });
 
 test('server book generations fence restored requests before receipts, versions or opening idempotency', async () => {
