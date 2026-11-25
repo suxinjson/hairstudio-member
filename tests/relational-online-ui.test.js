@@ -9,6 +9,8 @@ const password = 'Synthetic-UI-2026!';
 const locks = browserLocks();
 let ui, Cashier, Merchant, api, MerchantSessionClient, sessionKey, accessTimeout, database, service, origin, server;
 let requestHandler, requests, storeA, storeB;
+const activeFetches = new Set(), activeHandlers = new Set();
+const handlerErrors = [];
 
 before(async t => {
   ui = await vueUi(t);
@@ -23,11 +25,19 @@ before(async t => {
   database = await relationalTestDatabase();
   service = createService(database.pool);
   server = createApi({ service, pool: database.pool, production: false });
+  const handle = server.listeners('request')[0];
+  server.removeListener('request', handle);
+  server.on('request', (request, response) => {
+    const pending = track(handle(request, response), activeHandlers);
+    pending.catch(error => { handlerErrors.push(error); });
+    return pending;
+  });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   origin = 'http://127.0.0.1:' + server.address().port;
 });
 
 after(async () => {
+  await drainRequests();
   if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   await database?.close();
 });
@@ -44,12 +54,29 @@ async function seed(username, name) {
 }
 
 const direct = (path, options) => fetch(origin + path, options);
+function track(work, collection) {
+  const pending = Promise.resolve(work);
+  collection.add(pending);
+  pending.then(() => collection.delete(pending), () => collection.delete(pending));
+  return pending;
+}
+async function drainRequests() {
+  // A completed render can still have authenticated reads in flight. Wait for
+  // both client handlers and server transactions before TRUNCATE or pool.end;
+  // a disconnected client alone does not mean its SQL work has finished.
+  await ui.nextTick();
+  while (activeFetches.size || activeHandlers.size) {
+    await Promise.allSettled([...activeFetches, ...activeHandlers]);
+  }
+  assert.deepEqual(handlerErrors, [], 'HTTP handler failures must not be hidden by cleanup');
+}
 async function testedFetch(path, options) {
   requests.push({ path, method: options.method ?? 'GET', body: options.body });
-  return requestHandler(path, options);
+  return track(requestHandler(path, options), activeFetches);
 }
 
 beforeEach(async () => {
+  await drainRequests();
   localStorage.removeItem(sessionKey);
   api.restoreSession();
   for (const key of Object.keys(localStorage)) if (key.startsWith('hairstudio_v2_pending:')) localStorage.removeItem(key);
@@ -60,7 +87,11 @@ beforeEach(async () => {
   requestHandler = direct; requests = [];
   api.requestFetch = testedFetch;
 });
-afterEach(() => ui.unmount());
+afterEach(async () => {
+  ui.unmount();
+  api.clearSession();
+  await drainRequests();
+});
 
 async function waitFor(check) {
   for (let elapsed = 0; elapsed < 300; elapsed++) {
@@ -348,6 +379,40 @@ test('merchant batch with no phone column requires review of both spreadsheet an
   assert.equal(profiles.length, 4);
   assert.equal(profiles.filter(row => row.name === '同名合成').length, 2);
   assert.equal(profiles.filter(row => row.balanceCents === '0').length, 3);
+});
+
+test('fixture cleanup waits for server work even after its client disconnects', async t => {
+  await api.login(storeA.username, password);
+  const listMembers = service.relational.listMembers.bind(service.relational);
+  let started, release, completed = false;
+  const received = new Promise(resolve => { started = resolve; });
+  const paused = new Promise(resolve => { release = resolve; });
+  t.mock.method(service.relational, 'listMembers', async (...args) => {
+    started(); await paused;
+    const result = await listMembers(...args);
+    completed = true;
+    return result;
+  });
+  const controller = new AbortController();
+  const response = testedFetch('/api/v2/members', { method: 'GET',
+    headers: { Authorization: 'Bearer ' + api.accessToken.value }, signal: controller.signal });
+  const disconnected = response.catch(error => error);
+  try {
+    await Promise.race([received, delay(3000).then(() => { throw new Error('Member request did not reach the server'); })]);
+    controller.abort();
+    assert.equal((await disconnected).name, 'AbortError');
+    let drained = false;
+    const cleanup = drainRequests().then(() => { drained = true; });
+    await ui.nextTick();
+    assert.equal(drained, false, 'A disconnected client must not let the database reset begin');
+    assert.equal(completed, false);
+    release(); await cleanup;
+    assert.equal(completed, true);
+    assert.equal(activeHandlers.size, 0);
+  } finally {
+    release(); controller.abort();
+    await Promise.allSettled([response]); await drainRequests();
+  }
 });
 
 for (const event of ['timer', 'focus', 'visibilitychange']) {
