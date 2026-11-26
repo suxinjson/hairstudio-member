@@ -19,6 +19,7 @@
       :feature="feature" 
       :announce="announce" 
       :copy-text="copyText"
+      :member-notes-label="memberNotesLabel"
       :balance-filter="balanceFilter || memberFilter" 
       :search-query="searchQuery"
       @update:balance-filter="memberFilter = $event; $emit('update:balanceFilter', $event)"
@@ -26,7 +27,7 @@
       @history="openHistory" 
     />
 
-    <!-- 2. 账务中心主视图 (包含概览、流水、报表三合一切换) -->
+    <!-- 2. 账务中心：经营概览与财务流水 -->
     <div v-else-if="active === 'ledger'" class="space-y-3.5">
       <!-- 账务分栏切换器 -->
       <div class="ledger-tabs flex gap-1 p-1 bg-slate-200/80 rounded-2xl" role="tablist" aria-label="账务视图">
@@ -44,41 +45,7 @@
         </button>
       </div>
 
-      <!-- 今日概览 -->
-      <div v-if="ledgerView === 'summary'" class="space-y-3">
-        <div class="book-inline book-between">
-          <span class="book-muted">今日 {{ overviewDay }}</span>
-          <button type="button" class="book-btn" :disabled="overviewBusy" @click="loadDailyOverview">刷新今日概览</button>
-        </div>
-        <p v-if="overviewBusy" class="book-panel" role="status">正在读取今日概览…</p>
-        <p v-else-if="overviewError" class="book-panel book-alert" role="alert">{{ overviewError }}</p>
-        <DashboardSummary v-else-if="businessDailySummary" :summary="businessDailySummary" :balances="businessDailyBalances" />
-        <div class="ledger-shortcuts grid grid-cols-2 gap-2 mt-3">
-          <button 
-            type="button" 
-            class="flex items-center justify-between p-3.5 rounded-2xl bg-white border border-slate-200/90 text-slate-800 font-bold text-xs shadow-xs hover:border-emerald-300 transition-all btn-press"
-            @click="ledgerView = 'transactions'"
-            v-if="feature('cashier')"
-          >
-            <span class="flex items-center gap-2">
-              <Receipt :size="17" class="text-emerald-700" aria-hidden="true" />
-              <span>查看交易明细</span>
-            </span>
-            <span class="text-slate-400 font-bold">›</span>
-          </button>
-          <button 
-            type="button" 
-            class="flex items-center justify-between p-3.5 rounded-2xl bg-white border border-slate-200/90 text-slate-800 font-bold text-xs shadow-xs hover:border-emerald-300 transition-all btn-press"
-            @click="ledgerView = 'reports'"
-          >
-            <span class="flex items-center gap-2">
-              <BarChart3 :size="17" class="text-emerald-700" aria-hidden="true" />
-              <span>查看经营报表</span>
-            </span>
-            <span class="text-slate-400 font-bold">›</span>
-          </button>
-        </div>
-      </div>
+      <RelationalReports v-if="ledgerView === 'summary'" :workspace="workspace" initial-period="today" />
 
       <!-- 财务流水明细 -->
       <RelationalLedger 
@@ -92,15 +59,10 @@
         @all-members="history = {}" 
       />
 
-      <!-- 经营报表 -->
-      <RelationalReports 
-        v-else-if="ledgerView === 'reports'" 
-        :workspace="workspace" 
-      />
     </div>
 
     <!-- 3. 设置中心主视图 (分类聚合概览与独立二级页面) -->
-    <div v-else-if="active === 'settings'" class="space-y-3.5">
+    <div v-show="active === 'settings'" class="space-y-3.5">
       <!-- 概览主视图：分类聚合菜单 -->
       <SettingsOverview
         v-if="settingsSubTab === 'overview'"
@@ -112,7 +74,7 @@
       />
 
       <!-- 二级设置项主视图 (带顶部返回条) -->
-      <div v-else class="space-y-3">
+      <div v-show="settingsSubTab !== 'overview'" class="space-y-3">
         <div class="settings-page-heading flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-200/90 shadow-xs mb-3">
           <button
             type="button"
@@ -127,32 +89,32 @@
         </div>
 
         <RelationalConfiguration
-          v-if="settingsSubTab === 'configuration'"
+          v-if="visitedSettings.has('configuration')" v-show="settingsSubTab === 'configuration'"
           :workspace="workspace"
           :owner="owner && profileWritable"
         />
 
         <RelationalBatches
-          v-else-if="settingsSubTab === 'batches'"
+          v-if="visitedSettings.has('batches')" v-show="settingsSubTab === 'batches'"
           :workspace="workspace"
           :writable="profileWritable"
         />
 
         <RelationalBackup
-          v-else-if="settingsSubTab === 'backup'"
+          v-if="visitedSettings.has('backup')" v-show="settingsSubTab === 'backup'"
           :workspace="workspace"
           :controller="backup"
         />
 
-        <div v-else-if="settingsSubTab === 'store'">
+        <div v-if="visitedSettings.has('store')" v-show="settingsSubTab === 'store'">
           <slot name="store"><slot /></slot>
         </div>
 
-        <div v-else-if="settingsSubTab === 'voice'">
-          <slot name="voice"><slot /></slot>
+        <div v-if="visitedSettings.has('voice')" v-show="settingsSubTab === 'voice'">
+          <slot name="voice" :active="active === 'settings' && settingsSubTab === 'voice'"><slot /></slot>
         </div>
 
-        <div v-else-if="settingsSubTab === 'account'">
+        <div v-if="settingsSubTab === 'account'">
           <slot name="account" />
           <slot />
         </div>
@@ -227,19 +189,16 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onScopeDispose, ref, shallowRef, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, reactive, ref, watch } from 'vue';
 import { UsersRound, ChartNoAxesCombined, Settings, Receipt, BarChart3, ChevronLeft } from 'lucide-vue-next';
 import RelationalMembers from './RelationalMembers.vue';
 import RelationalLedger from './RelationalLedger.vue';
-import RelationalReports from './RelationalReports.vue';
-import RelationalConfiguration from './RelationalConfiguration.vue';
+const RelationalReports = defineAsyncComponent(() => import('./RelationalReports.vue'));
+const RelationalConfiguration = defineAsyncComponent(() => import('./RelationalConfiguration.vue'));
 import RelationalPending from './RelationalPending.vue';
-import RelationalBatches from './RelationalBatches.vue';
-import RelationalBackup from './RelationalBackup.vue';
-import DashboardSummary from './DashboardSummary.vue';
+const RelationalBatches = defineAsyncComponent(() => import('./RelationalBatches.vue'));
+const RelationalBackup = defineAsyncComponent(() => import('./RelationalBackup.vue'));
 import SettingsOverview from './SettingsOverview.vue';
-import { todayBusiness, businessDays } from '../relational-presentation.js';
-import { useBusinessDay } from '../composables/useBusinessDay.js';
 
 const props = defineProps({
   workspace: { type: Object, required: true },
@@ -253,6 +212,7 @@ const props = defineProps({
   searchQuery: { type: String, default: '' },
   balanceFilter: { type: String, default: 'all' },
   storeName: { type: String, default: '我的门店' },
+  memberNotesLabel: { type: String, default: '会员偏好与备注' },
   connectionLabel: { type: String, default: '' },
   online: Boolean,
   canUpdate: Boolean,
@@ -266,6 +226,8 @@ const history = ref({});
 const memberFilter = ref('all');
 const ledgerView = ref('summary');
 const settingsSubTab = ref('overview');
+const visitedSettings = reactive(new Set());
+watch(settingsSubTab, page => { if (page !== 'overview') visitedSettings.add(page); }, { flush: 'sync' });
 
 const memberPage = ref(null);
 const ledgerPage = ref(null);
@@ -279,9 +241,8 @@ watch([showMembers, showLedger], () => {
 }, { immediate: true });
 
 const ledgerViews = computed(() => [
-  ...(props.feature('reports') ? [{ key: 'summary', label: '今日概览' }] : []),
-  ...(props.feature('cashier') ? [{ key: 'transactions', label: '财务流水' }] : []),
-  ...(props.feature('reports') ? [{ key: 'reports', label: '经营报表' }] : [])
+  ...(props.feature('reports') ? [{ key: 'summary', label: '经营概览' }] : []),
+  ...(props.feature('cashier') ? [{ key: 'transactions', label: '财务流水' }] : [])
 ]);
 watch(ledgerViews, views => {
   if (views.length && !views.some(view => view.key === ledgerView.value)) ledgerView.value = views[0].key;
@@ -330,43 +291,13 @@ const settingsTitles = {
 };
 
 const currentSettingsTitle = computed(() => settingsTitles[settingsSubTab.value] || '设置');
+watch([active, settingsSubTab, ledgerView], async () => {
+  await nextTick();
+  globalThis.scrollTo?.(0, 0);
+});
 watch(settingsGroups, groups => {
   if (settingsSubTab.value !== 'overview' && !groups.some(group => group.items.some(item => item.page === settingsSubTab.value))) settingsSubTab.value = 'overview';
 });
-
-const businessDailySummary = shallowRef(null);
-const businessDailyBalances = shallowRef(null);
-const businessDay = useBusinessDay(), overviewDay = ref(businessDay.value);
-const overviewBusy = ref(false), overviewError = ref('');
-let overviewSequence = 0;
-onScopeDispose(() => { overviewSequence++; });
-
-async function loadDailyOverview() {
-  if (!props.workspace.state.book || !props.feature('reports')) return;
-  const request = ++overviewSequence;
-  overviewBusy.value = true; overviewError.value = '';
-  const day = todayBusiness();
-  overviewDay.value = day;
-  try {
-    const report = await props.workspace.read('reportBusiness', businessDays(day, day));
-    if (report && request === overviewSequence) {
-      businessDailySummary.value = report.summary || {};
-      businessDailyBalances.value = report.balances || {};
-    }
-  } catch (cause) {
-    if (request === overviewSequence) { overviewError.value = cause.message; businessDailySummary.value = null; }
-  } finally { if (request === overviewSequence) overviewBusy.value = false; }
-}
-
-watch(
-  () => [props.workspace.state.revision, active.value, ledgerView.value, businessDay.value],
-  () => {
-    if (active.value === 'ledger' && ledgerView.value === 'summary') {
-      void loadDailyOverview();
-    }
-  },
-  { immediate: true }
-);
 
 const hasOpenAction = computed(() => Boolean(memberPage.value?.hasOpenAction || ledgerPage.value?.hasOpenAction || active.value === 'settings' && settingsSubTab.value !== 'overview'));
 const bookKey = computed(() => JSON.stringify([props.identity, props.workspace.state.book?.ledgerEpoch]));
@@ -376,22 +307,23 @@ watch(() => props.identity, () => {
   memberFilter.value = 'all';
   ledgerView.value = 'summary';
   settingsSubTab.value = 'overview';
+  visitedSettings.clear();
 });
 
 watch(bookKey, () => {
   history.value = {};
-  overviewSequence++; overviewBusy.value = false;
-  businessDailySummary.value = null; businessDailyBalances.value = null; overviewError.value = '';
 });
 
 function openHistory(id, name) {
   history.value = { id, name };
   active.value = 'ledger';
+  emit('update:searchQuery', '');
   ledgerView.value = 'transactions';
 }
 
 function openLedgerView(view = 'transactions') {
   if (props.workspace.state.busy || !showLedger.value) return;
+  history.value = {};
   active.value = 'ledger';
   ledgerView.value = ledgerViews.value.some(item => item.key === view) ? view : ledgerViews.value[0].key;
 }

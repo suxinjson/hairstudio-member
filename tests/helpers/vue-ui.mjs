@@ -27,10 +27,10 @@ export async function vueUi(t, { modules = {} } = {}) {
     const { descriptor, errors } = parse(await readFile(source, 'utf8'), { filename: source.pathname });
     assert.deepEqual(errors, []);
     let script = compileScript(descriptor, { id: output.href, inlineTemplate: true }).content;
-    for (const [match, quote, specifier] of script.matchAll(/from (['"])([^'"]+)\1/g)) {
+    for (const [match, prefix, quote, specifier] of script.matchAll(/(from |import\()(['"])([^'"]+)\2/g)) {
       const target = modules[specifier] ?? (specifier.endsWith('.vue') ? await compile(new URL(specifier, source))
         : specifier.startsWith('.') ? new URL(specifier, source).href : pathToFileURL(require.resolve(specifier)).href);
-      script = script.replace(match, 'from ' + quote + target + quote);
+      script = script.replace(match, prefix + quote + target + quote);
     }
     await writeFile(output, script);
     return output.href;

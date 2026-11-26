@@ -1,9 +1,10 @@
 <template>
-  <section class="bg-white rounded-3xl border border-slate-200 p-5 space-y-5">
+  <section class="bg-white rounded-3xl border border-slate-200 p-5 space-y-5" aria-label="门店设置">
     <div><h2 class="text-xl font-black">门店设置</h2><p class="text-sm text-slate-500 mt-2">软件名称为“会员管家”，以下内容按自己的门店配置。</p></div>
-    <p v-if="!canEdit" class="text-slate-600">仅店主可以修改门店设置。</p>
+    <p v-if="!canEdit" class="text-slate-600">{{ readonlyReason }}</p>
     <p v-if="error" role="alert" class="rounded-xl p-3 bg-rose-50 text-rose-700">{{ error }}</p>
     <p v-if="message" role="status" class="rounded-xl p-3 bg-emerald-50 text-emerald-700">{{ message }}</p>
+    <p v-if="dirty" class="book-hint" role="status">有未保存的修改，返回后可继续编辑。</p>
     <form @submit.prevent="save" class="space-y-4">
       <label class="block font-bold">门店名称<input v-model="form.name" required maxlength="128" :disabled="!canEdit || saving" class="block border rounded-xl p-3 w-full mt-2" /></label>
       <label class="block font-bold">联系电话<input v-model="form.phone" type="tel" maxlength="64" :disabled="!canEdit || saving" class="block border rounded-xl p-3 w-full mt-2" /></label>
@@ -21,7 +22,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import { normalizeStoreProfile } from '../store-profile.js';
-const props = defineProps({ profile: Object, canEdit: { type: Boolean, default: true }, saveProfile: { type: Function, required: true }, loadProfile: Function });
+const props = defineProps({ profile: Object, canEdit: { type: Boolean, default: true }, saveProfile: { type: Function, required: true }, loadProfile: Function, readonlyReason: { type: String, default: '仅店主可以修改门店设置。' } });
 const initial = normalizeStoreProfile(props.profile || {});
 const base = ref(initial), form = ref({ ...initial }), saving = ref(false), error = ref(''), message = ref('');
 const dirty = computed(() => JSON.stringify(form.value) !== JSON.stringify(base.value));

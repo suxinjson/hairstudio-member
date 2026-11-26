@@ -1,32 +1,21 @@
 <template>
-  <div class="space-y-6 max-w-4xl mx-auto pb-12">
+  <div class="voice-settings space-y-4 max-w-4xl mx-auto">
+    <section v-if="!online" class="book-panel book-stack" role="status"><h3>联网后可设置语音播报</h3><p>当前手机处于离线状态，语音设置和试听需要连接门店服务器。已编辑的内容会在本次登录期间保留。</p><button type="button" @click="$emit('reconnect')">重新连接</button></section>
+    <div v-show="online" class="space-y-4">
     <!-- 顶栏标题与操作 -->
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-      <div class="flex items-center gap-4">
-        <div class="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center text-2xl shadow-inner shrink-0">
-          📢
-        </div>
-        <div>
-          <h2 class="text-lg font-black text-slate-900">语音播报服务配置</h2>
-          <p class="text-xs text-slate-400 mt-0.5">支持讯飞、Fish Audio 与 HeyGen，收银结算与会员充值自动语音到账提示</p>
-        </div>
-      </div>
+    <div class="voice-header bg-white p-4 rounded-2xl border border-slate-200">
+      <h2 class="text-base font-bold text-slate-900"><Volume2 :size="20" aria-hidden="true" />语音播报</h2>
 
       <!-- 全局启用开关 -->
-      <div class="flex items-center gap-3 bg-slate-50 px-4 py-2.5 rounded-xl border border-slate-200">
-        <span class="text-xs font-bold text-slate-700">播报总开关</span>
+      <div class="flex items-center gap-2">
         <button
           type="button"
           :disabled="!isOwner || !loaded || isLoading || isSaving"
           role="switch" :aria-checked="form.enabled" aria-label="播报总开关"
           @click="toggleEnabled"
-          class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50"
-          :class="form.enabled ? 'bg-emerald-600' : 'bg-slate-300'"
+          class="voice-switch disabled:opacity-50"
         >
-          <span
-            class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out"
-            :class="form.enabled ? 'translate-x-5' : 'translate-x-0'"
-          />
+          <span class="voice-switch-track"><span /></span>
         </button>
         <span class="text-xs font-black" :class="form.enabled ? 'text-emerald-700' : 'text-slate-400'">
           {{ form.enabled ? '已开启' : '已停用' }}
@@ -34,6 +23,7 @@
       </div>
     </div>
 
+    <p v-if="loaded" class="book-hint" role="status">{{ dirty ? '有未保存的修改，返回后可继续编辑' : '当前显示已保存配置' }}</p>
     <!-- 权限提示 (非店主) -->
     <div v-if="!isOwner" class="p-4 bg-amber-50 text-amber-900 rounded-2xl border border-amber-200 text-xs font-bold flex items-center gap-2">
       <span>🔒</span> 提示：您当前以收银员/店员身份登录，仅支持查看与播放已启用的播报。修改语音播报配置需店主权限。
@@ -52,6 +42,250 @@
     <p v-if="isLoading" role="status" class="p-4 text-sm text-slate-600">正在加载门店语音配置…</p>
     <button v-if="!loaded && !isLoading" type="button" @click="loadConfig" class="rounded-xl border p-3 font-bold">重新加载语音配置</button>
     <fieldset v-if="loaded" :disabled="isSaving" class="contents">
+    <section class="voice-everyday bg-white rounded-2xl border border-slate-200 p-4">        <!-- Voice ID / Reference ID -->
+        <div class="md:col-span-2 space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">
+              播报音色
+            </label>
+            <button
+              v-if="isOwner"
+              type="button"
+              @click="resetDefaultVoiceId"
+              class="text-[11px] text-slate-500 hover:text-emerald-700 underline font-medium"
+            >
+              恢复默认
+            </button>
+          </div>
+          <select v-if="form.provider === 'xfyun'" v-model="form.voiceId" :disabled="!isOwner"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-emerald-600 disabled:opacity-60">
+            <option value="x4_xiaoyan">讯飞小燕 · 普通话</option>
+            <option value="x4_yezi">讯飞小露 · 普通话</option>
+            <option value="aisjiuxu">讯飞许久 · 普通话</option>
+            <option value="aisjinger">讯飞小婧 · 普通话</option>
+            <option value="aisbabyxu">讯飞许小宝 · 普通话</option>
+          </select>
+          <input v-else
+            v-model="form.voiceId"
+            :disabled="!isOwner"
+            type="text"
+            :placeholder="defaultVoiceId"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+          />
+          <p class="text-[10px] text-slate-400">
+            可直接试听当前音色，保存后用于交易播报。
+          </p>
+        </div>
+</section>
+    <!-- 3. 播报文案模板 -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
+          <span>播报场景与内容</span>
+        </h3>
+      </div>
+
+      <div class="space-y-4">
+        <!-- 消费扣款模板 -->
+        <div class="space-y-1.5">
+          <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" v-model="form.events.consume" :disabled="!isOwner" aria-label="消费播报开关">消费成功后播报</label>
+          <details class="voice-template"><summary>修改消费播报内容</summary><p class="text-xs text-slate-500">变量：{name} 姓名、{amount} 金额、{balance} 余额。</p>
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">会员消费扣款播报文案</label>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                v-for="v in ['{name}', '{amount}', '{balance}']"
+                :key="v"
+                @click="insertVar('consume', v)"
+                class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-mono transition"
+              >
+                +{{ v }}
+              </button>
+            </div>
+          </div>
+          <input
+            v-model="form.templates.consume"
+            aria-label="消费播报语句" maxlength="200"
+            :disabled="!isOwner"
+            type="text"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+          />
+          </details>
+        </div>
+
+        <!-- 充值成功模板 -->
+        <div class="space-y-1.5">
+          <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" v-model="form.events.recharge" :disabled="!isOwner" aria-label="充值播报开关">充值成功后播报</label>
+          <details class="voice-template"><summary>修改充值播报内容</summary><p class="text-xs text-slate-500">变量：{name} 姓名、{amount} 实付、{gift} 赠送、{totalCredit} 合计入账、{balance} 余额。</p>
+          <div class="flex items-center justify-between">
+            <label class="text-xs font-bold text-slate-700">会员充值到账播报文案</label>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                v-for="v in ['{name}', '{amount}', '{balance}', '{gift}', '{totalCredit}']"
+                :key="v"
+                @click="insertVar('recharge', v)"
+                class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-mono transition"
+              >
+                +{{ v }}
+              </button>
+            </div>
+          </div>
+          <input
+            v-model="form.templates.recharge"
+            aria-label="充值播报语句" maxlength="200"
+            :disabled="!isOwner"
+            type="text"
+            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600 disabled:opacity-60"
+          />
+          </details>
+        </div>
+        <p class="text-xs text-slate-500">关闭场景开关即可暂停对应播报。</p>
+      </div>
+    </div>
+
+    <!-- 4. 试听测试与音量控制 -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
+          <span>试听与音量</span>
+        </h3>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500 font-bold">音量: {{ Math.round(form.volume * 100) }}%</span>
+          <input
+            v-model.number="form.volume"
+            aria-label="播报音量" :disabled="!isOwner"
+            type="range"
+            min="0.1"
+            max="1.0"
+            step="0.05"
+            class="w-24 accent-emerald-600 cursor-pointer"
+          />
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input
+            v-model="testText"
+            type="text"
+            placeholder="输入需要试听的测试文本..."
+            class="flex-1 h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600"
+            @keyup.enter="handleTestPlay"
+          />
+          <button
+            type="button"
+            :disabled="testStatus !== 'idle' || !testText.trim()"
+            :aria-label="testStatus === 'idle' ? '试听测试' : testStatus === 'synthesizing' ? '正在合成试听' : '正在播放试听'"
+            @click="handleTestPlay"
+            class="h-11 px-6 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-md shadow-emerald-900/20 disabled:opacity-50 shrink-0"
+          >
+            <span v-if="testStatus === 'synthesizing'" class="animate-spin text-sm">⏳</span>
+            <span v-else-if="testStatus === 'playing'" class="animate-pulse text-sm">🔊</span>
+            <span v-else>▶</span>
+            <span>{{ testStatus === 'synthesizing' ? '合成中...' : (testStatus === 'playing' ? '正在播放中' : '试听测试') }}</span>
+          </button>
+          <button
+            v-if="testStatus !== 'idle'"
+            type="button"
+            @click="handleStopPlay"
+            class="h-11 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition shrink-0"
+          >
+            ⏹ 停止
+          </button>
+        </div>
+
+        <!-- 本区即时状态与错误反馈 -->
+        <div
+          v-if="testMessage"
+          class="p-3 rounded-xl text-xs font-bold transition flex items-center justify-between"
+          :class="testMessageType === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'"
+        >
+          <div class="flex items-center gap-2">
+            <span>{{ testMessageType === 'success' ? '✅' : '⚠️' }}</span>
+            <span>{{ testMessage }}</span>
+          </div>
+          <button type="button" @click="testMessage = ''" class="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
+        <p class="text-[11px] text-slate-400">
+          {{ dirty ? '试听当前编辑内容；交易播报仍使用已保存配置。' : '试听当前已保存的门店配置。' }}
+        </p>
+      </div>
+    </div>
+
+    <!-- 底部保存按钮 -->
+    <div v-if="isOwner" class="flex justify-end gap-3 pt-2">
+      <button
+        type="button"
+        @click="loadConfig"
+        :disabled="isSaving"
+        class="h-11 px-5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition disabled:opacity-50"
+      >
+        {{ configChanged ? '重新加载配置' : '取消修改' }}
+      </button>
+      <button
+        type="button"
+        @click="handleSave"
+        :disabled="isSaving"
+        class="h-11 px-8 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition shadow-lg shadow-emerald-900/30 flex items-center gap-2 disabled:opacity-50"
+      >
+        <span v-if="isSaving" class="animate-spin">⏳</span>
+        <span>{{ isSaving ? '保存中...' : '保存播报配置' }}</span>
+      </button>
+    </div>
+    <details class="voice-advanced"><summary>高级配置 · 智能音箱对接</summary>
+    <section v-if="isOwner" class="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
+      <h3 class="font-bold text-slate-900">天猫精灵语音记账</h3>
+      <p class="text-xs text-slate-500">通过已校验平台身份的签名网关接入。启用前请配置记账账号、设备和新的随机签名密钥。</p>
+      <p v-if="webhookUrl" class="text-xs break-all">服务接口：<code>{{ webhookUrl }}</code><button type="button" @click="copyValue(webhookUrl, '接口地址')" class="ml-2 text-emerald-700">复制接口地址</button></p>
+      <label class="flex gap-2 text-sm"><input type="checkbox" v-model="ali.enabled" aria-label="天猫精灵开关">启用语音查询与记账</label>
+      <label class="block text-sm">记账账号
+        <select v-model="ali.actorId" aria-label="天猫精灵记账账号" class="block w-full border rounded-lg p-2 mt-1">
+          <option value="">请选择在用店主或收银员</option>
+          <option v-for="user in voiceActors" :key="user.id" :value="user.id">{{ user.displayName }}（{{ user.role === 'owner' ? '店主' : '收银员' }}）</option>
+        </select>
+      </label>
+      <label class="block text-sm">签名密钥
+        <input type="password" v-model="ali.token" aria-label="天猫精灵签名密钥" autocomplete="new-password" maxlength="100" :placeholder="aliHasToken ? '已配置；留空保留' : '32–100 位随机字符'" class="block w-full border rounded-lg p-2 mt-1">
+      </label>
+      <button type="button" @click="generateSigningSecret" class="text-sm text-emerald-700">生成新签名密钥</button>
+      <p v-if="generatedSecret" class="text-xs break-all">请复制到签名网关后保存：<code>{{ generatedSecret }}</code></p>
+      <button v-if="generatedSecret" type="button" @click="copyValue(generatedSecret, '签名密钥')" class="text-sm text-emerald-700">复制签名密钥</button>
+      <label class="block text-sm">允许的设备标识（每行一个）
+        <textarea v-model="aliDevices" aria-label="天猫精灵设备白名单" rows="3" class="block w-full border rounded-lg p-2 mt-1" />
+      </label>
+      <div class="rounded-xl border border-slate-200 p-4 space-y-3">
+        <div class="flex items-center justify-between gap-3">
+          <h4 class="text-sm font-bold text-slate-900">待绑定音箱</h4>
+          <button type="button" @click="loadAliGenieDevices" :disabled="isLoadingDevices || isSaving"
+            class="text-sm text-emerald-700 disabled:text-slate-400">{{ isLoadingDevices ? '正在刷新…' : '刷新待绑定音箱' }}</button>
+        </div>
+        <p class="text-xs text-slate-500">先在开放平台开启真机测试，再用音箱调用当前技能，然后点击刷新。选择音箱并保存配置后完成绑定。* 不能放行所有设备。</p>
+        <p v-if="devicesChecked && !candidateDevices.length" class="text-xs text-slate-500">暂未发现待绑定音箱。请确认真机测试已开启、接口密钥配置一致，再用音箱调用技能。网页在线测试没有真实设备标识。</p>
+        <div v-for="device in candidateDevices" :key="device.deviceOpenId" class="rounded-lg bg-slate-50 p-3 space-y-2">
+          <p class="text-xs text-slate-500">最近调用：{{ new Date(device.lastSeenAt).toLocaleString() }}</p>
+          <p class="text-xs font-mono break-all text-slate-700">{{ device.deviceOpenId }}</p>
+          <div class="flex flex-wrap gap-4 text-sm">
+            <button type="button" @click="copyValue(device.deviceOpenId, '设备标识')" class="text-emerald-700">复制设备标识</button>
+            <button type="button" @click="addAliGenieDevice(device.deviceOpenId)" :disabled="stagedDeviceIds.includes(device.deviceOpenId)"
+              class="text-emerald-700 disabled:text-slate-400">{{ stagedDeviceIds.includes(device.deviceOpenId) ? '已加入，保存后生效' : '加入允许设备' }}</button>
+          </div>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <label class="block text-sm">平台域名校验文件名
+          <input type="text" v-model="ali.verificationFile" maxlength="100" placeholder="平台提供的校验文件名.txt" class="block w-full border rounded-lg p-2 mt-1 text-xs">
+        </label>
+        <label class="block text-sm">平台域名校验文件内容
+          <input type="text" v-model="ali.verificationContent" maxlength="200" placeholder="校验文本内容（直接保存在数据库中）" class="block w-full border rounded-lg p-2 mt-1 text-xs">
+        </label>
+      </div>
+      <p class="text-xs text-slate-500">保存后还需在天猫精灵开放平台配置技能、意图和接口。平台网页试听缺少真实设备身份时只验证对话，实际记账请使用白名单内的音箱。</p>
+    </section>
+
+    </details>
+    <details class="voice-advanced"><summary>高级配置 · 服务商与接口参数</summary>
     <!-- 1. 服务商选择 -->
     <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
       <div class="flex items-center justify-between">
@@ -67,7 +301,7 @@
           :class="form.provider === 'xfyun' ? 'border-emerald-600 bg-emerald-50/40 shadow-sm' : 'border-slate-200 hover:border-slate-300 bg-slate-50/50'">
           <div class="flex items-center justify-between mb-2">
             <span class="text-sm font-black text-slate-900">讯飞在线语音</span>
-            <span v-if="form.provider === 'xfyun'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前生效</span>
+            <span v-if="form.provider === 'xfyun'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前选择</span>
           </div>
           <p class="text-xs text-slate-500 leading-relaxed">中文收银播报，支持小燕等基础发音人；免费服务量以讯飞控制台为准。</p>
         </button>
@@ -85,7 +319,7 @@
                 <div class="text-[10px] text-slate-400">api.fish.audio / v1 / tts</div>
               </div>
             </div>
-            <span v-if="form.provider === 'fish_audio'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前生效</span>
+            <span v-if="form.provider === 'fish_audio'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前选择</span>
           </div>
           <p class="text-xs text-slate-500 leading-relaxed">
             极速流式返回 MP3 二进制音频，低延迟，人声自然流畅，支持丰富音色克隆模型。
@@ -106,7 +340,7 @@
                 <div class="text-[10px] text-slate-400">api.heygen.com / v3 / audio</div>
               </div>
             </div>
-            <span v-if="form.provider === 'heygen'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前生效</span>
+            <span v-if="form.provider === 'heygen'" class="text-xs bg-emerald-600 text-white font-black px-2 py-0.5 rounded-full">当前选择</span>
           </div>
           <p class="text-xs text-slate-500 leading-relaxed">
             国际知名 AI 语音引擎，通过 X-Api-Key 鉴权，支持情感表达与高品质 WAV 音频生成。
@@ -165,6 +399,7 @@
           <div class="relative">
             <input
               v-model="form.apiKey"
+              aria-label="语音服务密钥" autocomplete="new-password"
               :disabled="!isOwner"
               :type="showKey ? 'text' : 'password'"
               :placeholder="hasCurrentProviderKey ? '云端已配置 (留空表示不修改)' : (form.provider === 'xfyun' ? '填写鉴权信息中的 ak-… 密钥' : '请输入当前服务商的 API Key')"
@@ -207,252 +442,21 @@
           <p class="text-[10px] text-slate-400">使用已开通在线语音合成的应用。</p>
         </div>
 
-        <!-- Voice ID / Reference ID -->
-        <div class="md:col-span-2 space-y-1.5">
-          <div class="flex items-center justify-between">
-            <label class="text-xs font-bold text-slate-700">
-              {{ form.provider === 'xfyun' ? '讯飞发音人 (vcn)' : (form.provider === 'fish_audio' ? '参考音色 ID (reference_id)' : '音色 ID (voice_id)') }}
-            </label>
-            <button
-              v-if="isOwner"
-              type="button"
-              @click="resetDefaultVoiceId"
-              class="text-[11px] text-slate-500 hover:text-emerald-700 underline font-medium"
-            >
-              恢复默认
-            </button>
-          </div>
-          <select v-if="form.provider === 'xfyun'" v-model="form.voiceId" :disabled="!isOwner"
-            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:outline-none focus:border-emerald-600 disabled:opacity-60">
-            <option value="x4_xiaoyan">讯飞小燕 · 普通话</option>
-            <option value="x4_yezi">讯飞小露 · 普通话</option>
-            <option value="aisjiuxu">讯飞许久 · 普通话</option>
-            <option value="aisjinger">讯飞小婧 · 普通话</option>
-            <option value="aisbabyxu">讯飞许小宝 · 普通话</option>
-          </select>
-          <input v-else
-            v-model="form.voiceId"
-            :disabled="!isOwner"
-            type="text"
-            :placeholder="defaultVoiceId"
-            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
-          />
-          <p class="text-[10px] text-slate-400">
-            指定用于发音的声音角色编号（可在服务商控制台获取）
-          </p>
-        </div>
       </div>
     </div>
 
-    <!-- 3. 播报文案模板 -->
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
-          <span>3. 业务播报文案模板</span>
-        </h3>
-        <span class="text-[11px] text-slate-400 font-medium">支持变量：{name} 姓名、{amount} 金额、{balance} 余额</span>
-      </div>
-
-      <div class="space-y-4">
-        <!-- 消费扣款模板 -->
-        <div class="space-y-1.5">
-          <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" v-model="form.events.consume" :disabled="!isOwner" aria-label="消费播报开关">消费成功后播报</label>
-          <div class="flex items-center justify-between">
-            <label class="text-xs font-bold text-slate-700">会员消费扣款播报文案</label>
-            <div class="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                v-for="v in ['{name}', '{amount}', '{balance}']"
-                :key="v"
-                @click="insertVar('consume', v)"
-                class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-mono transition"
-              >
-                +{{ v }}
-              </button>
-            </div>
-          </div>
-          <input
-            v-model="form.templates.consume"
-            aria-label="消费播报语句" maxlength="200"
-            :disabled="!isOwner"
-            type="text"
-            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600 disabled:opacity-60"
-          />
-        </div>
-
-        <!-- 充值成功模板 -->
-        <div class="space-y-1.5">
-          <label class="flex items-center gap-2 text-sm font-bold"><input type="checkbox" v-model="form.events.recharge" :disabled="!isOwner" aria-label="充值播报开关">充值成功后播报</label>
-          <div class="flex items-center justify-between">
-            <label class="text-xs font-bold text-slate-700">会员充值到账播报文案</label>
-            <div class="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                v-for="v in ['{name}', '{amount}', '{balance}', '{gift}', '{totalCredit}']"
-                :key="v"
-                @click="insertVar('recharge', v)"
-                class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-mono transition"
-              >
-                +{{ v }}
-              </button>
-            </div>
-          </div>
-          <input
-            v-model="form.templates.recharge"
-            aria-label="充值播报语句" maxlength="200"
-            :disabled="!isOwner"
-            type="text"
-            class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600 disabled:opacity-60"
-          />
-        </div>
-        <p class="text-xs text-slate-500">充值的 {amount} 为实付金额，{gift} 为赠送金额，{totalCredit} 为合计入账。关闭对应开关即可暂停该类播报。</p>
-      </div>
-    </div>
-
-    <!-- 4. 试听测试与音量控制 -->
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-black text-slate-800 flex items-center gap-2">
-          <span>4. 实时试听测试与音量调节</span>
-        </h3>
-        <div class="flex items-center gap-2">
-          <span class="text-xs text-slate-500 font-bold">音量: {{ Math.round(form.volume * 100) }}%</span>
-          <input
-            v-model.number="form.volume"
-            aria-label="播报音量" :disabled="!isOwner"
-            type="range"
-            min="0.1"
-            max="1.0"
-            step="0.05"
-            class="w-24 accent-emerald-600 cursor-pointer"
-          />
-        </div>
-      </div>
-
-      <div class="space-y-3">
-        <div class="flex flex-col sm:flex-row gap-3">
-          <input
-            v-model="testText"
-            type="text"
-            placeholder="输入需要试听的测试文本..."
-            class="flex-1 h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600"
-            @keyup.enter="handleTestPlay"
-          />
-          <button
-            type="button"
-            :disabled="testStatus !== 'idle' || !testText.trim()"
-            @click="handleTestPlay"
-            class="h-11 px-6 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-md shadow-emerald-900/20 disabled:opacity-50 shrink-0"
-          >
-            <span v-if="testStatus === 'synthesizing'" class="animate-spin text-sm">⏳</span>
-            <span v-else-if="testStatus === 'playing'" class="animate-pulse text-sm">🔊</span>
-            <span v-else>▶</span>
-            <span>{{ testStatus === 'synthesizing' ? '合成中...' : (testStatus === 'playing' ? '正在播放中' : '试听测试') }}</span>
-          </button>
-          <button
-            v-if="testStatus !== 'idle'"
-            type="button"
-            @click="handleStopPlay"
-            class="h-11 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition shrink-0"
-          >
-            ⏹ 停止
-          </button>
-        </div>
-
-        <!-- 本区即时状态与错误反馈 -->
-        <div
-          v-if="testMessage"
-          class="p-3 rounded-xl text-xs font-bold transition flex items-center justify-between"
-          :class="testMessageType === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'"
-        >
-          <div class="flex items-center gap-2">
-            <span>{{ testMessageType === 'success' ? '✅' : '⚠️' }}</span>
-            <span>{{ testMessage }}</span>
-          </div>
-          <button type="button" @click="testMessage = ''" class="text-slate-400 hover:text-slate-600">✕</button>
-        </div>
-        <p class="text-[11px] text-slate-400">
-          💡 点击试听测试将实时调用后端合成接口验证当前的 API Key、服务商与音色 ID，确认生效后点击下方保存。
-        </p>
-      </div>
-    </div>
-
-    <section v-if="isOwner" class="bg-white p-6 rounded-2xl border border-slate-200 space-y-4">
-      <h3 class="font-bold text-slate-900">天猫精灵语音记账</h3>
-      <p class="text-xs text-slate-500">通过已校验平台身份的签名网关接入。启用前请配置记账账号、设备和新的随机签名密钥。</p>
-      <p v-if="webhookUrl" class="text-xs break-all">服务接口：<code>{{ webhookUrl }}</code><button type="button" @click="copyValue(webhookUrl, '接口地址')" class="ml-2 text-emerald-700">复制接口地址</button></p>
-      <label class="flex gap-2 text-sm"><input type="checkbox" v-model="ali.enabled" aria-label="天猫精灵开关">启用语音查询与记账</label>
-      <label class="block text-sm">记账账号
-        <select v-model="ali.actorId" aria-label="天猫精灵记账账号" class="block w-full border rounded-lg p-2 mt-1">
-          <option value="">请选择在用店主或收银员</option>
-          <option v-for="user in voiceActors" :key="user.id" :value="user.id">{{ user.displayName }}（{{ user.role === 'owner' ? '店主' : '收银员' }}）</option>
-        </select>
-      </label>
-      <label class="block text-sm">签名密钥
-        <input type="password" v-model="ali.token" aria-label="天猫精灵签名密钥" autocomplete="new-password" maxlength="100" :placeholder="aliHasToken ? '已配置；留空保留' : '32–100 位随机字符'" class="block w-full border rounded-lg p-2 mt-1">
-      </label>
-      <button type="button" @click="generateSigningSecret" class="text-sm text-emerald-700">生成新签名密钥</button>
-      <p v-if="generatedSecret" class="text-xs break-all">请复制到签名网关后保存：<code>{{ generatedSecret }}</code></p>
-      <button v-if="generatedSecret" type="button" @click="copyValue(generatedSecret, '签名密钥')" class="text-sm text-emerald-700">复制签名密钥</button>
-      <label class="block text-sm">允许的设备标识（每行一个）
-        <textarea v-model="aliDevices" aria-label="天猫精灵设备白名单" rows="3" class="block w-full border rounded-lg p-2 mt-1" />
-      </label>
-      <div class="rounded-xl border border-slate-200 p-4 space-y-3">
-        <div class="flex items-center justify-between gap-3">
-          <h4 class="text-sm font-bold text-slate-900">待绑定音箱</h4>
-          <button type="button" @click="loadAliGenieDevices" :disabled="isLoadingDevices || isSaving"
-            class="text-sm text-emerald-700 disabled:text-slate-400">{{ isLoadingDevices ? '正在刷新…' : '刷新待绑定音箱' }}</button>
-        </div>
-        <p class="text-xs text-slate-500">先在开放平台开启真机测试，再用音箱调用当前技能，然后点击刷新。选择音箱并保存配置后完成绑定。* 不能放行所有设备。</p>
-        <p v-if="devicesChecked && !candidateDevices.length" class="text-xs text-slate-500">暂未发现待绑定音箱。请确认真机测试已开启、接口密钥配置一致，再用音箱调用技能。网页在线测试没有真实设备标识。</p>
-        <div v-for="device in candidateDevices" :key="device.deviceOpenId" class="rounded-lg bg-slate-50 p-3 space-y-2">
-          <p class="text-xs text-slate-500">最近调用：{{ new Date(device.lastSeenAt).toLocaleString() }}</p>
-          <p class="text-xs font-mono break-all text-slate-700">{{ device.deviceOpenId }}</p>
-          <div class="flex flex-wrap gap-4 text-sm">
-            <button type="button" @click="copyValue(device.deviceOpenId, '设备标识')" class="text-emerald-700">复制设备标识</button>
-            <button type="button" @click="addAliGenieDevice(device.deviceOpenId)" :disabled="stagedDeviceIds.includes(device.deviceOpenId)"
-              class="text-emerald-700 disabled:text-slate-400">{{ stagedDeviceIds.includes(device.deviceOpenId) ? '已加入，保存后生效' : '加入允许设备' }}</button>
-          </div>
-        </div>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <label class="block text-sm">平台域名校验文件名
-          <input type="text" v-model="ali.verificationFile" maxlength="100" placeholder="平台提供的校验文件名.txt" class="block w-full border rounded-lg p-2 mt-1 text-xs">
-        </label>
-        <label class="block text-sm">平台域名校验文件内容
-          <input type="text" v-model="ali.verificationContent" maxlength="200" placeholder="校验文本内容（直接保存在数据库中）" class="block w-full border rounded-lg p-2 mt-1 text-xs">
-        </label>
-      </div>
-      <p class="text-xs text-slate-500">保存后还需在天猫精灵开放平台配置技能、意图和接口。平台网页试听缺少真实设备身份时只验证对话，实际记账请使用白名单内的音箱。</p>
-    </section>
-
-    <!-- 底部保存按钮 -->
-    <div v-if="isOwner" class="flex justify-end gap-3 pt-2">
-      <button
-        type="button"
-        @click="loadConfig"
-        :disabled="isSaving"
-        class="h-11 px-5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition disabled:opacity-50"
-      >
-        {{ configChanged ? '重新加载配置' : '取消修改' }}
-      </button>
-      <button
-        type="button"
-        @click="handleSave"
-        :disabled="isSaving"
-        class="h-11 px-8 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition shadow-lg shadow-emerald-900/30 flex items-center gap-2 disabled:opacity-50"
-      >
-        <span v-if="isSaving" class="animate-spin">⏳</span>
-        <span>{{ isSaving ? '保存中...' : '保存播报配置' }}</span>
-      </button>
-    </div>
+    </details>
     </fieldset>
+  </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { Volume2 } from 'lucide-vue-next';
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue';
 const props = defineProps({
+  active: { type: Boolean, default: true },
+  online: { type: Boolean, default: true },
   api: { type: Object, required: true },
   player: { type: Object, required: true },
   user: { type: Object, default: null },
@@ -460,7 +464,7 @@ const props = defineProps({
   serverUrl: { type: String, default: () => globalThis.location?.origin || '' },
   copyText: { type: Function, default: text => navigator.clipboard.writeText(text) }
 });
-const emit = defineEmits(['saved']);
+const emit = defineEmits(['saved', 'reconnect']);
 
 const DEFAULTS = {
   xfyun: { apiUrl: 'wss://tts-api.xfyun.cn/v2/tts', model: '', voiceId: 'x4_xiaoyan', appId: '' },
@@ -478,6 +482,9 @@ const DEFAULTS = {
 
 const isOwner = computed(() => props.user?.role === 'owner');
 const webhookUrl = computed(() => props.serverUrl ? props.serverUrl + '/api/v1/voice/aligenie' : '');
+const savedForm = ref('');
+const draftSignature = () => JSON.stringify({ form, ali, devices: aliDevices.value });
+const dirty = computed(() => loaded.value && savedForm.value !== draftSignature());
 const loaded = ref(false), isLoading = ref(false), configVersion = ref(null), configChanged = ref(false);
 let alive = true, loadSequence = 0, tipTimer = null, previewSequence = 0;
 
@@ -582,7 +589,7 @@ function selectProvider(provider) {
 }
 
 function toggleEnabled() {
-  if (!isOwner.value || !loaded.value || isLoading.value || isSaving.value) return;
+  if (!props.online || !isOwner.value || !loaded.value || isLoading.value || isSaving.value) return;
   form.enabled = !form.enabled;
 }
 
@@ -606,7 +613,7 @@ function insertVar(type, variable) {
 }
 
 async function loadConfig() {
-  if (isSaving.value) return;
+  if (isSaving.value || !props.online) return;
   deviceLoadSequence++; candidateDevices.value = []; devicesChecked.value = false; isLoadingDevices.value = false;
   const sequence = ++loadSequence;
   loaded.value = false; isLoading.value = true; configChanged.value = false;
@@ -639,6 +646,7 @@ async function loadConfig() {
     ali.verificationFile = data.aligenie?.verificationFile || '';
     ali.verificationContent = data.aligenie?.verificationContent || '';
     voiceActors.value = users.filter(user => user.active && user.role !== 'viewer');
+    savedForm.value = draftSignature();
     loaded.value = true;
   } catch (err) {
     if (alive && sequence === loadSequence) showTip('加载语音配置失败: ' + err.message, 'error');
@@ -648,7 +656,7 @@ async function loadConfig() {
 }
 
 async function handleTestPlay() {
-  if (!loaded.value || isSaving.value || testStatus.value !== 'idle') return;
+  if (!props.active || !props.online || !loaded.value || isSaving.value || testStatus.value !== 'idle') return;
   const sequence = ++previewSequence;
   if (!testText.value.trim()) {
     showTestTip('请输入需要试听的测试文本', 'error');
@@ -709,7 +717,7 @@ function handleStopPlay() {
 }
 
 async function handleSave() {
-  if (!isOwner.value || !loaded.value || isLoading.value || isSaving.value) return;
+  if (!props.online || !isOwner.value || !loaded.value || isLoading.value || isSaving.value) return;
   handleStopPlay();
   isSaving.value = true;
   message.value = '';
@@ -745,6 +753,7 @@ async function handleSave() {
     serverXfyunAppId.value = result.appId || form.appId;
     savedKeyProvider.value = result.provider || form.provider;
     form.apiKey = ''; ali.token = ''; generatedSecret.value = ''; aliHasToken.value = Boolean(result.aligenie?.hasToken);
+    savedForm.value = draftSignature();
     props.player.stop();
     emit('saved', result);
     showTip('语音播报配置已成功保存！', 'success');
@@ -758,12 +767,29 @@ async function handleSave() {
   }
 }
 
-onMounted(() => {
-  loadConfig();
-});
+onMounted(() => { if (props.online) loadConfig(); });
+watch(() => props.online, online => { if (online && !loaded.value) void loadConfig(); if (!online) stopPreview(); });
+watch(() => props.active, active => { if (!active) stopPreview(); });
+
+function stopPreview() {
+  previewSequence++;
+  props.player.stop();
+  testStatus.value = 'idle';
+}
 
 onUnmounted(() => {
   alive = false; loadSequence++; previewSequence++; deviceLoadSequence++; clearTimeout(tipTimer);
   props.player.stop();
 });
 </script>
+
+<style scoped>
+.voice-header, .voice-header h2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.voice-switch { min-width: 44px; min-height: 44px; display: grid; place-items: center; border: 0; padding: 0; background: transparent; }
+.voice-switch-track { display: block; width: 44px; height: 24px; padding: 2px; border-radius: 14px; background: #cbd5e1; }
+.voice-switch-track > span { display: block; width: 20px; height: 20px; border-radius: 50%; background: white; transition: transform .15s; }
+.voice-switch[aria-checked="true"] .voice-switch-track { background: #167c68; }
+.voice-switch[aria-checked="true"] .voice-switch-track > span { transform: translateX(20px); }
+.voice-advanced { border: 1px solid #e2e8f0; border-radius: 14px; background: white; padding: 8px 12px; }
+.voice-advanced > summary, .voice-template > summary { min-height: 44px; padding-block: 8px; font-size: 14px; font-weight: 600; color: #167c68; }
+</style>

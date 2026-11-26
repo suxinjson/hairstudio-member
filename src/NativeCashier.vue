@@ -50,7 +50,7 @@
         <div v-show="!noticesOpen" class="book-stack">
           <RelationalWorkbench ref="workbench" :workspace="workspace" :identity="identity" :owner="owner" :writable="canWrite"
             :profile-writable="canWrite && (standalone || state.online)" :feature="feature" :announce="announce" :backup="standalone ? archive : null"
-            :store-name="state.storeProfile.name" :connection-label="connectionLabel" :online="state.online" :can-update="!standalone" :copy-text="copyText"
+            :store-name="state.storeProfile.name" :member-notes-label="state.storeProfile.memberNotesLabel" :connection-label="connectionLabel" :online="state.online" :can-update="!standalone" :copy-text="copyText"
             v-model:search-query="headerSearchQuery" v-model:balance-filter="headerCustomerFilter">
             <template #connection>
               <RelationalNativeSync v-if="workspace.state.book && !standalone" :workspace="workspace" :online="state.online" :owner="owner" @reconnect="resume" />
@@ -81,11 +81,11 @@
               </section>
             </template>
             <template #store>
-              <StoreSettings v-if="feature('settings')" :profile="state.storeProfile" :can-edit="owner && !standalone && state.online"
-                :load-profile="standalone ? undefined : session.loadStoreProfile" :save-profile="session.saveStoreProfile" />
+              <StoreSettings v-if="feature('settings')" :profile="state.storeProfile" :can-edit="owner && (standalone || state.online)" :readonly-reason="owner ? '连接服务器后可修改云端门店设置。' : '仅店主可以修改门店设置。'"
+                :load-profile="session.loadStoreProfile" :save-profile="session.saveStoreProfile" />
             </template>
-            <template #voice>
-              <VoiceSettings v-if="feature('voice') && !standalone && state.online" :api="session" :player="voice"
+            <template #voice="{ active: voiceActive }">
+              <VoiceSettings v-if="feature('voice') && !standalone" :active="voiceActive" :api="session" :player="voice" :online="state.online" @reconnect="resume"
                 :user="state.user" :server-url="state.serverUrl" :copy-text="copyText" :can-read-users="feature('staff')" @saved="voice.stop()" />
             </template>
             <template #update>
@@ -141,7 +141,9 @@ const identity = computed(() => JSON.stringify([state.user?.storeId, state.user?
 const feature = name => allowsFeature(state.deviceAccess.features, name);
 const copyText = text => cloudDeviceBridge.copyText({ text });
 const workbench = ref(null), noticesOpen = ref(false), message = ref('');
-const headerSearchQuery = ref(''), headerCustomerFilter = ref('all'), headerFilterOpen = ref(false);
+const memberSearchQuery = ref(''), ledgerSearchQuery = ref('');
+const headerSearchQuery = computed({ get: () => workbench.value?.activeTab === 'ledger' ? ledgerSearchQuery.value : memberSearchQuery.value, set: value => { if (workbench.value?.activeTab === 'ledger') ledgerSearchQuery.value = value; else memberSearchQuery.value = value; } });
+const headerCustomerFilter = ref('all'), headerFilterOpen = ref(false);
 const accountBusy = ref(false), origin = ref(DEFAULT_CLOUD_SERVER_URL), username = ref(''), password = ref('');
 const foregroundToken = ref(0), autoStartDownload = ref(false), confirmation = shallowRef(null);
 useModalLayers({ onEscape: () => { if (closeTop()) backCount = 0; } });
@@ -162,7 +164,7 @@ const systemItems = computed(() => systemNotices({ state: noticeState.value, sto
   availableUpdate: updateCheck.availableUpdate.value }));
 const notices = useNotices({ state: noticeState, systemItems, ledgerReady: computed(() => Boolean(balances.value)) });
 watch([identity, unlocked], () => { voice.stop(); password.value = ''; balances.value = null; noticesOpen.value = false; finishConfirm(false); });
-watch(identity, () => { headerSearchQuery.value = ''; headerCustomerFilter.value = 'all'; headerFilterOpen.value = false; });
+watch(identity, () => { memberSearchQuery.value = ''; ledgerSearchQuery.value = ''; headerCustomerFilter.value = 'all'; headerFilterOpen.value = false; });
 watch(() => [workspace.state.revision, identity.value, unlocked.value, feature('reports')], async (_, _old, onCleanup) => {
   if (!unlocked.value || !workspace.state.replicaReady || !feature('reports')) return;
   let live = true; onCleanup(() => { live = false; });

@@ -5,7 +5,7 @@
       <!-- 标题行与新建按钮 -->
       <div class="header-row flex items-center justify-between gap-2.5">
         <div class="header-brand flex items-center gap-2.5 min-w-0 flex-1">
-          <span class="brand-icon w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-600 text-white flex items-center justify-center font-black text-lg shadow-xs shrink-0" aria-hidden="true">💳</span>
+          <span class="brand-icon w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-600 text-white flex items-center justify-center font-black text-lg shadow-xs shrink-0" aria-hidden="true"><CreditCard :size="22" /></span>
           <div class="brand-copy min-w-0">
             <h1 class="brand-title text-base font-black text-slate-900 tracking-tight m-0 truncate leading-tight" :aria-label="storeName || '会员管家'" :title="storeName || '会员管家'">
               {{ storeName || '会员管家' }}
@@ -97,7 +97,7 @@
 
 <script setup>
 import { computed } from 'vue';
-import { Bell, Search } from 'lucide-vue-next';
+import { Bell, Search, CreditCard } from 'lucide-vue-next';
 import CustomerFilter from './CustomerFilter.vue';
 
 const props = defineProps({

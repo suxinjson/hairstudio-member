@@ -65,7 +65,6 @@
         :class="disabled || !isValidAmount ? 'bg-slate-400 opacity-50 cursor-not-allowed shadow-none' : confirmColorClass"
       >
         <span class="text-lg font-black">{{ confirmText }}</span>
-        <span v-if="isValidAmount" class="text-xs font-semibold opacity-90 mt-0.5">确认提交</span>
       </button>
 
       <!-- 点号 . -->
@@ -109,7 +108,7 @@ const props = defineProps({
   },
   confirmText: {
     type: String,
-    default: '确认扣款'
+    default: '核对扣款'
   },
   theme: {
     type: String,

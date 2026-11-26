@@ -99,7 +99,7 @@ body {
   opacity: 0.55;
 }
 
-.settings-page-heading { display: grid; gap: 12px; }
+.settings-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .settings-back { justify-self: start; color: var(--app-accent); font-weight: 700; min-height: 44px; }
 .settings-status { color: var(--app-accent); background: #e5f4ee; border-radius: 20px; padding: 5px 10px; font-size: 14px; }
 .settings-menu { overflow: hidden; }
@@ -151,7 +151,7 @@ body {
 .header-search { margin-top: 8px; }
 .header-search input { height: 48px; }
 
-.ledger-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 13px; background: #e5ece8; }
+.ledger-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 13px; background: #e5ece8; }
 .ledger-tabs button { min-height: 44px; padding: 10px 4px; border-radius: 10px; font-size: 15px; font-weight: 700; color: #52626a; transition: background-color 0.15s ease; }
 .ledger-tabs button[aria-selected="true"] { color: #0b5e4a; background: white; font-weight: 900; box-shadow: 0 2px 8px rgba(16, 124, 104, 0.14), 0 1px 2px rgba(0, 0, 0, 0.04); }
 
@@ -527,7 +527,6 @@ body {
 }
 
 @media (max-width: 520px) {
-  .dashboard-card .grid.grid-cols-2,
   .member-card .grid.grid-cols-2,
   .modal-dialog .grid.grid-cols-2 {
     grid-template-columns: minmax(0, 1fr);
@@ -542,19 +541,6 @@ body {
     width: 100%;
     text-align: left;
     padding-left: 66px;
-  }
-
-  .app-shell [class~="rounded-t-[32px]"] .grid.grid-cols-2 {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  /* 抽屉整体滚动，短屏也能到达底部操作按钮。 */
-  .app-shell [class~="rounded-t-[32px]"] > * {
-    flex-shrink: 0;
-  }
-
-  .app-shell [class~="rounded-t-[32px]"] > .overflow-y-auto {
-    overflow-y: visible;
   }
 
   .modal-header {
@@ -759,7 +745,6 @@ body {
 .consume-sheet .keypad-function { background: #e5ece8; font-size: 16px; }
 .consume-sheet .keypad-confirm { grid-row: span 2; min-width: 0; padding: 8px 4px; border-radius: 12px; letter-spacing: 0; }
 .consume-sheet .keypad-confirm > span:first-child { max-width: 2em; font-size: 18px; line-height: 1.4; }
-.consume-sheet .keypad-confirm > span:last-child { font-size: 11px; }
 @media (max-width: 360px) {
   .consume-header { padding-left: 12px; padding-right: 12px; }
   .consume-header .modal-title { gap: 6px; font-size: 18px; }
@@ -1232,45 +1217,6 @@ body {
   padding: 20px;
 }
 
-/* ── 会员列表：更大姓名和余额 ── */
-.customer-identity strong {
-  font-size: 22px;
-  font-weight: 800;
-}
-.customer-phone {
-  font-size: 16px;
-}
-.customer-visit {
-  font-size: 14px;
-}
-.customer-balance {
-  font-size: 24px;
-  font-weight: 800;
-}
-.customer-balance-label {
-  font-size: 14px;
-}
-.customer-avatar {
-  width: 48px;
-  height: 48px;
-  border-radius: 15px;
-  font-size: 23px;
-}
-.customer-consume {
-  min-height: 52px;
-  min-width: 96px;
-  padding: 10px 20px;
-  font-size: 17px;
-  font-weight: 800;
-  border-radius: 13px;
-}
-.customer-row + .customer-row {
-  border-top: 1px solid #e8efeb;
-}
-.customer-list {
-  border-radius: 20px;
-}
-
 /* ── 空状态提示 ── */
 .customer-empty h3 {
   font-size: 20px;
@@ -1307,10 +1253,6 @@ body {
   min-width: 112px;
   font-size: 18px;
   font-weight: 800;
-}
-.consume-sheet .keypad-key {
-  height: 60px;
-  font-size: 27px;
 }
 
 /* ── 充值抽屉 ── */
@@ -1601,38 +1543,38 @@ body {
 /* ── 移动端极致适配：防截断、紧凑优雅 ── */
 @media (max-width: 480px) {
   .customer-row {
-    grid-template-columns: minmax(0, 1fr) 96px !important;
-    gap: 8px !important;
-    padding: 13px 12px !important;
+    grid-template-columns: minmax(0, 1fr) 96px;
+    gap: 8px;
+    padding: 13px 12px;
   }
   .customer-open {
-    min-width: 0 !important;
-    gap: 10px !important;
+    min-width: 0;
+    gap: 10px;
   }
   .customer-identity {
-    min-width: 0 !important;
-    overflow: hidden !important;
+    min-width: 0;
+    overflow: hidden;
   }
   .customer-identity strong,
   .customer-phone,
   .customer-notes,
   .customer-visit {
-    white-space: nowrap !important;
-    overflow: hidden !important;
-    text-overflow: ellipsis !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .customer-row-actions {
-    min-width: 0 !important;
-    flex-shrink: 0 !important;
+    min-width: 0;
+    flex-shrink: 0;
   }
   .customer-consume {
-    min-height: 36px !important;
-    min-width: 80px !important;
-    padding: 6px 14px !important;
-    font-size: 14px !important;
+    min-height: 36px;
+    min-width: 80px;
+    padding: 6px 14px;
+    font-size: 14px;
   }
   .customer-balance {
-    font-size: 18px !important;
+    font-size: 18px;
   }
   .member-detail-sheet,
   .consume-sheet,
@@ -1644,22 +1586,22 @@ body {
 
 @media (max-width: 340px) {
   .customer-row {
-    grid-template-columns: minmax(0, 1fr) 88px !important;
-    gap: 6px !important;
-    padding: 11px 8px !important;
+    grid-template-columns: minmax(0, 1fr) 88px;
+    gap: 6px;
+    padding: 11px 8px;
   }
   .customer-avatar {
-    width: 36px !important;
-    height: 36px !important;
-    font-size: 16px !important;
-    border-radius: 10px !important;
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+    border-radius: 10px;
   }
   .customer-consume {
-    min-width: 72px !important;
-    padding: 5px 10px !important;
-    font-size: 13px !important;
+    min-width: 72px;
+    padding: 5px 10px;
+    font-size: 13px;
   }
   .customer-balance {
-    font-size: 16px !important;
+    font-size: 16px;
   }
 }

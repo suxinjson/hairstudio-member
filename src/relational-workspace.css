@@ -683,3 +683,4 @@
   font-weight: 700;
   box-shadow: 0 2px 6px rgba(22, 124, 104, 0.25);
 }
+.book-hint { color: #64748b; font-size: 12px; line-height: 1.5; }

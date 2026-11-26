@@ -78,7 +78,7 @@ test('owner voice settings use blank secret inputs and clear newly submitted cre
   t.mock.method(adminApi, 'getUsers', async () => [{ ...owner, active: true }]);
   const save = t.mock.method(adminApi, 'saveVoiceConfig', async () => ({ version: 1, hasApiKey: true, aligenie: { hasToken: true } }));
   await mount(VoiceSettings);
-  const secrets = document.querySelectorAll('input[type="password"]');
+  const secrets = [document.querySelector('[aria-label="语音服务密钥"]'), document.querySelector('[aria-label="天猫精灵签名密钥"]')];
   assert.equal(secrets.length, 2); assert.equal(secrets[0].value, ''); assert.equal(secrets[1].value, '');
   secrets[0].value = 'new-provider-key'; secrets[0].dispatchEvent(new window.Event('input', { bubbles: true }));
   secrets[1].value = 'new-signing-secret-' + 'x'.repeat(32); secrets[1].dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -96,9 +96,9 @@ test('switching providers resets API parameters and requires the matching provid
   const preview = t.mock.method(voicePlayer, 'queueSpeak', async () => {});
   await mount(VoiceSettings);
   const chooseProvider = name => [...document.querySelectorAll('div')].find(element => element.textContent.trim() === name).click();
-  await input('input[type="password"]', 'fish-draft-secret');
+  await input('[aria-label="语音服务密钥"]', 'fish-draft-secret');
   chooseProvider('HeyGen'); await flush();
-  const key = document.querySelector('input[type="password"]');
+  const key = document.querySelector('[aria-label="语音服务密钥"]');
   assert.equal(key.value, ''); assert.match(key.placeholder, /当前服务商/);
   const values = [...document.querySelectorAll('input')].map(element => element.value);
   assert.ok(values.includes('https://api.heygen.com/v3/models/audio/tts'));
@@ -107,7 +107,7 @@ test('switching providers resets API parameters and requires the matching provid
   button('试听测试').click(); await flush();
   assert.equal(preview.mock.callCount(), 0);
   assert.match(document.body.textContent, /当前服务商的 API Key/);
-  await input('input[type="password"]', 'heygen-draft-secret');
+  await input('[aria-label="语音服务密钥"]', 'heygen-draft-secret');
   button('试听测试').click(); await flush();
   assert.equal(preview.mock.callCount(), 1);
   assert.equal(preview.mock.calls[0].arguments[1].testOptions.apiKey, 'heygen-draft-secret');

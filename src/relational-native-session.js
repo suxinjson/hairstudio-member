@@ -23,6 +23,7 @@ function parse(value) { return value ? JSON.parse(value) : null; }
 
 export function createRelationalNativeSession({ device = cloudDeviceBridge,
   fetch: send = (...args) => fetch(...args), isOnline = () => globalThis.navigator?.onLine !== false,
+  storage = globalThis.localStorage,
   access = createDeviceAccess({ vault: { async load() { return parse((await device.loadAccess()).access); },
     async save(value) { await device.saveAccess({ access: JSON.stringify(value) }); } } }) } = {}) {
   const state = reactive({ ready: false, user: null, binding: null, deviceId: '', serverUrl: '', online: isOnline(),
@@ -136,7 +137,7 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
           if (cached.mode === 'cloud' && cached.origin === state.binding.origin && typeof cached.refreshToken === 'string' && cached.refreshToken) refreshToken = cached.refreshToken;
           if (refreshToken || localId) {
             state.user = access.cachedUser(); state.syncLoginRequired = false;
-            if (localId) state.storeProfile = normalizeStoreProfile({ name: access.localLicense().storeName });
+            if (localId) state.storeProfile = localProfile();
           }
         }
       }
@@ -190,6 +191,10 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
   }
   const request = (path, init) => requestStream(path, undefined, init);
   const remote = createRelationalRemote({ request });
+  function localProfile() {
+    const raw = storage?.getItem('hairstudio_v2_store_profile:' + state.binding.storeId);
+    return raw ? normalizeStoreProfile(JSON.parse(raw)) : normalizeStoreProfile({ name: access.localLicense().storeName });
+  }
   const session = {
     state, init, request, requestStream, remote, publishAccess,
     authorize({ storeId, mode }) {
@@ -270,10 +275,25 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
     async checkpoint() { await access.checkpoint(); publishAccess(); },
     async downloadAuthorization() { if (!state.user || !isOnline()) throw fault('请联网登录后下载更新', 'ONLINE_REQUIRED'); await refresh(); return accessToken; },
     async loadStoreProfile() {
-      if (state.binding?.mode === 'standalone') return state.storeProfile;
+      if (state.binding?.mode === 'standalone') { session.authorize({ storeId: state.binding.storeId, mode: 'standalone' }); state.storeProfile = localProfile(); return state.storeProfile; }
       const result = await request('/api/v1/store/profile'); state.storeProfile = latestStoreProfile(state.storeProfile, result); return state.storeProfile;
     },
     async saveStoreProfile(profile, expectedVersion) {
+      if (state.binding?.mode === 'standalone') {
+        return serializeVault(async () => {
+          const actor = session.authorize({ storeId: state.binding.storeId, mode: 'standalone' });
+          if (actor.role !== 'owner' || !actor.features?.includes('settings')) throw fault('仅有设置权限的店主可以修改门店资料', 'FORBIDDEN', 403);
+          const current = localProfile();
+          if (expectedVersion !== current.version) throw fault('门店资料已变化，请重新加载后核对', 'STORE_PROFILE_CHANGED');
+          const result = normalizeStoreProfile({ ...profile, version: current.version + 1 });
+          if (!Number.isSafeInteger(result.version) || result.version <= current.version) throw fault('门店资料版本已达上限', 'VERSION_LIMIT');
+          const key = 'hairstudio_v2_store_profile:' + state.binding.storeId, value = JSON.stringify(result);
+          if (!storage) throw new Error('本机设置存储不可用');
+          storage.setItem(key, value);
+          if (storage.getItem(key) !== value) throw new Error('本机设置尚未保存，请重试');
+          state.storeProfile = result; return result;
+        });
+      }
       const result = await request('/api/v1/store/profile', { method: 'PATCH', body: JSON.stringify({ profile, expectedVersion }) });
       state.storeProfile = latestStoreProfile(state.storeProfile, result); return state.storeProfile;
     },
@@ -292,7 +312,7 @@ export function createRelationalNativeSession({ device = cloudDeviceBridge,
     const user = { ...claims.user, storeId: claims.storeId };
     if (!validUser(user) || state.binding?.mode !== 'standalone' || user.storeId !== state.binding.storeId) throw sessionChanged();
     await serializeVault(() => device.saveSession({ session: JSON.stringify({ v: 2, mode: 'standalone', localLicenseId: claims.id, user, deviceId: state.deviceId }) }));
-    localId = claims.id; state.user = user; state.syncLoginRequired = false; state.storeProfile = normalizeStoreProfile({ name: claims.storeName }); publishAccess();
+    localId = claims.id; state.user = user; state.syncLoginRequired = false; state.storeProfile = localProfile(); publishAccess();
   }
   return session;
 }

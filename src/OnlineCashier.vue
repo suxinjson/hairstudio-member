@@ -34,7 +34,7 @@
       </form>
       <RelationalWorkbench v-else ref="workbench" :workspace="workspace" :owner="owner" :writable="writable" :profile-writable="writable"
         :feature="feature" :identity="identity" :announce="announce" :backup="archive"
-        :store-name="adminApi.storeProfile.value?.name || '我的门店'" :connection-label="user.displayName + ' · 网页收银'" :online="true" :copy-text="copyText"
+        :store-name="adminApi.storeProfile.value?.name || '我的门店'" :member-notes-label="adminApi.storeProfile.value?.memberNotesLabel" :connection-label="user.displayName + ' · 网页收银'" :online="true" :copy-text="copyText"
         v-model:search-query="headerSearchQuery" v-model:balance-filter="headerCustomerFilter">
         <template #account>
           <div class="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-xs space-y-3">
@@ -58,8 +58,8 @@
         <template #store>
           <StoreSettingsView v-if="feature('settings')" />
         </template>
-        <template #voice>
-          <VoiceSettingsView v-if="feature('voice') && owner" />
+        <template #voice="{ active: voiceActive }">
+          <VoiceSettingsView v-if="feature('voice') && owner" :active="voiceActive" />
         </template>
       </RelationalWorkbench>
     </main>
@@ -87,7 +87,9 @@ const owner = computed(() => user.value?.role === 'owner'), writable = computed(
 const identity = computed(() => JSON.stringify([user.value?.storeId, user.value?.id, user.value?.role]));
 const feature = name => !adminApi.entitlements.value || allowsFeature(adminApi.entitlements.value.features, name);
 const username = ref(''), password = ref(''), notice = ref(''), busy = ref(false), workbench = ref(null);
-const headerSearchQuery = ref(''), headerCustomerFilter = ref('all'), headerFilterOpen = ref(false);
+const memberSearchQuery = ref(''), ledgerSearchQuery = ref('');
+const headerSearchQuery = computed({ get: () => workbench.value?.activeTab === 'ledger' ? ledgerSearchQuery.value : memberSearchQuery.value, set: value => { if (workbench.value?.activeTab === 'ledger') ledgerSearchQuery.value = value; else memberSearchQuery.value = value; } });
+const headerCustomerFilter = ref('all'), headerFilterOpen = ref(false);
 useModalLayers({ onEscape: () => workbench.value?.goHome() });
 const copyText = text => {
   if (!globalThis.navigator?.clipboard?.writeText) throw new Error('暂时无法复制，请使用可复制的文字核对。');
@@ -103,7 +105,7 @@ const keepActive = () => {
   if (user.value) adminApi.recordActivity();
 };
 watch([identity, locked], () => { password.value = ''; notice.value = ''; voicePlayer.stop(); }, { flush: 'sync' });
-watch(identity, () => { headerSearchQuery.value = ''; headerCustomerFilter.value = 'all'; headerFilterOpen.value = false; });
+watch(identity, () => { memberSearchQuery.value = ''; ledgerSearchQuery.value = ''; headerCustomerFilter.value = 'all'; headerFilterOpen.value = false; });
 onMounted(() => {
   adminApi.setAutoLock(false);
   window.addEventListener('focus', keepActive);

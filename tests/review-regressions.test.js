@@ -178,7 +178,7 @@ test('R05: delayed member A history cannot overwrite member B after closing and 
   ui.button('收起档案').click(); await ui.nextTick(); ui.button(b.name).click(); await until(() => shown('乙会员专属交易'));
   releaseA({ items: [{ id: 'alpha-entry', type: 'consume', deltaCents: '-200', balanceAfterCents: '300', itemsSummary: '甲会员专属交易', occurredAt: '2026-11-25T00:01:00.000Z' }], nextCursor: null });
   for (let i = 0; i < 5; i++) { await new Promise(resolve => setImmediate(resolve)); await ui.nextTick(); }
-  assert.equal(document.querySelector('[aria-label="复制会员姓名"]').textContent.trim(), b.name);
+  assert.equal(document.querySelector('#member-detail-title').textContent.trim(), b.name);
   assert.equal(shown('甲会员专属交易'), false);
   assert.equal(shown('乙会员专属交易'), true);
   evidence(t, { visibleMember: b.name, visibleTransactionOwner: b.name });
@@ -345,7 +345,8 @@ test('R12: selecting today after midnight requests the current UTC+8 business da
   };
   await ui.mount(Reports, { workspace }); await until(() => businessCalls.length === 1);
   now += 86400000;
-  ui.button('今天').click(); await until(() => businessCalls.length === 2);
+  const period = document.querySelector('select[aria-label="统计周期"]');
+  period.value = 'today'; period.dispatchEvent(new window.Event('change', { bubbles: true })); await until(() => businessCalls.length === 2);
   assert.equal(businessCalls[1].from, '2026-11-25T16:00:00.000Z');
   assert.equal(businessCalls[1].to, '2026-11-26T16:00:00.000Z');
   evidence(t, { actualBusinessDate: '2026-11-26', requestedFrom: businessCalls[1].from, requestedTo: businessCalls[1].to, requestedBusinessDate: '2026-11-26' });
@@ -441,7 +442,7 @@ test('read-only accounts have no create action and unavailable ledger permission
   const state = installNativeFixture(['core', 'members', 'cashier'], 'viewer');
   await ui.mount(NativeCashier); await until(() => shown(member().name));
   assert.equal(document.querySelector('button[aria-label="新增会员"]'), null);
-  assert.equal(ui.button('为' + member().name + '扣款').disabled, true);
+  assert.equal(document.querySelector('button[aria-label="为' + member().name + '扣款"]'), null);
   state.deviceAccess.features = ['core', 'members']; await ui.nextTick();
   assert.equal(document.querySelector('button[aria-label="财务流水"]'), null);
   assert.ok(document.querySelector('button[aria-label="账号与设置"]'));
@@ -472,7 +473,8 @@ test('invalid custom ledger dates produce visible feedback without querying a wr
   readOverride = (method, input) => method === 'listLedger' ? (calls.push(input), { items: [], nextCursor: null }) : undefined;
   await ui.mount(Ledger, { workspace, owner: true });
   await until(() => calls.length === 1);
-  ui.button('自选').click(); await ui.nextTick();
+  const period = document.querySelector('select[aria-label="流水时间"]');
+  period.value = 'custom'; period.dispatchEvent(new window.Event('change', { bubbles: true })); await ui.nextTick();
   const dates = document.querySelectorAll('input[type=date]');
   dates[0].value = '2026-11-26'; dates[1].value = '2026-11-25';
   for (const date of dates) date.dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -488,14 +490,15 @@ test('ledger presets use UTC+8, follow midnight on foreground and preserve custo
   readOverride = (method, input) => method === 'listLedger' ? (calls.push(input), { items: [], nextCursor: null }) : undefined;
   await ui.mount(Ledger, { workspace, owner: true });
   await until(() => calls.length === 1);
-  ui.button('近7天').click(); await until(() => calls.length === 2);
+  const period = document.querySelector('select[aria-label="流水时间"]');
+  period.value = 'week'; period.dispatchEvent(new window.Event('change', { bubbles: true })); await until(() => calls.length === 2);
   assert.equal(calls.at(-1).from, '2026-11-19T16:00:00.000Z');
   assert.equal(calls.at(-1).to, '2026-11-26T16:00:00.000Z');
   now += 86400000; window.dispatchEvent(new window.Event('focus'));
   await until(() => calls.length === 3);
   assert.equal(calls.at(-1).from, '2026-11-20T16:00:00.000Z');
   assert.equal(calls.at(-1).to, '2026-11-27T16:00:00.000Z');
-  ui.button('自选').click(); await ui.nextTick();
+  period.value = 'custom'; period.dispatchEvent(new window.Event('change', { bubbles: true })); await ui.nextTick();
   const dates = document.querySelectorAll('input[type=date]');
   dates[0].value = '2026-11-10'; dates[1].value = '2026-11-11';
   for (const date of dates) date.dispatchEvent(new window.Event('input', { bubbles: true }));
@@ -521,11 +524,11 @@ test('the daily overview follows a new business day on foreground and preserves 
   };
   installNativeFixture();
   await ui.mount(NativeCashier); await until(() => shown(member().name));
-  ui.button('财务流水').click(); await ui.nextTick(); ui.button('今日概览').click();
+  ui.button('财务流水').click(); await ui.nextTick(); ui.button('经营概览').click();
   await until(() => calls.length === 1);
   now += 86400000; window.dispatchEvent(new window.Event('focus'));
   await until(() => calls.length >= 2);
   assert.equal(calls.at(-1).from, '2026-11-25T16:00:00.000Z');
   assert.equal(calls.at(-1).to, '2026-11-26T16:00:00.000Z');
-  assert.ok(shown('今日 2026-11-26'));
+  await until(() => shown('今日 2026-11-26'));
 });

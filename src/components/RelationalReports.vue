@@ -2,28 +2,12 @@
   <section class="book-stack space-y-3.5" aria-label="经营报表">
     <!-- 统计周期快速切换与日期筛选 -->
     <div class="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs">
-      <div class="flex items-center justify-between gap-2 mb-2.5">
-        <h3 class="text-xs font-black text-slate-700 m-0 flex items-center gap-1.5">
-          <span>📅</span>
-          <span>统计周期</span>
-        </h3>
-        <span class="text-[11px] text-slate-400 font-medium">营业日 UTC+8</span>
-      </div>
-
-      <!-- 快速周期胶囊切换 -->
-      <div class="report-period-options" role="tablist" aria-label="统计周期快捷切换">
-        <button
-          v-for="p in periodOptions"
-          :key="p.value"
-          type="button"
-          role="tab"
-          :aria-selected="period === p.value"
-          class="px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0"
-          :class="period === p.value ? 'bg-emerald-700 text-white shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'"
-          @click="selectPeriod(p.value)"
-        >
-          {{ p.label }}
-        </button>
+      <div class="report-filter-toolbar">
+        <label for="report-period">统计周期</label>
+        <select id="report-period" v-model="period" aria-label="统计周期" @change="selectPeriod(period)">
+          <option v-for="p in periodOptions" :key="p.value" :value="p.value">{{ p.label }}</option>
+        </select>
+        <small>营业日 UTC+8</small>
       </div>
 
       <!-- 自选日期区间 -->
@@ -47,69 +31,12 @@
     </div>
 
     <template v-if="result">
-      <!-- 1. 核心经营业绩 KPI 四宫格 -->
-      <div class="report-kpis grid grid-cols-2 gap-2.5">
-        <!-- 充值到账 -->
-        <div class="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs">
-          <span class="text-[11px] font-bold text-slate-500 flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>充值到账额度</span>
-          </span>
-          <strong class="block text-lg font-black text-emerald-800 mt-1 leading-tight">
-            ¥{{ displayCents(result.summary.netRechargeCreditCents) }}
-          </strong>
-          <small class="block text-[11px] text-slate-400 mt-1 truncate">
-            实收 ¥{{ displayCents(result.summary.actualPayCents) }} · 赠 ¥{{ displayCents(result.summary.giftCents) }}
-          </small>
-        </div>
-
-        <!-- 消费扣款 -->
-        <div class="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs">
-          <span class="text-[11px] font-bold text-slate-500 flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-rose-500"></span>
-            <span>消费扣款金额</span>
-          </span>
-          <strong class="block text-lg font-black text-rose-700 mt-1 leading-tight">
-            ¥{{ displayCents(result.summary.netConsumptionCents) }}
-          </strong>
-          <small class="block text-[11px] text-slate-400 mt-1 truncate">
-            {{ result.summary.consumeCount }} 笔 · {{ result.summary.consumeMemberCount }} 人消费
-          </small>
-        </div>
-
-        <!-- 笔均消费 -->
-        <div class="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs">
-          <span class="text-[11px] font-bold text-slate-500 flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-            <span>笔均消费（客单价）</span>
-          </span>
-          <strong class="block text-lg font-black text-slate-800 mt-1 leading-tight">
-            ¥{{ displayCents(result.summary.averageConsumeCents) }}
-          </strong>
-          <small class="block text-[11px] text-slate-400 mt-1 truncate">
-            消费毛额 ÷ 笔数
-          </small>
-        </div>
-
-        <!-- 新增在用会员 -->
-        <div class="bg-white border border-slate-200/90 rounded-2xl p-3.5 shadow-xs">
-          <span class="text-[11px] font-bold text-slate-500 flex items-center gap-1">
-            <span class="w-2 h-2 rounded-full bg-purple-500"></span>
-            <span>新增在用会员</span>
-          </span>
-          <strong class="block text-lg font-black text-purple-700 mt-1 leading-tight">
-            {{ result.summary.newActiveMemberCount }} <span class="text-xs font-normal text-slate-500">人</span>
-          </strong>
-          <small class="block text-[11px] text-slate-400 mt-1 truncate">
-            期间登记且在用
-          </small>
-        </div>
-      </div>
-
+      <DashboardSummary :summary="result.summary" :balances="result.balances" :period-label="period === 'today' ? '今日 ' + first : first + ' 至 ' + last" />
+      <p class="book-hint">充值、消费均按当前区间的交易与冲正净额核算。原消费 {{ result.summary.consumeCount }} 笔，冲正消费 {{ result.summary.reversedConsumeCount || 0 }} 笔；新增在用会员 {{ result.summary.newActiveMemberCount }} 人。</p>
       <!-- 2. 充值与消费趋势图表 (SVG 走势图) -->
       <section class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs">
         <div class="flex items-center justify-between gap-2 mb-3">
-          <h3 class="text-sm font-black text-slate-800 m-0">充值与消费趋势</h3>
+          <h3 class="text-sm font-black text-slate-800 m-0">充值与消费趋势（{{ result.trendUnit === 'month' ? '按月' : '按日' }}）</h3>
           <div class="flex items-center gap-3 text-[11px] font-bold">
             <span class="flex items-center gap-1 text-emerald-700">
               <span class="w-2.5 h-1 bg-emerald-600 rounded-full"></span>
@@ -192,7 +119,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in result.trend" :key="row.date" class="border-b border-slate-50 font-medium">
+                <tr v-for="row in result.daily" :key="row.date" class="border-b border-slate-50 font-medium">
                   <td class="py-1.5 px-2 text-slate-800 font-semibold">{{ row.date }}</td>
                   <td class="py-1.5 px-2 text-emerald-700">¥{{ displayCents(row.netRechargeCreditCents) }}</td>
                   <td class="py-1.5 px-2 text-rose-600">¥{{ displayCents(row.netConsumptionCents) }}</td>
@@ -346,9 +273,10 @@
 <script setup>
 import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue';
 import { displayAbsoluteCents, displayCents, businessDays, todayBusiness, BUSINESS_OFFSET } from '../relational-presentation.js';
+import DashboardSummary from './DashboardSummary.vue';
 import { useRelationalPage } from '../composables/useRelationalPage.js';
 
-const props = defineProps({ workspace: Object });
+const props = defineProps({ workspace: Object, initialPeriod: { type: String, default: 'month' } });
 
 const periodOptions = [
   { value: 'month', label: '本月' },
@@ -359,10 +287,10 @@ const periodOptions = [
   { value: 'custom', label: '自选' }
 ];
 
-const period = ref('month');
+const period = ref(props.initialPeriod);
 const initialDay = todayBusiness();
 const last = ref(initialDay);
-const first = ref(initialDay.slice(0, 7) + '-01');
+const first = ref(props.initialPeriod === 'today' ? initialDay : initialDay.slice(0, 7) + '-01');
 const kind = ref('payment');
 const result = shallowRef(null);
 const loading = ref(false);
@@ -373,6 +301,7 @@ onScopeDispose(() => {
   sequence++;
   clearTimeout(rolloverTimer);
   document.removeEventListener('visibilitychange', onForeground);
+  window.removeEventListener('focus', onForeground);
 });
 
 const breakdown = useRelationalPage(cursor => props.workspace.read('reportBreakdown', { ...scope, kind: kind.value, cursor, limit: 25 }));
@@ -506,6 +435,13 @@ function onForeground() {
 }
 onMounted(() => {
   document.addEventListener('visibilitychange', onForeground);
+  window.addEventListener('focus', onForeground);
   scheduleRollover();
 });
 </script>
+
+<style scoped>
+.report-filter-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
+.report-filter-toolbar select { flex: 1; min-width: 80px; min-height: 44px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; padding: 8px; }
+.report-filter-toolbar small { color: #64748b; font-size: 11px; }
+</style>

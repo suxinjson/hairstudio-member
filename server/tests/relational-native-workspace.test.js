@@ -65,6 +65,11 @@ test('native login and paged first sync fence offline writing until complete, th
     state = create(); await state.session.init(); await state.session.heartbeat(); await connect(); await state.book.sync();
     assert.equal(state.book.state.replicaReady, true);
     assert.equal((await state.book.read('getMember', opening.id)).balanceCents, '1000');
+    const unchangedRevision = state.book.state.revision;
+    await state.book.sync(); assert.equal(state.book.state.revision, unchangedRevision, 'no-change sync must not invalidate member pages');
+    await ledger.updateMember(owner, opening.id, { name: opening.name, notes: '同步后变化', expectedVersion: '0' }, { id: randomUUID(), storeId, ledgerEpoch });
+    await state.book.sync(); assert.ok(state.book.state.revision > unchangedRevision);
+    assert.equal((await state.book.read('getMember', opening.id)).notes, '同步后变化');
     online = false; await state.session.heartbeat();
     const original = await state.book.submit('command', debit, state.book.getScope());
     assert.equal(original.balanceAfterCents, '750'); assert.deepEqual(dispatched, []);

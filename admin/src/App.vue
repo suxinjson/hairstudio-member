@@ -100,7 +100,7 @@
             <button v-if="workspace.state.status !== 'loading'" type="button" @click="workspace.connect()">重试连接</button>
           </div>
           <RelationalReports v-else-if="activeTab === 'dashboard'" :workspace="workspace" />
-          <RelationalMembers v-else-if="activeTab === 'members'" :workspace="workspace" :owner="owner" :writable="writable" :feature="feature" :announce="announce" @history="openHistory" />
+          <RelationalMembers v-else-if="activeTab === 'members'" :workspace="workspace" :owner="owner" :writable="writable" :cashier-writable="writable" :show-search="true" :member-notes-label="adminApi.storeProfile.value?.memberNotesLabel" :feature="feature" :announce="announce" @history="openHistory" />
           <RelationalLedger v-else-if="activeTab === 'ledgers'" :workspace="workspace" :owner="owner" :member-id="history.id" :member-name="history.name" @all-members="history = {}" />
           <RelationalConfiguration v-else-if="activeTab === 'services'" :workspace="workspace" :owner="owner" />
           <RelationalBatches v-else-if="activeTab === 'batches'" :workspace="workspace" :writable="writable" />

@@ -231,7 +231,7 @@ test('blank-phone registration preserves input and makes the operator review ren
   document.querySelector('form input[type=checkbox]').click(); await ui.nextTick();
   ui.button('仍然保存').click(); await waitFor(() => has('会员档案已保存'));
   await ui.input('input[placeholder="姓名、电话或备注"]', '新档案区分备注');
-  ui.button('查询').click(); await waitFor(() => has('本页 1 条') && has('新档案区分备注'));
+  ui.button('查询').click(); await waitFor(() => document.querySelectorAll('.customer-row').length === 1 && has('新档案区分备注'));
   const rows = (await service.relational.listMembers(storeA.actor)).items;
   assert.equal(rows.length, 2);
   assert.ok(rows.every(row => row.name === storeA.name));

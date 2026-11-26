@@ -91,6 +91,9 @@ export function businessReportResult(input, { daily, balances, ranking, consumeM
     for (const key of REPORT_COUNT_FIELDS) result[key] = reportCount(row[key]);
     result.rechargeCreditCents = String(row.actualPayCents + row.giftCents);
     result.netRechargeCreditCents = String(row.actualPayCents + row.giftCents - row.reversedActualPayCents - row.reversedGiftCents);
+    result.netActualPayCents = String(row.actualPayCents - row.reversedActualPayCents);
+    result.netGiftCents = String(row.giftCents - row.reversedGiftCents);
+    result.netConsumeCount = reportCount(row.consumeCount - row.reversedConsumeCount);
     result.netConsumptionCents = String(row.consumptionCents - row.reversedConsumptionCents);
     return result;
   }

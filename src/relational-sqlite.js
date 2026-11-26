@@ -77,6 +77,7 @@ function receiptResult(row) {
 function validId(value) { if (typeof value !== 'string' || !ENTITY_ID.test(value)) throw invalid('实体单号无效'); return value; }
 const openingCapture = input => Object.fromEntries(['storeId', 'actorId', 'deviceId', 'payloadDigest', 'ledgerEpoch'].map(key => [key, input[key]]));
 function pageLimit(value = 50) { if (!Number.isInteger(value) || value < 1 || value > 100) throw invalid('每页数量须为 1–100'); return value; }
+const lastConsumptionSql = "(SELECT MAX(e.occurred_at) FROM ledger_entries e WHERE e.store_id=m.store_id AND e.member_id=m.id AND e.kind='consume' AND NOT EXISTS (SELECT 1 FROM ledger_reversals r WHERE r.store_id=e.store_id AND r.original_entry_id=e.entry_id))";
 const readFeature = { read: 'core', sync: 'core', memberRead: 'members', ledgerRead: 'cashier' };
 function pageCursor(cursor, book, dimensions) {
   const scope = canonicalJSON([book.storeId, ...dimensions]);
@@ -134,11 +135,12 @@ export function createRelationalSqlite({ driver, storeId, mode, ledgerEpoch, aut
   const publicMember = (row, tags) => ({ id: row.id, name: row.name, phone: row.phone, notes: row.notes, tags,
     balanceCents: String(row.balance_cents), version: String(row.profile_version), accountVersion: String(row.account_version),
     createdAt: row.created_at, updatedAt: row.updated_at, archivedAt: row.archived_at });
-  async function readMember(memberId) {
-    const row = await one('SELECT m.*,a.balance_cents,a.version AS account_version FROM member_profiles m JOIN member_accounts a ON a.store_id=m.store_id AND a.member_id=m.id WHERE m.store_id=? AND m.id=?', [storeId, memberId]);
+  async function readMember(memberId, { activity = false } = {}) {
+    const row = await one('SELECT m.*,a.balance_cents,a.version AS account_version' + (activity ? ',' + lastConsumptionSql + ' AS last_consume_at' : '') + ' FROM member_profiles m JOIN member_accounts a ON a.store_id=m.store_id AND a.member_id=m.id WHERE m.store_id=? AND m.id=?', [storeId, memberId]);
     if (!row) throw Object.assign(new Error('会员不存在'), { status: 404 });
     const tags = await all('SELECT tag FROM member_tags WHERE store_id=? AND member_id=? ORDER BY tag', [storeId, memberId]);
-    return publicMember(row, tags.map(tag => tag.tag));
+    const member = publicMember(row, tags.map(tag => tag.tag));
+    return activity ? { ...member, lastConsumeAt: row.last_consume_at ?? null } : member;
   }
   async function insertMember(row, at) {
     await run('INSERT INTO member_profiles(store_id,id,name,phone,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?)', [storeId, row.id, row.name, row.phone, row.notes, at, at]);
@@ -477,7 +479,7 @@ export function createRelationalSqlite({ driver, storeId, mode, ledgerEpoch, aut
         await sales.saveConfiguration({ ...data, version }); await audit(user, 'configuration_updated', version, now()); return sales.configuration();
       });
     },
-    getMember(memberId) { validId(memberId); return transaction('read', 'memberRead', () => readMember(memberId)); },
+    getMember(memberId) { validId(memberId); return transaction('read', 'memberRead', () => readMember(memberId, { activity: true })); },
     getMemberTotals(memberId) {
       validId(memberId);
       return transaction('read', 'ledgerRead', async user => {
@@ -517,7 +519,7 @@ export function createRelationalSqlite({ driver, storeId, mode, ledgerEpoch, aut
     listMembers({ search = '', sameName = '', balance = 'all', cursor = null, after = cursor, limit = 50 } = {}) {
       pageLimit(limit); search = text(search, 128, '搜索内容'); sameName = text(sameName, 128, '同名会员姓名');
       const recent = balance === 'recent';
-      const filters = { all: '', recent: '', archived: '', positive: ' AND a.balance_cents>0', low: ' AND a.balance_cents BETWEEN 0 AND 5000', debt: ' AND a.balance_cents<0' };
+      const filters = { all: '', recent: " AND EXISTS (SELECT 1 FROM ledger_entries e WHERE e.store_id=m.store_id AND e.member_id=m.id AND e.kind='consume' AND NOT EXISTS (SELECT 1 FROM ledger_reversals r WHERE r.store_id=e.store_id AND r.original_entry_id=e.entry_id))", archived: '', positive: ' AND a.balance_cents>0', low: ' AND a.balance_cents BETWEEN 0 AND 5000', debt: ' AND a.balance_cents<0' };
       if (!Object.hasOwn(filters, balance) || recent && (after || sameName)) throw invalid('会员余额筛选无效');
       return transaction('read', 'memberRead', async () => {
         const current = await book(), scope = pageCursor(after, current, ['members', search, balance, sameName]);
@@ -525,7 +527,7 @@ export function createRelationalSqlite({ driver, storeId, mode, ledgerEpoch, aut
         const order = recent
           ? "(SELECT e.occurred_at FROM ledger_entries e WHERE e.store_id=m.store_id AND e.member_id=m.id AND e.kind='consume' AND NOT EXISTS (SELECT 1 FROM ledger_reversals r WHERE r.store_id=e.store_id AND r.original_entry_id=e.entry_id) ORDER BY e.occurred_at DESC,e.entry_id DESC LIMIT 1) DESC,m.created_at DESC,m.id"
           : 'm.created_at,m.id';
-        const select = (position, count) => all('SELECT m.*,a.balance_cents,a.version AS account_version FROM member_profiles m JOIN member_accounts a ON a.store_id=m.store_id AND a.member_id=m.id WHERE m.store_id=? AND m.archived_at IS ' +
+        const select = (position, count) => all('SELECT m.*,a.balance_cents,a.version AS account_version,' + lastConsumptionSql + ' AS last_consume_at FROM member_profiles m JOIN member_accounts a ON a.store_id=m.store_id AND a.member_id=m.id WHERE m.store_id=? AND m.archived_at IS ' +
           (balance === 'archived' ? 'NOT NULL' : 'NULL') + filters[balance] +
           (search ? " AND (instr(lower(m.name),lower(?))>0 OR instr(lower(m.notes),lower(?))>0 OR instr(m.phone,?)>0 OR (?<>'' AND instr(replace(replace(replace(replace(m.phone,' ',''),'-',''),'(',''),')',''),?)>0))" : '') +
           (position ? ' AND (m.created_at,m.id)>(?,?)' : '') + ' ORDER BY ' + order + ' LIMIT ?',
@@ -550,7 +552,15 @@ export function createRelationalSqlite({ driver, storeId, mode, ledgerEpoch, aut
           const ids = page.slice(offset, offset + 30).map(row => row.id);
           for (const row of await all('SELECT member_id,tag FROM member_tags WHERE store_id=? AND member_id IN (' + ids.map(() => '?').join(',') + ') ORDER BY member_id,tag', [storeId, ...ids])) tags.get(row.member_id).push(row.tag);
         }
-        return { items: page.map(row => publicMember(row, tags.get(row.id))), nextCursor: rows.length > limit ? { at: page.at(-1).created_at,
+        let total;
+        if (!sameName) {
+          const count = await one('SELECT count(*) AS n FROM member_profiles m JOIN member_accounts a ON a.store_id=m.store_id AND a.member_id=m.id WHERE m.store_id=? AND m.archived_at IS ' +
+            (balance === 'archived' ? 'NOT NULL' : 'NULL') + filters[balance] +
+            (search ? " AND (instr(lower(m.name),lower(?))>0 OR instr(lower(m.notes),lower(?))>0 OR instr(m.phone,?)>0 OR (?<>'' AND instr(replace(replace(replace(replace(m.phone,' ',''),'-',''),'(',''),')',''),?)>0))" : ''),
+            [storeId, ...(search ? [search, search, search, digits, digits] : [])]);
+          total = Number(count.n);
+        }
+        return { items: page.map(row => ({ ...publicMember(row, tags.get(row.id)), lastConsumeAt: row.last_consume_at ?? null })), ...(total === undefined ? {} : { total }), ...(recent ? { rangeLimit: 12 } : {}), nextCursor: rows.length > limit ? { at: page.at(-1).created_at,
           id: page.at(-1).id, ledgerEpoch: current.ledgerEpoch, scope } : null };
       });
     },

@@ -17,44 +17,12 @@
         </button>
       </div>
 
-      <!-- 流水类型快捷切换 -->
-      <div class="flex items-center justify-between gap-2">
-        <span class="text-xs font-bold text-slate-500 shrink-0">类型：</span>
-        <div class="ledger-type-options flex-1" role="tablist" aria-label="流水类型筛选">
-          <button
-            v-for="t in typeOptions"
-            :key="t.value"
-            type="button"
-            role="tab"
-            :aria-selected="kind === t.value"
-            class="px-2.5 py-1 rounded-xl text-xs font-bold transition-all shrink-0"
-            :class="kind === t.value ? 'bg-slate-900 text-white shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'"
-            @click="selectKind(t.value)"
-          >
-            {{ t.label }}
-          </button>
-        </div>
+      <div class="ledger-filter-toolbar">
+        <label class="sr-only" for="ledger-kind">流水类型</label>
+        <select id="ledger-kind" v-model="kind" aria-label="流水类型" @change="selectKind(kind)"><option v-for="t in typeOptions" :key="t.value" :value="t.value">{{ t.label }}</option></select>
+        <label class="sr-only" for="ledger-period">流水时间</label>
+        <select id="ledger-period" v-model="period" aria-label="流水时间" @change="selectPeriod(period)"><option v-for="p in periodOptions" :key="p.value" :value="p.value">{{ p.label }}</option></select>
       </div>
-
-      <!-- 时间周期快捷切换 -->
-      <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
-        <span class="text-xs font-bold text-slate-500 shrink-0">时间：</span>
-        <div class="ledger-period-options flex-1" role="tablist" aria-label="时间周期筛选">
-          <button
-            v-for="p in periodOptions"
-            :key="p.value"
-            type="button"
-            role="tab"
-            :aria-selected="period === p.value"
-            class="px-2.5 py-1 rounded-xl text-xs font-bold transition-all shrink-0"
-            :class="period === p.value ? 'bg-emerald-700 text-white shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'"
-            @click="selectPeriod(p.value)"
-          >
-            {{ p.label }}
-          </button>
-        </div>
-      </div>
-
       <!-- 自选起止日期面板 -->
       <form v-if="period === 'custom'" class="report-custom-range pt-2 border-t border-slate-100 gap-2" @submit.prevent="search">
         <label class="text-xs font-bold text-slate-600 flex items-center gap-1">
@@ -146,8 +114,6 @@
                 • 实收 ¥{{ displayCents(entry.recharge.actualPayCents) }}，赠送 ¥{{ displayCents(entry.recharge.giftCents) }}
               </p>
             </div>
-          </details>
-
           <!-- 冲正撤销按钮 (仅店主且未冲正单) -->
           <div v-if="owner && entry.type !== 'reversal' && !entry.reversed" class="flex justify-end mt-2">
             <button
@@ -160,6 +126,8 @@
               账务冲正
             </button>
           </div>
+          </details>
+
         </li>
       </ul>
 

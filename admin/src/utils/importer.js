@@ -1,4 +1,4 @@
-import { parseImportBuffer, IMPORT_LIMITS, assertImportRowsBudget } from './import-parser.js';
+import { IMPORT_LIMITS, assertImportRowsBudget } from './import-budget.js';
 
 export async function parseUploadedFile(file, { signal } = {}) {
   // 1. 安全限制检查：最大 10MB
@@ -28,7 +28,7 @@ export async function parseUploadedFile(file, { signal } = {}) {
 function readRows(buffer, isCsv, signal) {
   // The Node test/runtime has no browser Worker. Both paths enforce identical budgets.
   if (typeof Worker === 'undefined') {
-    if (globalThis.process?.versions?.node) return parseImportBuffer(buffer, isCsv);
+    if (globalThis.process?.versions?.node) return import('./import-parser.js').then(({ parseImportBuffer }) => parseImportBuffer(buffer, isCsv));
     throw new Error('当前浏览器无法安全解析文件，请使用新版 Chrome、Edge、Firefox 或 Safari');
   }
   return new Promise((resolve, reject) => {

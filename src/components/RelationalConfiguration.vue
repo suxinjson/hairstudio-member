@@ -31,6 +31,7 @@
 
     <!-- 配置表单 -->
     <form v-else class="space-y-4" @submit.prevent="save">
+      <p v-if="dirty" class="book-hint" role="status">有未保存的修改，返回后可继续编辑。</p>
       <!-- 定价与规则说明 -->
       <div class="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 text-slate-600 text-xs leading-relaxed flex items-start gap-2">
         <span class="text-base leading-none shrink-0">💡</span>
@@ -248,7 +249,9 @@ import { displayCents, yuanCents } from '../relational-presentation.js';
 
 const props = defineProps({ workspace: Object, owner: Boolean });
 const form = ref(null), scope = shallowRef(null), error = ref(''), message = ref(''), busy = ref(false);
-const blocked = computed(() => busy.value || !props.workspace.state.book || props.workspace.state.busy || props.workspace.state.pending || props.workspace.state.pendingError);
+const savedForm = ref('');
+const dirty = computed(() => Boolean(form.value && savedForm.value !== JSON.stringify(form.value)));
+const blocked = computed(() => Boolean(busy.value || !props.workspace.state.book || props.workspace.state.busy || props.workspace.state.pending || props.workspace.state.pendingError));
 
 let alive = true;
 onScopeDispose(() => { alive = false; });
@@ -269,6 +272,7 @@ function assign(config) {
       gift: displayCents(row.giftCents)
     }))
   };
+  savedForm.value = JSON.stringify(form.value);
 }
 
 async function load() {

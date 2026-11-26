@@ -52,6 +52,24 @@ test('PostgreSQL member totals preserve full lifetime precision and serve a scop
   await assert.rejects(ledger.getMemberTotals(identity, result.member.id, book), { code: 'FEATURE_DISABLED' });
 });
 
+test('recent consumers exclude reversed and never-consumed profiles and return actual timestamps and scoped counts', async () => {
+  await ledger.importOpeningBalances(identity, input());
+  await command('member-2', 'consume'); const second = await command('member-3', 'consume');
+  let recent = await ledger.listMembers(identity, { balance: 'recent' });
+  assert.equal(recent.total, 2); assert.deepEqual(new Set(recent.items.map(row => row.id)), new Set(['member-2', 'member-3']));
+  const last = (await ledger.getMember(identity, 'member-2')).lastConsumeAt;
+  assert.ok(last); await ledger.updateMember(identity, 'member-2', { name: '改档案不算来店', expectedVersion: '0' }, { id: randomUUID(), storeId: identity.store_id, ledgerEpoch: identity.ledgerEpoch });
+  assert.equal((await ledger.getMember(identity, 'member-2')).lastConsumeAt, last);
+  await command('member-3', 'reverse', { originalEntryId: second.entryId, reason: '回归冲正' });
+  assert.equal((await ledger.getMember(identity, 'member-3')).lastConsumeAt, null);
+  assert.equal((await ledger.listMembers(identity, { balance: 'recent' })).items.length, 1);
+  for (let i = 4; i < 18; i++) await command('member-' + i, 'consume');
+  recent = await ledger.listMembers(identity, { balance: 'recent', limit: 100 });
+  assert.equal(recent.items.length, 12); assert.equal(recent.total, 15); assert.equal(recent.rangeLimit, 12); assert.equal(recent.nextCursor, null);
+  assert.equal((await ledger.listMembers(identity, { limit: 1 })).total, 91);
+  assert.equal((await ledger.listMembers(identity, { limit: 1, search: '合成会员1' })).total, 11);
+});
+
 test('server book generations fence restored requests before receipts, versions or opening idempotency', async () => {
   const source = input(); await ledger.importOpeningBalances(identity, source);
   const request = { id: randomUUID(), storeId: identity.store_id, ledgerEpoch: identity.ledgerEpoch, type: 'recharge', memberId: 'member-1', expectedAccountVersion: '0', actualPayCents: '100', payments: [{ method: '现金', amountCents: '50' }, { method: '微信', amountCents: '50' }] };

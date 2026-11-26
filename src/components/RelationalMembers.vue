@@ -1,49 +1,21 @@
 <template>
   <section class="customers-page space-y-3" aria-label="会员档案">
-    <!-- 顶部统计与提示 -->
-    <div class="customer-list-heading flex items-center justify-between px-1" aria-live="polite">
-      <h2 class="text-base font-extrabold text-slate-800 flex items-center gap-1.5 m-0">
-        <span>{{ query.trim() ? '搜索 · ' : '' }}{{ currentFilterLabel }}</span>
-        <span class="text-xs font-bold text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-full">
-          <span v-if="page.error.value">读取失败</span>
-          <span v-else-if="page.busy.value && !page.rows.value.length">读取中…</span>
-          <template v-else-if="!query.trim() && balance === 'all'">
-            <span v-if="totalCount !== null">共 {{ totalCount }} 人</span>
-            <span v-else-if="page.next.value">已加载 {{ page.rows.value.length }} 人</span>
-            <span v-else>共 {{ page.rows.value.length }} 人</span>
-          </template>
-          <template v-else-if="!query.trim() && balance === 'recent'">
-            最近 {{ page.rows.value.length }} 人
-          </template>
-          <template v-else>
-            {{ page.rows.value.length }} 人
-          </template>
-        </span>
-      </h2>
-      <span class="text-xs text-slate-500 font-medium">
-        {{ balance === 'low' ? '余额 0–50 元' : balance === 'recent' ? '按最近消费时间排序' : balance === 'debt' ? '查看待还款会员' : '点会员查看档案' }}
-      </span>
+    <div class="member-toolbar">
+      <label class="member-range"><span class="sr-only">会员范围</span>
+        <select v-model="balance" aria-label="会员范围" @change="setBalanceFilter(balance)">
+          <option v-for="opt in filterOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+      </label>
+      <span class="member-count" aria-live="polite">{{ page.total.value === null ? `本页 ${page.rows.value.length} 人` : `共 ${page.total.value} 人` }}</span>
     </div>
-
-
-    <!-- 快捷聚合筛选胶囊栏 (全部会员、最近来店、低余额、欠款会员) -->
-    <div class="filter-tabs-row flex gap-1.5 overflow-x-auto pb-0.5 no-scrollbar" role="tablist" aria-label="会员范围筛选">
-      <button
-        v-for="item in filterOptions"
-        :key="item.value"
-        type="button"
-        role="tab"
-        class="filter-tab-pill whitespace-nowrap px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all btn-press shrink-0 flex items-center gap-1"
-        :class="{ active: balance === item.value }"
-        :aria-selected="balance === item.value"
-        @click="setBalanceFilter(item.value)"
-      >
-        <span>{{ item.label }}</span>
-      </button>
-    </div>
-    <!-- 隐藏兼容测试 select -->
-    <label style="display: none;">会员范围<select v-model="balance" @change="search"><option v-for="opt in filterOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option></select></label>
-
+    <form v-if="showSearch" class="member-search" @submit.prevent="searchLocal">
+      <input v-model="query" aria-label="搜索会员" maxlength="128" placeholder="姓名、电话、尾号或备注" type="search" />
+      <button type="submit" class="book-primary">查询</button>
+      <button v-if="canEdit" type="button" :disabled="blocked" @click="create">登记会员</button>
+    </form>
+    <p v-if="balance === 'recent'" class="book-hint">最近 12 位有有效消费的会员，按消费时间排序；完整交易可在账务流水查看。</p>
+    <p v-else-if="balance === 'archived'" class="book-hint">归档会员已退出在用名单，历史流水保留，可打开档案查看。当前暂不支持恢复原档案；再次登记将创建独立的新档案。</p>
+    <p v-else-if="balance === 'low'" class="book-hint">可用余额 0–50 元</p>
     <p v-if="error && !detail && !editor" class="book-panel book-alert" role="alert">{{ error }}</p>
     <p v-if="receipt && !detail" class="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm font-semibold" role="status">{{ receipt }}</p>
     <p v-if="voiceNotice" class="book-panel" role="status">{{ voiceNotice }}</p>
@@ -61,8 +33,8 @@
     </div>
     <div v-else-if="!page.error.value && !page.rows.value.length" class="customer-empty bg-white rounded-2xl p-8 border border-slate-200 text-center">
       <UsersRound :size="36" class="text-slate-400 mx-auto" aria-hidden="true" />
-      <h3 class="text-base font-bold text-slate-800 mt-2">{{ query.trim() ? '未找到符合条件的会员' : balance === 'debt' ? '目前没有欠款会员' : balance === 'low' ? '目前没有低余额会员' : '还没有会员档案' }}</h3>
-      <p class="text-xs text-slate-500 mt-1">{{ query.trim() ? '试试姓名、手机号、手机尾号或备注' : '登记会员后即可扣款、充值和记录档案' }}</p>
+      <h3 class="text-base font-bold text-slate-800 mt-2">{{ query.trim() ? '未找到符合条件的会员' : balance === 'debt' ? '目前没有欠款会员' : balance === 'low' ? '目前没有低余额会员' : balance === 'recent' ? '暂无有效消费的会员' : balance === 'archived' ? '目前没有已归档会员' : '还没有会员档案' }}</h3>
+      <p v-if="query.trim() || balance === 'all'" class="text-xs text-slate-500 mt-1">{{ query.trim() ? '试试姓名、手机号、手机尾号或备注' : '登记会员后即可扣款、充值和记录档案' }}</p>
       <div class="flex items-center justify-center gap-2 mt-3">
         <button v-if="balance !== 'all'" type="button" class="h-10 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold btn-press" @click="setBalanceFilter('all')">查看全部会员</button>
         <button v-if="canEdit" type="button" class="customer-empty-primary h-10 px-4 bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-sm btn-press" :disabled="blocked" aria-label="新增会员" @click="create">＋ 登记新会员</button>
@@ -93,16 +65,14 @@
         </button>
 
         <div class="customer-row-actions">
-          <span class="customer-balance-label">
-            {{ BigInt(member.balanceCents) < 0n ? '会员欠款' : BigInt(member.balanceCents) <= 5000n ? '低余额' : '可用余额' }}
-          </span>
           <strong class="customer-balance" :class="{ 'balance-debt': BigInt(member.balanceCents) < 0n }">
-            ¥{{ displayAbsoluteCents(member.balanceCents) }}
+            {{ BigInt(member.balanceCents) < 0n ? '欠款 ' : '' }}¥{{ displayAbsoluteCents(member.balanceCents) }}
           </strong>
           <button
             type="button"
             class="customer-consume cursor-pointer"
-            :disabled="blocked || !canCashier"
+            v-if="canCashier"
+            :disabled="blocked"
             :aria-label="`为${member.name}扣款`"
             @click.stop="quickSale(member, 'consume')"
           >
@@ -112,22 +82,12 @@
       </article>
     </div>
 
-    <!-- 底部滚动自动加载与翻页状态 -->
-    <div ref="sentinel" class="customer-pagination-area py-3 text-center space-y-1">
-      <div v-if="page.busy.value" class="text-xs text-slate-500 font-bold flex items-center justify-center gap-1.5 py-1">
-        <span class="inline-block animate-spin">⏳</span>
-        <span>正在加载更多会员…</span>
-      </div>
-      <div v-else-if="!page.next.value && page.rows.value.length" class="text-xs text-slate-400 font-medium py-1">
-        已加载全部会员<template v-if="totalCount !== null">（共 {{ totalCount }} 人）</template><template v-else>（共 {{ page.rows.value.length }} 人）</template>
-      </div>
-      <div class="flex items-center justify-between text-xs text-slate-400 px-1 pt-1">
-        <span class="book-muted">本页 {{ page.rows.value.length }} 条</span>
-        <button v-if="page.next.value && !page.busy.value" type="button" class="text-xs text-emerald-700 font-bold hover:underline" @click="page.loadMore()">
-          下滑或点击加载更多 ↓
-        </button>
-      </div>
-    </div>
+    <nav v-if="page.hasPrevious.value || page.next.value" class="customer-pagination-area member-pagination" aria-label="会员分页">
+      <button type="button" :disabled="!page.hasPrevious.value || page.busy.value" @click="navigateMembers('previous')">上一页</button>
+      <span aria-live="polite">第 {{ page.pageNumber.value }} 页 · {{ page.rows.value.length }} 人<span v-if="page.busy.value"> · 更新中…</span></span>
+      <button type="button" :disabled="!page.next.value || page.busy.value" @click="navigateMembers('next')">下一页</button>
+    </nav>
+    <p v-if="!page.next.value && page.rows.value.length" class="book-hint">{{ balance === 'recent' ? '已显示当前最近消费名单（最多 12 人）' : '已到当前范围末页' }}</p>
 
     <!-- ======================================================== -->
     <!-- 会员详情卡片抽屉 (MemberDetailDrawer)                     -->
@@ -137,32 +97,18 @@
         <!-- 弹窗手柄 -->
         <div class="w-12 h-1 bg-slate-300 rounded-full mx-auto mt-2.5 mb-1 shrink-0"></div>
 
-        <div class="modal-header px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-2 shrink-0">
-          <h2 id="member-detail-title" class="sr-only">{{ detail.name }}的会员档案</h2>
-          <div class="member-detail-header-copy flex items-center space-x-3 min-w-0">
-            <div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-700 to-slate-900 text-white flex items-center justify-center font-black text-xl shadow-xs shrink-0">
-              {{ detail.name.charAt(0) }}
-            </div>
-            <div class="min-w-0">
-              <div class="flex items-center gap-1.5">
-                <button class="copyable-text font-black text-lg text-slate-900 truncate max-w-[130px] sm:max-w-[180px] whitespace-nowrap text-left" @click.stop="copyField(detail.name, '姓名')" aria-label="复制会员姓名">{{ detail.name }}</button>
-                <span class="text-[11px] px-2 py-0.5 rounded-full font-black whitespace-nowrap shrink-0"
-                  :class="BigInt(detail.balanceCents) < 0n ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'">
-                  {{ BigInt(detail.balanceCents) < 0n ? '尚有欠款' : detail.archivedAt ? '已归档' : '会员档案' }}
-                </span>
-              </div>
-              <button class="copyable-text block text-xs text-slate-700 font-mono font-bold whitespace-nowrap mt-0.5 text-left" @click.stop="copyField(detail.phone, '手机号')" aria-label="复制会员手机号">{{ formatPhone(detail.phone) || '未留手机号' }}</button>
-            </div>
+        <header class="member-detail-heading">
+          <div class="member-detail-identity">
+            <h2 id="member-detail-title">{{ detail.name }} <small v-if="detail.archivedAt">已归档</small></h2>
+            <span class="selectable">{{ formatPhone(detail.phone) || '未留手机号' }}</span>
           </div>
-          <div class="flex items-center space-x-1.5 shrink-0">
-            <button v-if="canEdit && !detail.archivedAt" type="button" aria-label="修改档案" class="h-8.5 px-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl font-bold text-xs active:bg-emerald-100 btn-press whitespace-nowrap" @click="edit">
-              修改档案
-            </button>
-            <button type="button" aria-label="收起档案" class="h-8.5 px-3 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center text-xs font-bold btn-press shrink-0" @click="closeDetail">
-              收起档案
-            </button>
-          </div>
-        </div>
+          <details class="member-more"><summary aria-label="更多会员操作">更多</summary><div>
+            <button type="button" @click="copyField(detail.name, '姓名')">复制姓名</button>
+            <button v-if="detail.phone" type="button" @click="copyField(detail.phone, '手机号')">复制手机号</button>
+            <button v-if="canEdit && !detail.archivedAt" type="button" aria-label="修改档案" :disabled="blocked" @click="edit">修改档案</button>
+          </div></details>
+          <button type="button" aria-label="收起档案" class="member-close" @click="closeDetail"><span aria-hidden="true">✕</span><span class="sr-only">收起档案</span></button>
+        </header>
 
         <p v-if="copyNotice" class="mx-4 my-2 text-sm" :class="copyFailed ? 'text-rose-700' : 'text-emerald-800'" :role="copyFailed ? 'alert' : 'status'">{{ copyNotice }}</p>
         <div class="member-detail-content flex-1 overflow-y-auto p-3.5 space-y-3">
@@ -203,14 +149,9 @@
           </div>
 
           <!-- 会员备注与服务偏好 -->
-          <div v-if="detail.notes" class="bg-amber-50/90 p-3.5 rounded-2xl border-2 border-amber-300 text-amber-950 shadow-xs">
-            <div class="flex items-center space-x-1.5 text-xs font-black text-amber-900 tracking-wide uppercase mb-1">
-              <span class="text-base" aria-hidden="true">💇</span>
-              <span>会员偏好与备注</span>
-            </div>
-            <div class="text-sm font-black text-amber-950 leading-relaxed pl-5 break-words">
-              {{ detail.notes }}
-            </div>
+          <div v-if="detail.notes" class="member-detail-note">
+            <small>{{ memberNotesLabel }}</small>
+            <p>{{ detail.notes }}</p>
           </div>
 
           <!-- 近期消费与充值记录 (原汁原味还原历史交易) -->
@@ -220,7 +161,7 @@
               <button type="button" :disabled="loadingLedgers" @click="select(detail.id, { keepOpen: true })">重试读取明细</button>
             </div>
             <div class="text-xs font-black uppercase tracking-wider text-slate-500 mb-1.5 flex items-center justify-between">
-              <span>近期消费与充值记录 ({{ detailLedgers.length }})</span>
+              <span>近期消费与充值记录 ({{ Math.min(detailLedgers.length, 5) }})</span>
               <span v-if="loadingLedgers" class="text-xs text-slate-400">读取中…</span>
             </div>
 
@@ -229,7 +170,7 @@
             </div>
             <div v-else class="space-y-2">
               <div 
-                v-for="l in detailLedgers" 
+                v-for="l in detailLedgers.slice(0, 5)"
                 :key="l.id"
                 class="member-history-row bg-slate-50 p-3 rounded-2xl border border-slate-200 flex items-center justify-between text-xs"
                 :class="{ 'member-history-row-large': displayCents(l.deltaCents).length > 10 || displayCents(l.balanceAfterCents).length > 10 }"
@@ -271,18 +212,19 @@
             <button v-if="feature('cashier')" type="button" aria-label="查看会员流水" class="text-xs font-bold text-emerald-800 hover:underline py-1" @click="$emit('history', detail.id, detail.name)">
               查看此会员历史明细 →
             </button>
-            <button v-if="owner && canEdit && detail.balanceCents === '0'" type="button" aria-label="归档" class="text-xs text-rose-500 underline font-bold py-1" @click="archive">
-              删除注销此会员档案 (仅限余额为0)
+            <button v-if="owner && canEdit && !detail.archivedAt && detail.balanceCents === '0'" type="button" aria-label="归档" class="text-xs text-rose-500 underline font-bold py-1" @click="archive">
+              归档会员（保留历史）
             </button>
           </div>
         </div>
 
         <!-- 底部快捷充值与扣款 (大按钮52px，通俗明白大白话) -->
-        <div v-if="!detail.archivedAt" class="member-detail-actions border-t border-slate-200 bg-white grid grid-cols-2 gap-2.5 p-3 pb-gesture-safe shrink-0">
+        <div v-if="canCashier && !detail.archivedAt" class="member-detail-actions border-t border-slate-200 bg-white grid grid-cols-2 gap-2.5 p-3 pb-gesture-safe shrink-0">
           <button 
             type="button"
             aria-label="充值"
-            :disabled="blocked || !canCashier"
+            v-if="canCashier"
+            :disabled="blocked"
             class="h-13 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-2xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center space-x-1.5 btn-press"
             @click="openSale('recharge')"
           >
@@ -293,7 +235,8 @@
           <button 
             type="button"
             aria-label="消费"
-            :disabled="blocked || !canCashier"
+            v-if="canCashier"
+            :disabled="blocked"
             class="h-13 bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white rounded-2xl font-black text-base shadow-md shadow-rose-500/20 flex items-center justify-center space-x-1.5 btn-press"
             @click="openSale('consume')"
           >
@@ -307,7 +250,7 @@
     <!-- ======================================================== -->
     <!-- 交易抽屉 (RelationalSale: 扣款 / 充值 / 冲正)            -->
     <!-- ======================================================== -->
-    <RelationalSale v-if="sale" ref="saleForm" :key="sale.key" v-bind="sale" :workspace="workspace" @close="sale = null" @done="settled" />
+    <RelationalSale v-if="sale" ref="saleForm" :key="sale.key" v-bind="sale" :workspace="workspace" :member-notes-label="memberNotesLabel" @close="sale = null" @done="settled" />
 
     <!-- ======================================================== -->
     <!-- 新增 / 编辑会员表单抽屉                                  -->
@@ -335,7 +278,7 @@
             <input v-model.trim="editor.tags" maxlength="1024" autocomplete="off" enterkeyhint="next" placeholder="例如：常剪发 | 熟客" class="mt-1 w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold focus:bg-white focus:border-emerald-600 outline-none" />
           </label>
           <label class="block text-xs font-bold text-slate-700">
-            <span class="profile-label">备注偏好</span>
+            <span class="profile-label">{{ memberNotesLabel }}</span>
             <textarea v-model.trim="editor.notes" rows="2" maxlength="1000" placeholder="发型偏好、染膏色号或特别要求" class="mt-1 w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:border-emerald-600 outline-none"></textarea>
           </label>
         </fieldset>
@@ -382,7 +325,9 @@ const props = defineProps({
   announce: Function,
   copyText: Function,
   balanceFilter: { type: String, default: 'all' },
-  searchQuery: { type: String, default: '' }
+  searchQuery: { type: String, default: '' },
+  showSearch: Boolean,
+  memberNotesLabel: { type: String, default: '会员偏好与备注' }
 });
 
 const emit = defineEmits(['history', 'update:balanceFilter', 'update:searchQuery']);
@@ -391,7 +336,8 @@ const filterOptions = [
   { value: 'all', label: '全部会员', description: '查看完整会员名单' },
   { value: 'recent', label: '最近消费', description: '按消费时间，显示最近会员' },
   { value: 'low', label: '低余额', description: '可用余额 0–50 元' },
-  { value: 'debt', label: '欠款会员', description: '查看待还款会员' }
+  { value: 'debt', label: '欠款会员', description: '查看待还款会员' },
+  { value: 'archived', label: '已归档会员', description: '保留历史，退出在用名单' }
 ];
 
 const balance = ref(props.balanceFilter || 'all');
@@ -400,7 +346,6 @@ const error = ref('');
 const receipt = ref('');
 const receiptMemberId = ref(null), copyNotice = ref(''), copyFailed = ref(false);
 const voiceNotice = ref('');
-const totalCount = ref(null);
 const detail = shallowRef(null);
 const detailLedgers = ref([]);
 const loadingLedgers = ref(false);
@@ -416,7 +361,6 @@ watch(() => editor.value ? [editor.value.memberId, editor.value.name, editor.val
   duplicate.value = null;
   profileError.value = '';
 }, { flush: 'sync' });
-const sentinel = ref(null);
 const saleForm = ref(null);
 
 const canEdit = computed(() => Boolean(props.writable && props.feature('members')));
@@ -432,15 +376,13 @@ const page = useRelationalPage(cursor => props.workspace.read('listMembers', {
   ...criteria,
   cursor,
   limit: 30
-}));
+}), { bounded: true });
 
-async function loadTotalCount() {
-  if (!props.workspace.state.book) return;
-  try {
-    const res = await props.workspace.read('listMembers', { balance: 'all', limit: 1 });
-    if (res && res.total !== undefined) totalCount.value = res.total;
-  } catch {}
+async function navigateMembers(direction) {
+  if (direction === 'previous') await page.loadPrevious(); else await page.loadMore();
+  document.querySelector('.member-toolbar')?.scrollIntoView?.({ block: 'start' });
 }
+function searchLocal() { emit('update:searchQuery', query.value); criteria = { search: query.value, balance: balance.value }; void page.load(); }
 
 watch(() => props.balanceFilter, val => {
   if (val && val !== balance.value) {
@@ -462,8 +404,7 @@ watch(() => props.searchQuery, val => {
 watch([() => props.workspace.state.book, () => props.workspace.state.revision], ([book]) => {
   if (book) {
     criteria = { search: query.value, balance: balance.value };
-    void page.load();
-    void loadTotalCount();
+    void page.refresh();
     if (detail.value) void select(detail.value.id, { keepOpen: true });
   } else {
     closeDetail();
@@ -494,11 +435,11 @@ const formatPhone = value => {
 
 function visitLabel(member) {
   const visitedAt = member.lastVisitedAt || member.lastConsumeAt;
-  const date = new Date(visitedAt || member.updatedAt || '');
-  if (!Number.isFinite(date.valueOf())) return '暂无到店记录';
+  const date = new Date(visitedAt || '');
+  if (!Number.isFinite(date.valueOf())) return '暂无有效消费';
   const shifted = new Date(date.valueOf() + BUSINESS_OFFSET * 60000);
   const today = new Date(Date.now() + BUSINESS_OFFSET * 60000);
-  const action = visitedAt ? '来店' : '更新';
+  const action = '消费';
   if (shifted.toISOString().slice(0, 10) === today.toISOString().slice(0, 10)) {
     return '今天 ' + String(shifted.getUTCHours()).padStart(2, '0') + ':' + String(shifted.getUTCMinutes()).padStart(2, '0') + ' ' + action;
   }
@@ -626,7 +567,7 @@ function settled(result, draft, currentMember) {
       Promise.resolve(props.announce(result, draft, currentMember)).catch(failed);
     } catch { failed(); }
   }
-  void page.load();
+  void page.refresh();
 }
 
 function closeEditor() { if (!profileBusy.value) editor.value = null; }
@@ -719,26 +660,11 @@ async function archive() {
   }
 }
 
-// 自动滚动翻页 Observer
-let observer = null;
-onMounted(() => {
-  void loadTotalCount();
-  if ('IntersectionObserver' in window && sentinel.value) {
-    observer = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && page.next.value && !page.busy.value) {
-        page.loadMore();
-      }
-    }, { rootMargin: '100px' });
-    observer.observe(sentinel.value);
-  }
-});
-
 onUnmounted(() => {
   alive = false;
   detailSequence++;
   saleSequence++;
   clearTimeout(copyTimer); clearTimeout(searchTimer);
-  if (observer) observer.disconnect();
 });
 
 defineExpose({
@@ -768,3 +694,33 @@ defineExpose({
   }
 });
 </script>
+
+<style scoped>
+.member-toolbar, .member-search, .member-pagination { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.member-range { min-width: 0; display: flex; align-items: center; }
+.member-range select { min-height: 44px; max-width: 200px; padding: 8px 30px 8px 12px; border: 1px solid #e2e8f0; border-radius: 14px; background: white; color: #1e293b; font-weight: 650; }
+.member-count { color: #64748b; font-size: 12px; line-height: 1.5; }
+.member-search { flex-wrap: wrap; }
+.member-search input { flex: 1; min-width: 140px; padding: 10px; border: 1px solid #e2e8f0; border-radius: 12px; background: white; }
+.member-pagination { font-size: 12px; color: #64748b; }
+.member-pagination button { min-height: 44px; padding: 8px 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: white; color: #167c68; font-weight: 600; }
+.member-pagination button:disabled { opacity: .4; }
+.customer-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 12px; min-height: 100px; }
+.customer-row + .customer-row { border-top: 1px solid #e2e8f0; }
+.customer-open { display: flex; align-items: center; gap: 12px; min-width: 0; text-align: left; }
+.customer-avatar { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 11px; color: #167c68; background: #e3f1ec; }
+.customer-identity { display: grid; min-width: 0; gap: 4px; }
+.customer-identity > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.customer-identity strong { font-size: 17px; font-weight: 650; }
+.customer-phone { color: #51626a; font-size: 14px; }
+.customer-notes, .customer-visit { color: #64748b; font-size: 12px; }
+.customer-row-actions { display: grid; align-content: center; justify-items: end; gap: 4px; min-width: 0; }
+.customer-balance { font-size: 19px; font-variant-numeric: tabular-nums; }
+.customer-row-debt .customer-balance { color: #b42318; }
+.customer-row-large-balance { grid-template-columns: minmax(0, 1fr); }
+.customer-row-large-balance .customer-row-actions { display: flex; justify-content: space-between; width: 100%; }
+.member-detail-note { border: 1px solid #f5d789; border-radius: 12px; padding: 10px; color: #713f12; background: #fffbeb; }
+.member-detail-note small { display: block; font-size: 12px; line-height: 1.5; }
+.member-detail-note p { margin: 2px 0 0; font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+@media (max-width: 420px) { .member-search input { flex-basis: 100%; } }
+</style>

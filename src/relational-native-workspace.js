@@ -246,18 +246,34 @@ export function createNativeWorkspace(session, { openDriver = openAndroidSqlite,
     if (state.blockedEpoch) return { status: 'blocked', errorCode: state.syncError };
     state.syncStatus = 'syncing';
     refreshing = (async () => {
+      let db, before;
+      const wasReady = state.replicaReady;
       try {
-        const db = await useRepository(); check(scope, generation);
+        db = await useRepository(); check(scope, generation);
+        before = await db.syncState();
         const synchronization = createRelationalSync({ repository: db, remote: scopedRemote(scope, generation) });
         const result = await synchronization.sync(); check(scope, generation);
         state.syncStatus = result.status; state.syncError = result.errorCode || '';
         await fenceReplica(scope, generation, result.errorCode);
-        await updateReplica(scope, generation); state.revision++;
+        await updateReplica(scope, generation);
         return result;
       } catch (error) {
         if (getScope() && generation === auth.generation) {
           if (replicaBlocks.has(error.code)) await fenceReplica(scope, generation, error.code);
           else if (!state.blockedEpoch) { state.syncStatus = 'pending'; state.syncError = error.code || error.message; }
+        }
+      } finally {
+        // Earlier pages can commit before a later network error. Publish those
+        // changes too, without treating an unchanged heartbeat as a mutation.
+        if (db && before && generation === auth.generation && getScope()) {
+          try {
+            const after = await db.syncState(); check(scope, generation);
+            if (before.cursor !== after.cursor || before.pendingCount !== after.pendingCount || wasReady !== state.replicaReady) state.revision++;
+          } catch (error) {
+            if (generation === auth.generation && getScope() && !state.blockedEpoch) {
+              state.syncStatus = 'pending'; state.syncError = error.code || error.message;
+            }
+          }
         }
       }
     })().finally(() => { refreshing = null; });

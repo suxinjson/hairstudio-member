@@ -365,9 +365,10 @@ export function createRelationalLedger({ withAuthorized, audit }) {
           WHERE e.store_id=m.store_id AND e.member_id=m.id AND e.kind='consume'
           AND NOT EXISTS (SELECT 1 FROM ledger_reversals r WHERE r.store_id=e.store_id AND r.original_entry_id=e.entry_id)
           ORDER BY e.occurred_at DESC,e.entry_id DESC LIMIT 1) DESC NULLS LAST,m.created_at DESC,m.id` : 'm.created_at,m.id';
-        const { rows } = await client.query(`SELECT m.id,m.name,m.phone,m.notes,m.profile_version,m.created_at,m.created_at::text AS page_at,m.updated_at,m.archived_at,a.balance_cents,a.version AS account_version
+        const { rows } = await client.query(`SELECT m.id,m.name,m.phone,m.notes,m.profile_version,m.created_at,m.created_at::text AS page_at,m.updated_at,m.archived_at,a.balance_cents,a.version AS account_version,(SELECT MAX(e.occurred_at) FROM ledger_entries e WHERE e.store_id=m.store_id AND e.member_id=m.id AND e.kind='consume' AND NOT EXISTS (SELECT 1 FROM ledger_reversals r WHERE r.store_id=e.store_id AND r.original_entry_id=e.entry_id)) AS last_consume_at
           FROM member_profiles m JOIN member_accounts a ON a.store_id=m.store_id AND a.member_id=m.id
           WHERE m.store_id=$1 AND (m.archived_at IS NOT NULL)=($6='archived')
+          AND ($6<>'recent' OR EXISTS (SELECT 1 FROM ledger_entries e WHERE e.store_id=m.store_id AND e.member_id=m.id AND e.kind='consume' AND NOT EXISTS (SELECT 1 FROM ledger_reversals r WHERE r.store_id=e.store_id AND r.original_entry_id=e.entry_id)))
           AND ($6 IN ('all','archived','recent') OR $6='positive' AND a.balance_cents>0 OR $6='low' AND a.balance_cents BETWEEN 0 AND 5000 OR $6='debt' AND a.balance_cents<0)
           AND ($2='' OR strpos(lower(m.name),lower($2))>0 OR strpos(lower(m.notes),lower($2))>0 OR strpos(m.phone,$2)>0 OR (length($7)>0 AND strpos(m.phone_normalized,$7)>0))
           AND ($8='' OR lower(btrim(regexp_replace(normalize(m.name,NFKC),'[[:space:]]+',' ','g')))=lower(btrim(regexp_replace(normalize($8,NFKC),'[[:space:]]+',' ','g'))))
@@ -375,7 +376,18 @@ export function createRelationalLedger({ withAuthorized, audit }) {
           ORDER BY ${order} LIMIT $5`, [user.store_id, search, cursor?.at || null, cursor?.id || null, recent ? Math.min(limit, 12) : limit + 1, balance,
           /^[\d+() -]+$/.test(search) ? normalizedPhone(search) : '', sameName]);
         const hasMore = !recent && rows.length > limit, page = rows.slice(0, limit), tags = await memberTags(client, user.store_id, page.map(row => row.id));
-        return { items: page.map(row => publicMember(row, tags.get(row.id))), nextCursor: hasMore ? encodeCursor({ at: page.at(-1).page_at, id: page.at(-1).id, ledgerEpoch: user.ledger_epoch, scope }) : null };
+        let total;
+        {
+          const { rows: [count] } = await client.query(`SELECT count(*)::int AS n FROM member_profiles m JOIN member_accounts a ON a.store_id=m.store_id AND a.member_id=m.id
+            WHERE m.store_id=$1 AND (m.archived_at IS NOT NULL)=($3='archived')
+            AND ($3<>'recent' OR EXISTS (SELECT 1 FROM ledger_entries e WHERE e.store_id=m.store_id AND e.member_id=m.id AND e.kind='consume' AND NOT EXISTS (SELECT 1 FROM ledger_reversals r WHERE r.store_id=e.store_id AND r.original_entry_id=e.entry_id)))
+            AND ($3 IN ('all','archived','recent') OR $3='positive' AND a.balance_cents>0 OR $3='low' AND a.balance_cents BETWEEN 0 AND 5000 OR $3='debt' AND a.balance_cents<0)
+            AND ($2='' OR strpos(lower(m.name),lower($2))>0 OR strpos(lower(m.notes),lower($2))>0 OR strpos(m.phone,$2)>0 OR (length($4)>0 AND strpos(m.phone_normalized,$4)>0))
+            AND ($5='' OR lower(btrim(regexp_replace(normalize(m.name,NFKC),'[[:space:]]+',' ','g')))=lower(btrim(regexp_replace(normalize($5,NFKC),'[[:space:]]+',' ','g'))))`,
+            [user.store_id, search, balance, /^[\d+() -]+$/.test(search) ? normalizedPhone(search) : '', sameName]);
+          total = count.n;
+        }
+        return { items: page.map(row => ({ ...publicMember(row, tags.get(row.id)), lastConsumeAt: row.last_consume_at ? new Date(row.last_consume_at).toISOString() : null })), total, ...(recent ? { rangeLimit: 12 } : {}), nextCursor: hasMore ? encodeCursor({ at: page.at(-1).page_at, id: page.at(-1).id, ledgerEpoch: user.ledger_epoch, scope }) : null };
       }, { consistentRead: true });
     },
     async getMemberTotals(identity, id, { ledgerEpoch } = {}) {
@@ -396,10 +408,10 @@ export function createRelationalLedger({ withAuthorized, audit }) {
       return withAuthorized(identity, 'read', async (client, user) => {
         if (ledgerEpoch !== undefined) requireLedgerEpoch(ledgerEpoch, user.ledger_epoch);
         requireFeature(user.entitlements, 'members');
-        const { rows: [row] } = await client.query(`SELECT m.id,m.name,m.phone,m.notes,m.profile_version,m.created_at,m.updated_at,m.archived_at,a.balance_cents,a.version AS account_version
+        const { rows: [row] } = await client.query(`SELECT m.id,m.name,m.phone,m.notes,m.profile_version,m.created_at,m.updated_at,m.archived_at,a.balance_cents,a.version AS account_version,(SELECT MAX(e.occurred_at) FROM ledger_entries e WHERE e.store_id=m.store_id AND e.member_id=m.id AND e.kind='consume' AND NOT EXISTS (SELECT 1 FROM ledger_reversals r WHERE r.store_id=e.store_id AND r.original_entry_id=e.entry_id)) AS last_consume_at
           FROM member_profiles m JOIN member_accounts a ON a.store_id=m.store_id AND a.member_id=m.id WHERE m.store_id=$1 AND m.id=$2`, [user.store_id, id]);
         if (!row) throw new ApiError(404, '会员不存在');
-        const tags = await memberTags(client, user.store_id, [id]); return publicMember(row, tags.get(id));
+        const tags = await memberTags(client, user.store_id, [id]); return { ...publicMember(row, tags.get(id)), lastConsumeAt: row.last_consume_at ? new Date(row.last_consume_at).toISOString() : null };
       }, { consistentRead: true });
     },
     async findActiveNames(identity, { names, ledgerEpoch } = {}) {

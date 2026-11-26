@@ -33,6 +33,26 @@ async function fixture(t, mode = 'standalone') {
 async function recharge(db, memberId, extra = {}) { const member = await db.getMember(memberId); return db.executeCommand({ id: randomUUID(), ledgerEpoch: (await db.getBook()).ledgerEpoch, type: 'recharge', memberId, expectedAccountVersion: member.accountVersion, actualPayCents: '1010', giftCents: '101', ...extra }); }
 async function restore(f, backup) { return f.db.restoreBackup(backup, { id: randomUUID(), ...await f.db.getBook(), actorId: 'local-owner', deviceId, digest: backup.digest }); }
 
+test('recent consumers, actual visit timestamps and scoped totals agree with effective SQLite entries', async t => {
+  const f = await fixture(t); await f.db.importOpeningBalances(source());
+  const consume = async id => { const m = await f.db.getMember(id); return f.db.executeCommand({ id: randomUUID(), ledgerEpoch, type: 'consume', memberId: id, expectedAccountVersion: m.accountVersion, amountCents: '100' }); };
+  f.at('2026-11-25T02:00:00.000Z'); await consume('member-2');
+  f.at('2026-11-26T03:00:00.000Z'); const second = await consume('member-3');
+  let recent = await f.db.listMembers({ balance: 'recent' });
+  assert.deepEqual(recent.items.map(row => row.id), ['member-3', 'member-2']); assert.equal(recent.total, 2);
+  assert.equal((await f.db.getMember('member-2')).lastConsumeAt, '2026-11-25T02:00:00.000Z');
+  await f.db.updateMember('member-2', { name: '改档案不算来店', expectedVersion: (await f.db.getMember('member-2')).version }, { ...await f.db.getBook(), id: randomUUID() });
+  assert.equal((await f.db.getMember('member-2')).lastConsumeAt, '2026-11-25T02:00:00.000Z');
+  await f.db.executeCommand({ id: randomUUID(), ledgerEpoch, type: 'reverse', memberId: 'member-3', expectedAccountVersion: second.accountVersion, originalEntryId: second.entryId, reason: '测试冲正' });
+  assert.equal((await f.db.getMember('member-3')).lastConsumeAt, null);
+  assert.equal((await f.db.listMembers({ balance: 'recent' })).items.length, 1);
+  for (let i = 4; i < 18; i++) await consume('member-' + i);
+  recent = await f.db.listMembers({ balance: 'recent', limit: 100 });
+  assert.equal(recent.items.length, 12); assert.equal(recent.total, 15); assert.equal(recent.rangeLimit, 12); assert.equal(recent.nextCursor, null);
+  assert.equal((await f.db.listMembers({ limit: 1 })).total, 91);
+  assert.equal((await f.db.listMembers({ search: '合成会员1', limit: 1 })).total, 11);
+});
+
 test('SQLite member totals are complete, reverse-aware and exact beyond signed BIGINT', async t => {
   const f = await fixture(t), book = await f.db.getBook();
   const result = await verifyMemberTotals({

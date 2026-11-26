@@ -1,6 +1,11 @@
 /* Shared cashier geometry. Amounts remain exact; larger values get room
    instead of being clipped by the compact row layout. */
 :root {
+  --ui-accent: #167c68;
+  --ui-ink: #1e293b;
+  --ui-muted: #64748b;
+  --ui-border: #e2e8f0;
+  --ui-radius: 14px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), 12px);
 }
@@ -21,7 +26,7 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .app-shell code, .app-shell .selectable { user-select: text; -webkit-user-select: text; }
 .app-shell .selectable { -webkit-touch-callout: default; }
 .app-shell [inert] { pointer-events: none; }
-.app-shell .header-inner { padding: 12px; }
+.app-shell .header-inner { padding: 10px 12px; }
 .app-shell .header-row { gap: 10px; }
 .app-shell .brand-title { font-size: 17px; font-weight: 750; line-height: 1.4; }
 .app-shell .header-meta { font-size: 12px; line-height: 1.5; }
@@ -33,34 +38,37 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .app-shell .header-search-row > button { min-height: 46px; }
 .app-shell .header-search-clear { right: 2px; top: 1px; width: 44px; height: 44px; background: transparent; }
 .app-shell .header-search-area .lucide-search { top: 14px; }
-.app-shell .customers-page { display: flex; flex-direction: column; gap: 12px; }
+.app-shell .customers-page { display: flex; flex-direction: column; gap: 10px; }
 .app-shell .customers-page > * { margin-block: 0; }
-.app-shell .customer-list-heading { gap: 8px; align-items: center; }
-.app-shell .customer-list-heading > span { font-size: 12px; text-align: right; }
-.app-shell .filter-tabs-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 0; overflow: visible; }
-.app-shell .filter-tab-pill { min-height: 44px; padding: 8px 4px; font-size: 13px; border-radius: 12px; justify-content: center; }
-.app-shell .filter-tab-pill.active { background: #167c68; color: white; border-color: #167c68; }
-.app-shell .customer-row { gap: 10px !important; padding: 14px 12px !important; }
-.app-shell .customer-avatar { width: 42px; height: 42px; font-size: 18px; border-radius: 13px; }
-.app-shell .customer-identity strong { font-size: 18px; font-weight: 750; }
+.app-shell .customer-row { min-height: 100px; gap: 10px; padding: 10px 12px; grid-template-columns: minmax(0, 1fr) auto; }
+.app-shell .customer-avatar { width: 34px; height: 34px; font-size: 16px; border-radius: 11px; }
+.app-shell .customer-identity strong { font-size: 17px; font-weight: 650; }
 .app-shell .customer-phone { font-size: 14px; font-variant-numeric: tabular-nums; }
-.app-shell .customer-notes { font-size: 13px; line-height: 1.5; color: #64748b; }
-.app-shell .customer-visit, .app-shell .customer-balance-label { font-size: 12px; line-height: 1.5; }
-.app-shell .customer-balance { font-size: 20px !important; font-weight: 750; font-variant-numeric: tabular-nums; }
-.app-shell .customer-consume { min-width: 80px; min-height: 44px !important; padding: 8px 14px !important; font-size: 14px !important; }
-.app-shell .customer-row.customer-row-large-balance { grid-template-columns: minmax(0, 1fr) !important; }
-.app-shell .customer-row-large-balance .customer-row-actions {
-  width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  justify-items: start; gap: 2px 12px;
-}
-.app-shell .customer-row-large-balance .customer-balance-label { grid-column: 1; grid-row: 1; }
-.app-shell .customer-row-large-balance .customer-balance { grid-column: 1; grid-row: 2; white-space: nowrap; font-size: clamp(14px, 4.3vw, 18px) !important; }
-.app-shell .customer-row-large-balance .customer-consume { grid-column: 2; grid-row: 1 / span 2; }
-.app-shell .member-detail-header-copy .copyable-text { min-height: 44px; min-width: 44px; }
-.app-shell .member-detail-header-copy [aria-label="复制会员姓名"] { max-width: none; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; font-size: 18px; }
-.app-shell .member-detail-header-copy { min-width: 0; }
-.app-shell .member-balance-panel { border-radius: 20px; }
-.app-shell .member-balance-panel .text-slate-400 { color: #b9c8d4; }
+.app-shell .customer-notes { font-size: 12px; line-height: 1.5; color: #64748b; }
+.app-shell .customer-visit { font-size: 12px; line-height: 1.5; }
+.app-shell .customer-balance { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.app-shell .customer-consume { min-width: 76px; min-height: 44px; padding: 8px 12px; font-size: 14px; }
+.app-shell .customer-row.customer-row-large-balance { grid-template-columns: minmax(0, 1fr); }
+.app-shell .customer-row-large-balance .customer-row-actions { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.app-shell .customer-row-large-balance .customer-balance { white-space: nowrap; font-size: clamp(14px, 4.3vw, 18px); }
+.member-toolbar { scroll-margin-top: 130px; }
+.member-detail-heading { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--ui-border); flex: none; }
+.member-detail-identity { flex: 1; min-width: 0; }
+.member-detail-identity h2 { font-size: 18px; font-weight: 700; overflow-wrap: anywhere; line-height: 1.3; }
+.member-detail-identity > span { font-size: 14px; color: var(--ui-muted); }
+.member-detail-identity small { font-size: 12px; }
+.member-close { width: 44px; height: 44px; border-radius: 50%; background: #f1f5f9; flex: none; }
+.member-more { position: relative; flex: none; }
+.member-more > summary { list-style: none; color: var(--ui-accent); font-size: 14px; padding: 10px 6px; }
+.member-more > div { position: absolute; right: 0; top: 100%; width: 144px; z-index: 2; padding: 6px; border: 1px solid var(--ui-border); border-radius: 12px; background: white; box-shadow: 0 8px 24px #0f172a18; }
+.member-more button { display: block; width: 100%; text-align: left; padding: 8px; font-size: 14px; }
+.app-shell .member-balance-panel { border-radius: 14px; padding: 12px; background: #f1f7f4; color: #1e293b; box-shadow: none; border: 1px solid #deebe4; }
+.app-shell .member-balance-panel .text-slate-300 { color: #475569; }
+.app-shell .member-balance-value { margin-top: 0; font-size: 28px; line-height: 1.25; }
+.app-shell .member-balance-panel > .grid { margin-top: 8px; padding-top: 8px; border-color: #d5e4db; }
+.app-shell .member-balance-panel > .grid > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.app-shell .member-balance-panel > p { font-size: 11px; margin-top: 4px; }
+.app-shell .member-balance-panel .text-slate-400 { color: #64748b; }
 .app-shell .member-balance-panel .tabular-nums { white-space: normal; overflow-wrap: anywhere; }
 .app-shell .member-balance-value-large { font-size: clamp(16px, 5vw, 24px); }
 .app-shell .member-history-row-large { flex-direction: column; align-items: stretch; gap: 8px; }
@@ -90,16 +98,13 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .app-shell .account-signout { width: 100%; min-height: 48px; color: #b91c1c; background: #fff5f5; border: 1px solid #fecaca; border-radius: 12px; font-size: 15px; font-weight: 600; }
 .app-shell .settings-summary > div { flex-wrap: wrap; }
 .app-shell .settings-entry-icon { width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; border-radius: 12px; background: #edf6f3; color: #167c68; }
-.app-shell .settings-menu-item { min-height: 76px; padding: 14px 16px; }
-.app-shell .settings-entry-copy strong { font-size: 16px; font-weight: 650; }
+.app-shell .settings-menu-item { min-height: 60px; padding: 10px 14px; }
+.app-shell .settings-entry-copy strong { font-size: 15px; font-weight: 600; }
 .app-shell .settings-entry-copy small { font-size: 13px; white-space: normal; overflow: visible; line-height: 1.5; }
 .app-shell .settings-back { min-width: 88px; min-height: 44px; }
 .app-shell .settings-page-heading { gap: 8px; }
 .app-shell .settings-page-heading h2 { text-align: right; font-size: 16px; }
 .app-shell .ledger-tabs button { min-height: 44px; padding: 8px 6px; font-size: 14px; }
-.app-shell .ledger-type-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; min-width: 0; }
-.app-shell .ledger-period-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; min-width: 0; }
-.app-shell .ledger-type-options button, .app-shell .ledger-period-options button { min-width: 0; padding: 6px 2px; font-size: 12px; }
 .app-shell .ledger-entry-heading { align-items: start; }
 .app-shell .ledger-entry-name { white-space: normal; overflow-wrap: anywhere; }
 .app-shell .ledger-entry-wide .ledger-entry-heading { display: grid; grid-template-columns: minmax(0, 1fr); }
@@ -108,9 +113,19 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .app-shell .ledger-movement { font-variant-numeric: tabular-nums; }
 .app-shell .ledger-item-member { overflow-wrap: anywhere; }
 .app-shell .book-metrics dd { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.app-shell .report-period-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.app-shell .report-period-options button { min-height: 44px; }
-.app-shell .report-period-options [aria-selected="true"] { background: #167c68; color: white; }
+.app-shell .cash-overview h2 { font-size: 17px; }
+.app-shell .cash-overview-heading { flex-wrap: wrap; gap: 4px 10px; }
+.app-shell .cash-period { font-size: 12px; color: var(--ui-muted); }
+.app-shell .cash-metrics { margin: 12px 0; gap: 8px; }
+.app-shell .cash-metrics > div { padding: 10px; gap: 4px; min-width: 0; }
+.app-shell .cash-metrics p { font-size: 13px; }
+.app-shell .cash-metrics strong { font-size: 22px; }
+.app-shell .cash-snapshot { padding: 10px; gap: 8px; }
+.app-shell .cash-snapshot dt { font-size: 12px; }
+.app-shell .cash-snapshot dd { font-size: 16px; margin-top: 2px; }
+.app-shell .cash-snapshot-large { grid-template-columns: minmax(0, 1fr); }
+.app-shell .cash-snapshot-large > div { grid-column: 1; display: block; text-align: left; }
+.app-shell .cash-snapshot-large dd { white-space: nowrap; }
 .app-shell .report-kpis > div { min-width: 0; padding: 14px; }
 .app-shell .report-kpis strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-size: 20px; }
 .app-shell .report-custom-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -120,6 +135,40 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .app-shell .app-nav .grid { height: 64px; }
 .app-shell .app-nav-item { min-height: 64px; font-size: 13px; }
 .app-shell .book-success { color: #116252; background: #edf8f3; border-color: #c7e7d8; }
+.app-shell .font-black { font-weight: 700; }
+.app-shell :is(.consume-sheet, .recharge-sheet, .member-detail-sheet) { max-height: calc(100dvh - max(var(--safe-top), 12px)); }
+.app-shell .consume-sheet { width: min(100%, 560px); height: min(92dvh, 860px); display: flex; flex-direction: column; }
+.app-shell .consume-header { padding: 8px 14px; }
+.app-shell .consume-amount-panel { margin: 6px 12px 8px; padding: 8px 10px; }
+.app-shell .consume-content { min-height: 0; flex: 1 1 auto; }
+.app-shell .consume-footer { padding: 8px 10px max(var(--safe-bottom), 10px); }
+.app-shell .consume-sheet .keypad-key { height: clamp(44px, 7.5dvh, 56px); font-size: 23px; }
+.app-shell .consume-sheet .keypad-function { font-size: 14px; }
+.app-shell .consume-sheet .keypad-confirm > span { font-size: 17px; }
+.consume-amount-input { display: none; min-width: 0; width: 100%; background: transparent; font-size: 28px; font-weight: 700; outline: none; }
+.consume-review { display: none; width: 100%; min-height: 48px; }
+.consume-review-active { display: block; }
+.sale-items, .sale-review-items { list-style: none; padding: 0; margin: 0; }
+.sale-items li, .sale-review-items li { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-bottom: 1px solid var(--ui-border); padding: 4px 0; font-size: 14px; }
+.sale-items li > span { min-width: 0; overflow-wrap: anywhere; }
+.sale-items small { color: var(--ui-muted); white-space: nowrap; }
+.sale-item-quantity { display: flex; align-items: center; gap: 10px; flex: none; }
+.sale-item-quantity button { min-width: 44px; min-height: 44px; border: 1px solid var(--ui-border); border-radius: 10px; }
+.recharge-totals { font-size: 13px; color: var(--ui-muted); }
+.recharge-totals strong { color: var(--ui-accent); font-size: 18px; }
+.ledger-filter-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ledger-filter-toolbar select { min-width: 0; min-height: 44px; border: 1px solid var(--ui-border); border-radius: 12px; padding: 8px 10px; background: #f8fafc; }
+.voice-settings .p-6 { padding: 16px; }
+.voice-settings h2 { font-size: 18px; }
+@media (max-height: 480px) {
+  .app-shell .consume-keypad { display: none; }
+  .app-shell .consume-review { display: block; }
+  .app-shell .consume-amount-input { display: block; }
+  .app-shell .consume-amount-display { display: none; }
+  .app-shell .consume-header { padding-block: 4px; }
+  .app-shell .consume-amount-panel { margin-block: 2px 4px; padding-block: 4px; }
+  .app-shell .consume-sheet > .w-12 { display: none; }
+}
 @media (max-width: 420px) {
   .app-shell .configuration-heading { align-items: start; flex-direction: column; gap: 6px; }
   .app-shell .configuration-heading legend { flex-shrink: 0; white-space: nowrap; }
@@ -132,14 +181,13 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
   .app-shell .header-inner { padding-inline: 10px; }
   .app-shell .brand-title { font-size: 16px; }
   .app-shell .register-member { padding-inline: 10px; font-size: 13px; }
-  .app-shell .customer-row { padding-inline: 10px !important; }
+  .app-shell .customer-row { padding-inline: 10px; }
   .app-shell .customer-row-large-balance .customer-row-actions { padding-left: 0; }
   .app-shell .filter-tab-pill { font-size: 12px; }
 }
 @media (min-width: 640px) {
   .app-shell .cashier-content { padding: 22px 24px calc(80px + var(--safe-bottom) + 16px); }
   .app-shell .header-inner { padding: 14px 24px; }
-  .app-shell .report-period-options { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }
 @media (orientation: landscape) and (min-width: 640px) and (max-height: 480px) {
   .app-shell .header-inner:has(.header-search-area) { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(220px, 1fr); align-items: center; gap: 12px; }

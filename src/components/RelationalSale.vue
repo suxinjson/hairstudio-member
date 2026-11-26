@@ -36,11 +36,13 @@
       <div class="consume-amount-panel mx-3.5 my-2 p-3 rounded-2xl bg-slate-50 border border-slate-200" :class="{ 'bg-rose-50 border-rose-200 text-rose-900': isConsumeDebt }">
         <div class="flex items-center justify-between text-xs font-bold text-slate-500 mb-0.5">
           <span>本次扣款金额</span>
-          <button v-if="form.pay" type="button" @click="clearConsumeAmount" class="text-rose-600 hover:underline cursor-pointer" aria-label="清空扣款金额">清空</button>
+          <button v-if="selectedItems.length" type="button" @click="useManualAmount" class="text-emerald-800" aria-label="改为手输金额">手输金额</button>
         </div>
         <div class="text-3xl sm:text-4xl font-black tracking-tight my-0.5 flex items-baseline gap-1" :class="isConsumeDebt ? 'text-rose-600' : 'text-slate-900'">
           <span class="text-xl sm:text-2xl text-emerald-800">¥</span>
-          <span>{{ form.pay || '0.00' }}</span>
+          <span v-if="selectedItems.length" class="consume-amount-display">{{ form.pay || '0.00' }}</span>
+          <button v-else type="button" class="consume-amount-display" aria-label="编辑扣款金额" @click="textEditing = false">{{ form.pay || '0.00' }}</button>
+          <input class="consume-amount-input" :value="form.pay" inputmode="decimal" aria-label="扣款金额" placeholder="0.00" :readonly="selectedItems.length > 0" @input="form.pay = $event.target.value" />
         </div>
         <div v-if="isConsumeDebt" class="text-xs font-bold text-rose-700 mt-1 flex items-center gap-1">
           <span>⚠️ 余额不足以扣除，将产生欠款记录</span>
@@ -50,14 +52,14 @@
       <!-- 可滚动区域：常用项目与备注 -->
       <div class="consume-content flex-1 overflow-y-auto px-3.5 space-y-2.5">
         <p v-if="currentMember.notes" class="p-2 bg-amber-50 rounded-xl border border-amber-200 text-amber-950 text-xs font-bold leading-relaxed break-words m-0">
-          💇 会员偏好：{{ currentMember.notes }}
+          {{ memberNotesLabel }}：{{ currentMember.notes }}
         </p>
 
         <!-- 常用项目快捷选择 -->
         <div v-if="currentConfiguration?.services?.length" class="space-y-1">
           <div class="flex items-center justify-between text-xs font-bold text-slate-600">
             <span>常用项目</span>
-            <span class="text-[11px] text-slate-400">点选自动填入金额</span>
+            <span class="text-[11px] text-slate-400">点选添加，可组合服务</span>
           </div>
           <div class="grid grid-cols-3 gap-1.5">
             <button
@@ -65,7 +67,7 @@
               :key="item.id"
               type="button"
               class="p-2 rounded-xl border text-left transition-all btn-press"
-              :class="form.note === item.name && form.pay === displayCents(item.priceCents) ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs' : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'"
+              :class="selectedItems.some(row => row.serviceId === item.id) ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs' : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'"
               @click="applyServicePreset(item)"
             >
               <div class="text-xs font-bold truncate leading-tight">{{ item.name }}</div>
@@ -74,13 +76,24 @@
           </div>
         </div>
 
+        <ul v-if="selectedItems.length" class="sale-items" aria-label="已选服务项目">
+          <li v-for="item in selectedItems" :key="item.serviceId">
+            <span>{{ item.name }} <small>¥{{ displayCents(item.unitPriceCents) }}</small></span>
+            <div class="sale-item-quantity">
+              <button type="button" :aria-label="`减少${item.name}`" @click="changeQuantity(item, -1)">−</button>
+              <span>{{ item.quantity }}</span>
+              <button type="button" :disabled="item.quantity >= 9999" :aria-label="`增加${item.name}`" @click="changeQuantity(item, 1)">＋</button>
+            </div>
+          </li>
+        </ul>
         <label class="block space-y-1">
-          <span class="text-xs font-bold text-slate-600">服务项目与补充说明</span>
+          <span class="text-xs font-bold text-slate-600">补充说明（选填）</span>
           <input
             v-model.trim="form.note"
             type="text"
             maxlength="512"
-            placeholder="填写服务项目或补充说明"
+            placeholder="补充服务要求，不影响项目金额"
+            @focus="textEditing = true"
             class="w-full h-10 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 focus:bg-white focus:border-emerald-600 outline-none"
           />
         </label>
@@ -89,12 +102,15 @@
       <!-- 底部固定触控键盘 -->
       <footer class="consume-footer border-t border-slate-100 bg-white p-2 pb-gesture-safe shrink-0">
         <Keypad
+          v-if="!selectedItems.length && !textEditing"
+          class="consume-keypad"
           v-model="form.pay"
-          :confirm-text="isConsumeDebt ? '核对欠款' : '确认扣款'"
+          :confirm-text="isConsumeDebt ? '核对欠款' : '核对扣款'"
           :theme="isConsumeDebt ? 'danger' : 'primary'"
           :disabled="busy || blocked"
           @confirm="review"
         />
+        <button type="submit" class="consume-review book-primary" :class="{ 'consume-review-active': selectedItems.length || textEditing }" :disabled="busy || blocked || !form.pay">{{ isConsumeDebt ? '核对欠款' : '核对扣款' }}</button>
       </footer>
     </form>
 
@@ -131,7 +147,7 @@
 
       <div class="recharge-content flex-1 overflow-y-auto p-4 space-y-3">
         <p v-if="currentMember.notes" class="p-2 bg-amber-50 rounded-xl border border-amber-200 text-amber-950 text-xs font-bold leading-relaxed break-words m-0">
-          💇 会员偏好：{{ currentMember.notes }}
+          {{ memberNotesLabel }}：{{ currentMember.notes }}
         </p>
         <div v-if="BigInt(currentMember.balanceCents) < 0n" class="p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold">
           充值将优先抵扣欠款，结清后剩余金额转为可用余额。
@@ -185,7 +201,9 @@
             <div class="recharge-input-box flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 focus-within:bg-white focus-within:border-emerald-600 focus-within:ring-1 focus-within:ring-emerald-600 transition-colors">
               <span class="text-emerald-700 font-bold text-base mr-1.5 select-none shrink-0" aria-hidden="true">¥</span>
               <input
-                v-model.trim="form.gift"
+                :value="giftDisplay"
+                @input="form.gift = $event.target.value.trim()"
+                aria-label="赠送金额"
                 inputmode="decimal"
                 :readonly="Boolean(form.planId)"
                 placeholder="0.00"
@@ -195,9 +213,10 @@
           </label>
         </div>
 
+        <p class="recharge-totals" aria-live="polite">到账合计 <strong>¥{{ creditDisplay }}</strong><span v-if="currentConfiguration.rechargeSettings?.giftEnabled"> · {{ form.gift === '' ? '赠送按门店规则自动计算，可手填覆盖' : '赠送使用当前填写金额' }}</span></p>
         <!-- 收款方式 -->
         <div class="space-y-1">
-          <span class="text-xs font-bold text-slate-600">收款方式</span>
+          <span class="text-xs font-bold text-slate-600">收款方式（默认微信，请按实收渠道核对）</span>
           <div class="grid grid-cols-4 gap-1.5">
             <button
               v-for="method in ['微信', '支付宝', '现金', '银行卡']"
@@ -298,6 +317,8 @@
             <span>手机号码</span>
             <strong class="font-mono text-slate-800">{{ formatPhone(currentMember.phone) || '未留手机号' }}</strong>
           </div>
+          <div v-if="type === 'recharge'" class="flex justify-between items-center text-slate-600"><span>收款方式</span><strong>{{ preview.draft.payMethod }}</strong></div>
+          <ul v-if="type === 'consume'" class="sale-review-items"><li v-for="(item, index) in preview.draft.items" :key="index">{{ item.name }} × {{ item.quantity }} <strong>¥{{ displayCents(String(BigInt(item.unitPriceCents) * BigInt(item.quantity))) }}</strong></li></ul>
           <div v-if="form.note" class="flex justify-between items-center text-slate-600">
             <span>项目说明</span>
             <strong class="text-slate-800 truncate max-w-[170px]">{{ form.note }}</strong>
@@ -369,7 +390,8 @@ const props = defineProps({
   type: { type: String, default: 'consume' },
   member: { type: Object, required: true },
   configuration: { type: Object, required: true },
-  entry: Object
+  entry: Object,
+  memberNotesLabel: { type: String, default: '会员偏好与备注' }
 });
 
 const emit = defineEmits(['close', 'done']);
@@ -379,6 +401,14 @@ const currentConfiguration = shallowRef(props.configuration);
 const busy = ref(false);
 const error = ref('');
 const preview = ref(null);
+const selectedItems = ref([]), textEditing = ref(false);
+const resolvedGift = computed(() => {
+  if (!currentConfiguration.value?.rechargeSettings?.giftEnabled) return '0';
+  if (form.gift !== '') return yuanCents(form.gift);
+  return suggestedGift(yuanCents(form.pay || '0'), currentConfiguration.value.rechargeSettings);
+});
+const giftDisplay = computed(() => { try { return displayCents(resolvedGift.value); } catch { return form.gift; } });
+const creditDisplay = computed(() => { try { return displayCents(String(BigInt(yuanCents(form.pay || '0')) + BigInt(resolvedGift.value))); } catch { return '—'; } });
 
 const form = reactive({
   planId: '',
@@ -391,7 +421,7 @@ const form = reactive({
 
 let alive = true;
 onScopeDispose(() => { alive = false; });
-watch(() => [form.planId, form.pay, form.gift, form.note, form.payment, currentMember.value, currentConfiguration.value], () => {
+watch(() => [form.planId, form.pay, form.gift, form.note, form.payment, JSON.stringify(selectedItems.value), currentMember.value, currentConfiguration.value], () => {
   preview.value = null;
   form.allowDebt = false;
 }, { flush: 'sync' });
@@ -424,13 +454,22 @@ const formatPhone = value => {
   return value;
 };
 
-function clearConsumeAmount() {
-  form.pay = '';
+function useManualAmount() { selectedItems.value = []; form.pay = ''; }
+function sumItems() {
+  form.pay = selectedItems.value.length ? displayCents(String(selectedItems.value.reduce((sum, row) => sum + BigInt(row.unitPriceCents) * BigInt(row.quantity), 0n))) : '';
 }
-
+function changeQuantity(item, delta) {
+  item.quantity = Math.max(0, Math.min(9999, item.quantity + delta));
+  selectedItems.value = selectedItems.value.filter(row => row.quantity > 0);
+  sumItems();
+}
 function applyServicePreset(item) {
-  form.pay = displayCents(item.priceCents);
-  form.note = item.name;
+  const row = selectedItems.value.find(row => row.serviceId === item.id);
+  if (row) changeQuantity(row, 1);
+  else if (selectedItems.value.length < 100) {
+    selectedItems.value.push({ serviceId: item.id, name: item.name, unitPriceCents: item.priceCents, quantity: 1 });
+    sumItems();
+  }
 }
 
 function togglePlan(plan) {
@@ -482,7 +521,7 @@ function review() {
     if (type === 'recharge') {
       if (!form.pay) throw new Error('请输入充值金额');
       const actualPayCents = yuanCents(form.pay, { positive: true });
-      const giftCents = !configuration.rechargeSettings?.giftEnabled ? '0' : form.gift ? yuanCents(form.gift) : suggestedGift(actualPayCents, configuration.rechargeSettings);
+      const giftCents = resolvedGift.value;
       draft = {
         ...base,
         actualPayCents,
@@ -496,11 +535,12 @@ function review() {
     } else if (type === 'consume') {
       if (!form.pay) throw new Error('请输入扣款金额');
       const unitPriceCents = yuanCents(form.pay, { positive: true });
-      const serviceName = form.note || '消费扣款';
+      const items = selectedItems.value.length ? selectedItems.value.map(row => ({ ...row })) : [{ name: '自定义消费', unitPriceCents, quantity: 1 }];
+      const serviceName = items.map(row => row.name + (row.quantity > 1 ? ' ×' + row.quantity : '')).join('、');
       draft = {
         ...base,
         amountCents: unitPriceCents,
-        items: [{ name: serviceName, unitPriceCents, quantity: 1 }],
+        items,
         itemsSummary: serviceName.slice(0, 128),
         configurationVersion: configuration.version,
         remark: form.note,
@@ -545,6 +585,8 @@ async function commit() {
           currentConfiguration.value = configuration;
           if (form.planId) { form.planId = ''; form.pay = ''; }
           form.gift = '';
+          selectedItems.value = [];
+          form.pay = '';
           error.value = '成交规则已变化，请按最新价格和赠送规则重新确认。';
         }
       } else {

@@ -5,8 +5,27 @@ import { nativeCredentials } from './helpers/native-fixture.mjs';
 import { createDeviceAccess } from '../src/device-access.js';
 import { createRelationalNativeSession } from '../src/relational-native-session.js';
 import { LICENSE_FEATURES } from '../src/license-policy.js';
+import { memoryStorage } from './helpers/native-fixture.mjs';
 
 const origin = 'https://native.example.test';
+
+test('standalone owner profile persists across restart, rejects stale versions and enforces role and feature permissions', async () => {
+  const device = nativeCredentials(randomUUID()), storage = memoryStorage();
+  const claims = { id: 'local-license', storeId: 'offline-profile-store', storeName: '许可门店', user: { id: 'offline-owner', storeId: 'offline-profile-store', role: 'owner' } };
+  let features = [...LICENSE_FEATURES];
+  const access = { initialize: async () => {}, localLicense: () => claims, cachedUser: () => claims.user, snapshot: () => ({ allowed: true, features }), assert() {}, inspectOffline: async () => claims, activateOffline: async () => claims };
+  const create = () => createRelationalNativeSession({ device, storage, access, isOnline: () => false });
+  const session = create(); await session.activateOffline('synthetic-license', 'synthetic-password');
+  const result = await session.saveStoreProfile({ ...session.state.storeProfile, name: '离线新门店', memberNotesLabel: '注意事项' }, 0);
+  assert.equal(result.version, 1);
+  const restarted = create(); await restarted.init(); assert.equal(restarted.state.storeProfile.name, '离线新门店'); assert.equal((await restarted.loadStoreProfile()).memberNotesLabel, '注意事项');
+  await assert.rejects(restarted.saveStoreProfile(result, 0), { code: 'STORE_PROFILE_CHANGED' });
+  restarted.state.user = { ...restarted.state.user, role: 'viewer' };
+  await assert.rejects(restarted.saveStoreProfile(result, 1), { code: 'FORBIDDEN' });
+  restarted.state.user = { ...restarted.state.user, role: 'owner' }; features = ['core', 'members'];
+  await assert.rejects(restarted.saveStoreProfile(result, 1), { code: 'FORBIDDEN' });
+  assert.equal(JSON.parse(storage.getItem('hairstudio_v2_store_profile:' + claims.storeId)).name, '离线新门店');
+});
 
 function fixture() {
   const deviceId = randomUUID(), ledgerEpoch = randomUUID();

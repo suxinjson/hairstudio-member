@@ -38,7 +38,7 @@ const files = createOpeningFiles(props.workspace);
 const review = shallowRef(null), pending = shallowRef(null);
 const working = ref(false), error = ref(''), message = ref(''), approved = ref(false);
 const sourceDigest = ref(''), payloadDigest = ref('');
-const blocked = computed(() => props.workspace.state.busy || props.workspace.state.pending || props.workspace.state.pendingError);
+const blocked = computed(() => Boolean(props.workspace.state.busy || props.workspace.state.pending || props.workspace.state.pendingError));
 const stale = computed(() => pending.value && pending.value.ledgerEpoch !== props.workspace.state.book?.ledgerEpoch);
 const canRead = computed(() => !working.value && !blocked.value && !stale.value && /^[a-f0-9]{64}$/.test(sourceDigest.value) && /^[a-f0-9]{64}$/.test(payloadDigest.value));
 let live = true;
