@@ -61,17 +61,17 @@
             <span>常用项目</span>
             <span class="text-[11px] text-slate-400">点选添加，可组合服务</span>
           </div>
-          <div class="grid grid-cols-3 gap-1.5">
+          <div class="service-presets" :class="{ 'service-presets-list': serviceListLayout }">
             <button
               v-for="item in currentConfiguration.services"
               :key="item.id"
               type="button"
-              class="p-2 rounded-xl border text-left transition-all btn-press"
+              class="service-preset p-2 rounded-xl border text-left transition-all btn-press"
               :class="selectedItems.some(row => row.serviceId === item.id) ? 'bg-emerald-700 text-white border-emerald-700 shadow-xs' : 'bg-slate-50 text-slate-800 border-slate-200 hover:bg-slate-100'"
               @click="applyServicePreset(item)"
             >
-              <div class="text-xs font-bold truncate leading-tight">{{ item.name }}</div>
-              <div class="text-xs font-black mt-0.5 tabular-nums">¥{{ displayCents(item.priceCents) }}</div>
+              <div class="service-preset-name text-xs font-bold leading-tight">{{ item.name }}</div>
+              <div class="service-preset-price text-xs font-black tabular-nums">¥{{ displayCents(item.priceCents) }}</div>
             </button>
           </div>
         </div>
@@ -201,19 +201,19 @@
             <div class="recharge-input-box flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 focus-within:bg-white focus-within:border-emerald-600 focus-within:ring-1 focus-within:ring-emerald-600 transition-colors">
               <span class="text-emerald-700 font-bold text-base mr-1.5 select-none shrink-0" aria-hidden="true">¥</span>
               <input
-                :value="giftDisplay"
-                @input="form.gift = $event.target.value.trim()"
+                v-model="form.gift"
                 aria-label="赠送金额"
                 inputmode="decimal"
                 :readonly="Boolean(form.planId)"
-                placeholder="0.00"
+                :placeholder="automaticGiftDisplay"
                 class="recharge-currency-input flex-1 min-w-0 h-11 bg-transparent border-0 outline-none text-base font-black text-emerald-800 focus:ring-0 shadow-none"
               />
             </div>
           </label>
         </div>
 
-        <p class="recharge-totals" aria-live="polite">到账合计 <strong>¥{{ creditDisplay }}</strong><span v-if="currentConfiguration.rechargeSettings?.giftEnabled"> · {{ form.gift === '' ? '赠送按门店规则自动计算，可手填覆盖' : '赠送使用当前填写金额' }}</span></p>
+        <p class="recharge-totals" aria-live="polite">到账合计 <strong>{{ rechargeAmounts.error ? '—' : '¥' + creditDisplay }}</strong><span v-if="currentConfiguration.rechargeSettings?.giftEnabled"> · {{ form.gift.trim() === '' ? '自动赠送 ¥' + automaticGiftDisplay + '，可手填覆盖' : '赠送使用当前填写金额' }}</span></p>
+        <p v-if="form.pay && rechargeAmounts.error" class="text-xs text-rose-700" role="status">{{ rechargeAmounts.error }}</p>
         <!-- 收款方式 -->
         <div class="space-y-1">
           <span class="text-xs font-bold text-slate-600">收款方式（默认微信，请按实收渠道核对）</span>
@@ -247,7 +247,7 @@
       <footer class="recharge-footer border-t border-slate-100 bg-white p-3.5 pb-gesture-safe shrink-0">
         <button
           type="submit"
-          :disabled="busy || blocked || !form.pay"
+          :disabled="busy || blocked || Boolean(rechargeAmounts.error)"
           class="w-full h-12 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-xl font-black text-base shadow-md shadow-emerald-500/20 flex items-center justify-center btn-press disabled:opacity-50"
           aria-label="核对金额"
         >
@@ -398,18 +398,11 @@ const emit = defineEmits(['close', 'done']);
 
 const currentMember = shallowRef(props.member);
 const currentConfiguration = shallowRef(props.configuration);
+const serviceListLayout = computed(() => currentConfiguration.value?.services?.some(item => item.name.length > 8 || displayCents(item.priceCents).length > 8));
 const busy = ref(false);
 const error = ref('');
 const preview = ref(null);
 const selectedItems = ref([]), textEditing = ref(false);
-const resolvedGift = computed(() => {
-  if (!currentConfiguration.value?.rechargeSettings?.giftEnabled) return '0';
-  if (form.gift !== '') return yuanCents(form.gift);
-  return suggestedGift(yuanCents(form.pay || '0'), currentConfiguration.value.rechargeSettings);
-});
-const giftDisplay = computed(() => { try { return displayCents(resolvedGift.value); } catch { return form.gift; } });
-const creditDisplay = computed(() => { try { return displayCents(String(BigInt(yuanCents(form.pay || '0')) + BigInt(resolvedGift.value))); } catch { return '—'; } });
-
 const form = reactive({
   planId: '',
   pay: '',
@@ -418,6 +411,26 @@ const form = reactive({
   allowDebt: false,
   payment: '微信'
 });
+
+// Editing keeps the exact string and caret position. Only a fresh, valid parse
+// may produce the amounts used by the review and its submission snapshot.
+function parseRechargeAmounts() {
+  const actualPayCents = yuanCents(form.pay, { positive: true });
+  const settings = currentConfiguration.value?.rechargeSettings;
+  const giftCents = !settings?.giftEnabled ? '0' : form.gift.trim() === ''
+    ? suggestedGift(actualPayCents, settings) : yuanCents(form.gift);
+  return { actualPayCents, giftCents };
+}
+const rechargeAmounts = computed(() => {
+  try { return { ...parseRechargeAmounts(), error: '' }; }
+  catch (cause) { return { error: cause.message }; }
+});
+const automaticGiftDisplay = computed(() => {
+  try { return displayCents(suggestedGift(yuanCents(form.pay || '0'), currentConfiguration.value.rechargeSettings)); }
+  catch { return '—'; }
+});
+const creditDisplay = computed(() => rechargeAmounts.value.error ? '—'
+  : displayCents(String(BigInt(rechargeAmounts.value.actualPayCents) + BigInt(rechargeAmounts.value.giftCents))));
 
 let alive = true;
 onScopeDispose(() => { alive = false; });
@@ -520,8 +533,7 @@ function review() {
 
     if (type === 'recharge') {
       if (!form.pay) throw new Error('请输入充值金额');
-      const actualPayCents = yuanCents(form.pay, { positive: true });
-      const giftCents = resolvedGift.value;
+      const { actualPayCents, giftCents } = parseRechargeAmounts();
       draft = {
         ...base,
         actualPayCents,

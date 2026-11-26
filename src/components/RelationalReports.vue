@@ -31,7 +31,8 @@
     </div>
 
     <template v-if="result">
-      <DashboardSummary :summary="result.summary" :balances="result.balances" :period-label="period === 'today' ? '今日 ' + first : first + ' 至 ' + last" />
+      <p v-if="rangeEdited" class="book-hint" role="status">日期已修改，点击查询后更新。以下仍为 {{ loadedRange.label }} 的结果。</p>
+      <DashboardSummary :summary="result.summary" :balances="result.balances" :period-label="loadedRange.label" />
       <p class="book-hint">充值、消费均按当前区间的交易与冲正净额核算。原消费 {{ result.summary.consumeCount }} 笔，冲正消费 {{ result.summary.reversedConsumeCount || 0 }} 笔；新增在用会员 {{ result.summary.newActiveMemberCount }} 人。</p>
       <!-- 2. 充值与消费趋势图表 (SVG 走势图) -->
       <section class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs">
@@ -129,49 +130,6 @@
             </table>
           </div>
         </details>
-      </section>
-
-      <!-- 3. 会员账户资产概览 (余额分布) -->
-      <section class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs">
-        <div class="flex items-center justify-between gap-2 mb-2">
-          <h3 class="text-sm font-black text-slate-800 m-0">会员余额分布</h3>
-          <span class="text-xs text-slate-500 font-medium">当前在用 {{ result.balances.memberCount }} 人</span>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2 mt-2">
-          <div class="p-3 bg-emerald-50/70 border border-emerald-200/60 rounded-xl">
-            <span class="text-[11px] font-bold text-emerald-800">可用储值总额</span>
-            <strong class="block text-base font-black text-emerald-700 mt-0.5">
-              ¥{{ displayCents(result.balances.storedCents) }}
-            </strong>
-          </div>
-          <div class="p-3 bg-rose-50/70 border border-rose-200/60 rounded-xl">
-            <span class="text-[11px] font-bold text-rose-800">待收欠款总额</span>
-            <strong class="block text-base font-black text-rose-600 mt-0.5">
-              ¥{{ displayAbsoluteCents(result.balances.debtCents) }}
-            </strong>
-          </div>
-        </div>
-
-        <!-- 4 档区间统计 -->
-        <div class="grid grid-cols-4 gap-1.5 mt-2.5 text-center">
-          <div class="p-2 bg-slate-50 rounded-xl border border-slate-100">
-            <span class="block text-[10px] text-slate-400 font-bold">50元以上</span>
-            <strong class="block text-xs font-black text-slate-700 mt-0.5">{{ result.balances.fundedCount }} 人</strong>
-          </div>
-          <div class="p-2 bg-slate-50 rounded-xl border border-slate-100">
-            <span class="block text-[10px] text-slate-400 font-bold">0–50元</span>
-            <strong class="block text-xs font-black text-slate-700 mt-0.5">{{ result.balances.lowCount }} 人</strong>
-          </div>
-          <div class="p-2 bg-slate-50 rounded-xl border border-slate-100">
-            <span class="block text-[10px] text-slate-400 font-bold">零余额</span>
-            <strong class="block text-xs font-black text-slate-700 mt-0.5">{{ result.balances.zeroCount }} 人</strong>
-          </div>
-          <div class="p-2 bg-rose-50/60 rounded-xl border border-rose-100">
-            <span class="block text-[10px] text-rose-600 font-bold">欠款会员</span>
-            <strong class="block text-xs font-black text-rose-700 mt-0.5">{{ result.balances.debtCount }} 人</strong>
-          </div>
-        </div>
       </section>
 
       <!-- 4. 会员净消费排行榜 Top 10 -->
@@ -272,7 +230,7 @@
 
 <script setup>
 import { computed, onMounted, onScopeDispose, ref, shallowRef, watch } from 'vue';
-import { displayAbsoluteCents, displayCents, businessDays, todayBusiness, BUSINESS_OFFSET } from '../relational-presentation.js';
+import { displayCents, businessDays, todayBusiness, BUSINESS_OFFSET } from '../relational-presentation.js';
 import DashboardSummary from './DashboardSummary.vue';
 import { useRelationalPage } from '../composables/useRelationalPage.js';
 
@@ -293,10 +251,13 @@ const last = ref(initialDay);
 const first = ref(props.initialPeriod === 'today' ? initialDay : initialDay.slice(0, 7) + '-01');
 const kind = ref('payment');
 const result = shallowRef(null);
+const loadedRange = shallowRef(null);
+const rangeEdited = computed(() => Boolean(loadedRange.value && (first.value !== loadedRange.value.first || last.value !== loadedRange.value.last)));
 const loading = ref(false);
 const error = ref('');
 
 let scope = businessDays(first.value, last.value), sequence = 0, rolloverTimer;
+let submittedRange = { first: first.value, last: last.value, label: period.value === 'today' ? '今日 ' + first.value : first.value + ' 至 ' + last.value };
 onScopeDispose(() => {
   sequence++;
   clearTimeout(rolloverTimer);
@@ -385,14 +346,18 @@ function showDateTick(idx) {
   return idx === 0 || idx === len - 1 || idx % Math.ceil(len / 4) === 0;
 }
 
-async function load() {
+async function load(range) {
   const request = ++sequence;
+  const requestScope = businessDays(range.first, range.last);
+  submittedRange = range;
+  scope = requestScope;
   loading.value = true;
   result.value = null;
   error.value = '';
   try {
-    const value = await props.workspace.read('reportBusiness', { ...scope, offsetMinutes: BUSINESS_OFFSET });
+    const value = await props.workspace.read('reportBusiness', { ...requestScope, offsetMinutes: BUSINESS_OFFSET });
     if (request === sequence) {
+      loadedRange.value = range;
       result.value = value;
       void breakdown.load();
     }
@@ -410,15 +375,22 @@ function refresh() {
       first.value = dates.start;
       last.value = dates.end;
     }
-    scope = businessDays(first.value, last.value);
-    void load();
+    businessDays(first.value, last.value);
+    void load({ first: first.value, last: last.value, label: period.value === 'today' ? '今日 ' + first.value : first.value + ' 至 ' + last.value });
   } catch (cause) {
+    sequence++;
+    loading.value = false;
+    result.value = null;
+    loadedRange.value = null;
+    submittedRange = null;
     error.value = cause.message;
   }
 }
 
 watch(() => props.workspace.state.revision, () => {
-  if (props.workspace.state.book) refresh();
+  if (!props.workspace.state.book) return;
+  if (period.value !== 'custom') refresh();
+  else if (submittedRange) void load(submittedRange);
 }, { immediate: true });
 
 function scheduleRollover() {

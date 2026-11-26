@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { browserLocks, vueUi } from './helpers/vue-ui.mjs';
 import { buildOpeningProjection } from '../tools/relational-import.mjs';
+import { VoicePlayer } from '../src/voice-player.js';
 
 const password = 'Synthetic-UI-2026!';
 const locks = browserLocks();
@@ -379,6 +380,44 @@ test('merchant batch with no phone column requires review of both spreadsheet an
   assert.equal(profiles.length, 4);
   assert.equal(profiles.filter(row => row.name === '同名合成').length, 2);
   assert.equal(profiles.filter(row => row.balanceCents === '0').length, 3);
+});
+
+test('voice settings render for owners, clerks and viewers; only owners edit and a missing license removes the entry', async () => {
+  await service.createUser(storeA.actor, { username: 'ui-voice-clerk', displayName: '语音收银员', password, role: 'clerk' });
+  await service.createUser(storeA.actor, { username: 'ui-voice-viewer', displayName: '语音只读员', password, role: 'viewer' });
+  for (const [username, role] of [[storeA.username, 'owner'], ['ui-voice-clerk', 'clerk'], ['ui-voice-viewer', 'viewer']]) {
+    await api.login(username, password); await ui.mount(Cashier);
+    await waitFor(() => document.querySelector('[aria-label="会员档案"]'));
+    ui.button('账号与设置').click(); await ui.nextTick(); ui.button('语音播报设置').click();
+    await waitFor(() => document.querySelector('.voice-template'));
+    assert.ok(document.querySelector('.voice-settings'));
+    assert.equal(ui.button('播报总开关').disabled, role !== 'owner');
+    assert.equal(document.querySelector('[aria-label="充值播报语句"]').disabled, role !== 'owner');
+    if (role === 'owner') {
+      await ui.input('[aria-label="充值播报语句"]', '{name} 充值 {amount} 元，唯一致谢：期待再次光临，余额 {balance} 元');
+      ui.button('保存播报配置').click(); await waitFor(() => has('语音播报配置已成功保存'));
+      const spoken = [];
+      const player = new VoicePlayer({ api: { getVoiceConfig: async () => ({ ...await api.getVoiceConfig(), enabled: true }) } });
+      player.queueSpeak = async text => { spoken.push(text); };
+      assert.equal(await player.broadcast('recharge', { name: '合成会员', amount: '100.00', balance: '200.00' }), true);
+      assert.deepEqual(spoken, ['合成会员 充值 100 元，唯一致谢：期待再次光临，余额 200 元']);
+    }
+    if (role !== 'owner') {
+      assert.ok(has('仅支持查看与播放已启用的播报'));
+      assert.equal([...document.querySelectorAll('button')].some(button => button.textContent.includes('保存播报配置')), false);
+      assert.ok([...document.querySelectorAll('.voice-template button')].every(button => button.disabled));
+    }
+    ui.unmount(); api.clearSession(); await drainRequests();
+  }
+  await database.pool.query('UPDATE store_licenses SET features=$1::jsonb WHERE store_id=$2', [JSON.stringify(['core', 'members']), storeA.actor.store_id]);
+  for (const username of [storeA.username, 'ui-voice-clerk', 'ui-voice-viewer']) {
+    await api.login(username, password); await ui.mount(Cashier);
+    await waitFor(() => document.querySelector('[aria-label="会员档案"]'));
+    ui.button('账号与设置').click(); await ui.nextTick();
+    assert.equal([...document.querySelectorAll('.settings-menu-item')].some(button => button.textContent.includes('语音播报设置')), false);
+    assert.equal(document.querySelector('.voice-settings'), null);
+    ui.unmount(); api.clearSession(); await drainRequests();
+  }
 });
 
 test('fixture cleanup waits for server work even after its client disconnects', async t => {

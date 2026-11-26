@@ -21,7 +21,7 @@ import { SlidersHorizontal, ChevronDown, Check } from 'lucide-vue-next';
 const CUSTOMER_FILTERS = [
   { value: 'all', label: '全部会员', description: '查看完整会员名单' },
   { value: 'recent', label: '最近来店', description: '按消费时间，显示最近会员' },
-  { value: 'low', label: '低余额', description: '可用余额 0–50 元' },
+  { value: 'low', label: '低余额', description: '可用余额 0–50 元（含零余额）' },
   { value: 'debt', label: '欠款会员', description: '查看待还款会员' }
 ];
 

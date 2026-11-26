@@ -15,7 +15,7 @@
     </form>
     <p v-if="balance === 'recent'" class="book-hint">最近 12 位有有效消费的会员，按消费时间排序；完整交易可在账务流水查看。</p>
     <p v-else-if="balance === 'archived'" class="book-hint">归档会员已退出在用名单，历史流水保留，可打开档案查看。当前暂不支持恢复原档案；再次登记将创建独立的新档案。</p>
-    <p v-else-if="balance === 'low'" class="book-hint">可用余额 0–50 元</p>
+    <p v-else-if="balance === 'low'" class="book-hint">可用余额 0–50 元（含零余额）</p>
     <p v-if="error && !detail && !editor" class="book-panel book-alert" role="alert">{{ error }}</p>
     <p v-if="receipt && !detail" class="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm font-semibold" role="status">{{ receipt }}</p>
     <p v-if="voiceNotice" class="book-panel" role="status">{{ voiceNotice }}</p>
@@ -71,7 +71,7 @@
           <button
             type="button"
             class="customer-consume cursor-pointer"
-            v-if="canCashier"
+            v-if="canCashier && !member.archivedAt"
             :disabled="blocked"
             :aria-label="`为${member.name}扣款`"
             @click.stop="quickSale(member, 'consume')"
@@ -335,7 +335,7 @@ const emit = defineEmits(['history', 'update:balanceFilter', 'update:searchQuery
 const filterOptions = [
   { value: 'all', label: '全部会员', description: '查看完整会员名单' },
   { value: 'recent', label: '最近消费', description: '按消费时间，显示最近会员' },
-  { value: 'low', label: '低余额', description: '可用余额 0–50 元' },
+  { value: 'low', label: '低余额', description: '可用余额 0–50 元（含零余额）' },
   { value: 'debt', label: '欠款会员', description: '查看待还款会员' },
   { value: 'archived', label: '已归档会员', description: '保留历史，退出在用名单' }
 ];
@@ -530,6 +530,10 @@ function closeDetail() {
 async function openSale(type, member = detail.value) {
   if (!canCashier.value || blocked.value || !member) return;
   error.value = '';
+  if (type !== 'reverse' && member.archivedAt) {
+    error.value = '会员已归档，无法发起充值或扣款。';
+    return;
+  }
   const request = ++saleSequence, selected = detailSequence;
   saleLoading.value = true;
   try {

@@ -14,7 +14,8 @@
       :cloud-locked="!unlocked"
       :cloud-online="Boolean(state.online)"
       :has-storage-error="Boolean(workspace.state.error)"
-      :can-create-member="canWrite && Boolean(workspace.state.book) && !workspace.state.busy && !workspace.state.pending && !workspace.state.pendingError"
+      :can-create-member="profileWritable && Boolean(workspace.state.book) && !workspace.state.busy && !workspace.state.pending && !workspace.state.pendingError"
+      :create-member-hint="!standalone && !state.online ? '登记与修改会员资料需联网。' + (feature('cashier') ? '已有会员仍可离线收银。' : '') : ''"
       v-model:search-query="headerSearchQuery"
       @open-notices="noticesOpen = true"
       @create-member="openNewMember"
@@ -49,7 +50,7 @@
         <NoticeTicker v-else :items="notices.headerItems.value" @open="noticesOpen = true" />
         <div v-show="!noticesOpen" class="book-stack">
           <RelationalWorkbench ref="workbench" :workspace="workspace" :identity="identity" :owner="owner" :writable="canWrite"
-            :profile-writable="canWrite && (standalone || state.online)" :feature="feature" :announce="announce" :backup="standalone ? archive : null"
+            :profile-writable="profileWritable" :feature="feature" :announce="announce" :backup="standalone ? archive : null"
             :store-name="state.storeProfile.name" :member-notes-label="state.storeProfile.memberNotesLabel" :connection-label="connectionLabel" :online="state.online" :can-update="!standalone" :copy-text="copyText"
             v-model:search-query="headerSearchQuery" v-model:balance-filter="headerCustomerFilter">
             <template #connection>
@@ -137,6 +138,7 @@ const connectionLabel = computed(() => state.user ? state.user.displayName + ' �
 const unlocked = computed(() => Boolean(state.user && state.deviceAccess.allowed));
 const owner = computed(() => state.user?.role === 'owner');
 const canWrite = computed(() => unlocked.value && state.user?.role !== 'viewer' && workspace.state.replicaReady && !workspace.state.blockedEpoch && !state.busy);
+const profileWritable = computed(() => canWrite.value && (standalone.value || state.online));
 const identity = computed(() => JSON.stringify([state.user?.storeId, state.user?.id, state.generation]));
 const feature = name => allowsFeature(state.deviceAccess.features, name);
 const copyText = text => cloudDeviceBridge.copyText({ text });

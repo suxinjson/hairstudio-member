@@ -6,6 +6,7 @@ import { relationalTestDatabase } from './helpers/relational-database.js';
 import { createApi } from '../http.js';
 import { migrate } from '../database.js';
 import { verifyMemberTotals } from '../../tests/helpers/member-totals.mjs';
+import { verifyLowBalanceBoundaries } from '../../tests/helpers/low-balance-boundaries.mjs';
 
 let database, pool, service, ledger, identity, accessToken, server, origin;
 const password = 'Relational-Test-2026!';
@@ -30,6 +31,14 @@ beforeEach(async () => {
 
   const session = await service.login({ username: 'relational-owner', password, deviceId: randomUUID() }, '127.0.0.1');
   accessToken = session.accessToken; identity = await service.authenticate(accessToken); identity.ledgerEpoch = (await ledger.getBook(identity)).ledgerEpoch;
+});
+
+test('server inclusive low-balance list equals zero plus the positive-low report band at every cent boundary', async () => {
+  await verifyLowBalanceBoundaries({
+    importMembers: data => ledger.importOpeningBalances(identity, { ...data, ledgerEpoch: identity.ledgerEpoch }),
+    list: input => ledger.listMembers(identity, input),
+    report: input => ledger.reportBusiness(identity, input)
+  });
 });
 
 test('PostgreSQL member totals preserve full lifetime precision and serve a scoped HTTP aggregate', async () => {

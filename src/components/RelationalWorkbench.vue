@@ -233,10 +233,11 @@ const memberPage = ref(null);
 const ledgerPage = ref(null);
 const showMembers = computed(() => props.feature('members'));
 const showLedger = computed(() => props.feature('cashier') || props.feature('reports'));
+const homePage = computed(() => showMembers.value ? 'members' : showLedger.value ? 'ledger' : 'settings');
 const navigationCount = computed(() => 1 + Number(showMembers.value) + Number(showLedger.value));
 watch([showMembers, showLedger], () => {
   if ((active.value === 'members' && !showMembers.value) || (active.value === 'ledger' && !showLedger.value)) {
-    active.value = showMembers.value ? 'members' : showLedger.value ? 'ledger' : 'settings';
+    active.value = homePage.value;
   }
 }, { immediate: true });
 
@@ -303,9 +304,9 @@ const hasOpenAction = computed(() => Boolean(memberPage.value?.hasOpenAction || 
 const bookKey = computed(() => JSON.stringify([props.identity, props.workspace.state.book?.ledgerEpoch]));
 
 watch(() => props.identity, () => {
-  active.value = 'members';
+  active.value = homePage.value;
   memberFilter.value = 'all';
-  ledgerView.value = 'summary';
+  ledgerView.value = ledgerViews.value[0]?.key || 'summary';
   settingsSubTab.value = 'overview';
   visitedSettings.clear();
 });
@@ -377,15 +378,15 @@ defineExpose({
     }
     if (active.value === 'ledger' && history.value.id) {
       history.value = {};
-      active.value = 'members';
+      active.value = homePage.value;
       return true;
     }
     if (active.value === 'settings' && settingsSubTab.value !== 'overview') {
       settingsSubTab.value = 'overview';
       return true;
     }
-    if (active.value !== 'members') {
-      active.value = 'members';
+    if (active.value !== homePage.value) {
+      active.value = homePage.value;
       history.value = {};
       memberFilter.value = 'all';
       return true;

@@ -19,6 +19,10 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .app-shell :is(input, textarea, select) { font-size: 16px; }
 .app-shell :is(button, summary) { touch-action: manipulation; }
 .app-shell button { min-height: 44px; }
+.app-shell :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { min-height: 44px; }
+.app-shell label:has(> input:is([type="checkbox"], [type="radio"])) { min-height: 44px; cursor: pointer; }
+.app-shell input:is([type="checkbox"], [type="radio"]) { width: 20px; height: 20px; flex: none; }
+.app-shell .cashier-content a { display: inline-flex; align-items: center; min-height: 44px; }
 .app-shell summary { min-height: 44px; padding-block: 8px; }
 .app-shell .notice-ticker-pause { min-width: 44px; width: 44px; }
 .app-shell button:focus-visible, .app-shell input:focus-visible,
@@ -59,7 +63,7 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .member-detail-identity small { font-size: 12px; }
 .member-close { width: 44px; height: 44px; border-radius: 50%; background: #f1f5f9; flex: none; }
 .member-more { position: relative; flex: none; }
-.member-more > summary { list-style: none; color: var(--ui-accent); font-size: 14px; padding: 10px 6px; }
+.member-more > summary { list-style: none; color: var(--ui-accent); font-size: 14px; padding: 10px 8px; min-width: 44px; text-align: center; }
 .member-more > div { position: absolute; right: 0; top: 100%; width: 144px; z-index: 2; padding: 6px; border: 1px solid var(--ui-border); border-radius: 12px; background: white; box-shadow: 0 8px 24px #0f172a18; }
 .member-more button { display: block; width: 100%; text-align: left; padding: 8px; font-size: 14px; }
 .app-shell .member-balance-panel { border-radius: 14px; padding: 12px; background: #f1f7f4; color: #1e293b; box-shadow: none; border: 1px solid #deebe4; }
@@ -126,6 +130,14 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .app-shell .cash-snapshot-large { grid-template-columns: minmax(0, 1fr); }
 .app-shell .cash-snapshot-large > div { grid-column: 1; display: block; text-align: left; }
 .app-shell .cash-snapshot-large dd { white-space: nowrap; }
+.cash-balance-distribution { border-top: 1px solid var(--ui-border); margin-top: 10px; }
+.cash-balance-distribution summary { color: var(--ui-accent); font-size: 14px; font-weight: 600; }
+.cash-balance-distribution summary small { color: var(--ui-muted); font-weight: 400; margin-left: 8px; }
+.cash-balance-distribution dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.cash-balance-distribution dl > div { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-radius: 10px; background: #f8fafc; padding: 10px; font-size: 12px; }
+.cash-balance-distribution dt { color: var(--ui-muted); }
+.cash-balance-distribution dd { font-weight: 600; }
+.cash-balance-distribution p { color: var(--ui-muted); font-size: 12px; margin-top: 8px; }
 .app-shell .report-kpis > div { min-width: 0; padding: 14px; }
 .app-shell .report-kpis strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; font-size: 20px; }
 .app-shell .report-custom-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -148,6 +160,16 @@ html.native-system-insets { --safe-top: 0px; --safe-bottom: 12px; }
 .consume-amount-input { display: none; min-width: 0; width: 100%; background: transparent; font-size: 28px; font-weight: 700; outline: none; }
 .consume-review { display: none; width: 100%; min-height: 48px; }
 .consume-review-active { display: block; }
+.service-presets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.service-preset { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; min-width: 0; min-height: 48px; }
+.service-presets-list { grid-template-columns: minmax(0, 1fr); }
+.service-presets-list .service-preset { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+.service-preset-name { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.service-preset-price { flex: none; white-space: nowrap; }
+.app-shell .configuration-currency { min-height: 46px; height: auto; }
+.app-shell .configuration-currency input { min-width: 0; flex: 1; min-height: 44px; align-self: stretch; }
+.app-shell .voice-settings label:has(> input[type="checkbox"]) { padding-block: 8px; }
+.app-shell .voice-settings input[type="range"] { min-width: 44px; }
 .sale-items, .sale-review-items { list-style: none; padding: 0; margin: 0; }
 .sale-items li, .sale-review-items li { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-bottom: 1px solid var(--ui-border); padding: 4px 0; font-size: 14px; }
 .sale-items li > span { min-width: 0; overflow-wrap: anywhere; }

@@ -97,6 +97,7 @@
                 type="button"
                 v-for="v in ['{name}', '{amount}', '{balance}']"
                 :key="v"
+                :disabled="!isOwner"
                 @click="insertVar('consume', v)"
                 class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-mono transition"
               >
@@ -125,6 +126,7 @@
                 type="button"
                 v-for="v in ['{name}', '{amount}', '{balance}', '{gift}', '{totalCredit}']"
                 :key="v"
+                :disabled="!isOwner"
                 @click="insertVar('recharge', v)"
                 class="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-mono transition"
               >

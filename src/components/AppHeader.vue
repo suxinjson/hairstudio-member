@@ -37,6 +37,7 @@
             type="button"
             @click="emit('create-member')"
             :disabled="hasStorageError || !canCreateMember"
+            :aria-describedby="createMemberHint ? 'header-create-member-hint' : undefined"
             class="register-member h-11 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 text-white text-xs font-black rounded-xl shadow-xs flex items-center gap-1 btn-press transition-all shrink-0"
             aria-label="新增会员"
           >
@@ -45,6 +46,8 @@
           </button>
         </div>
       </div>
+
+      <p v-if="createMemberHint && showCreateMember && !cloudLocked && ['customers', 'members'].includes(activeTab)" id="header-create-member-hint" class="text-xs text-slate-500 mt-2" role="status">{{ createMemberHint }}</p>
 
       <!-- 紧凑搜索框与聚合筛选下拉 (仅在会员或流水交易时显示) -->
       <div v-if="!cloudLocked && (['customers', 'members'].includes(activeTab) || (['ledgers', 'ledger'].includes(activeTab) && ledgerView === 'transactions'))" class="header-search-area mt-2.5">
@@ -112,6 +115,7 @@ const props = defineProps({
   cloudOnline: Boolean,
   hasStorageError: Boolean,
   canCreateMember: { type: Boolean, default: true },
+  createMemberHint: { type: String, default: '' },
   showCreateMember: { type: Boolean, default: true },
   showMemberFilter: { type: Boolean, default: true },
   showNotices: { type: Boolean, default: true },

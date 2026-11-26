@@ -59,7 +59,7 @@
           <StoreSettingsView v-if="feature('settings')" />
         </template>
         <template #voice="{ active: voiceActive }">
-          <VoiceSettingsView v-if="feature('voice') && owner" :active="voiceActive" />
+          <VoiceSettingsView v-if="feature('voice')" :active="voiceActive" />
         </template>
       </RelationalWorkbench>
     </main>

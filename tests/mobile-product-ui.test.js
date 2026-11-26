@@ -10,13 +10,13 @@ const fixtureKey = Symbol.for('member.native-ui-fixture');
 const scope = { storeId: 'product-store', actorId: 'product-owner', deviceId: 'product-device-2026', ledgerEpoch: '00000000-0000-4000-8000-000000000126' };
 const member = { id: 'product-member', name: '产品回归会员', phone: '13800138001', notes: '喜欢自然发型', tags: [], version: '0', accountVersion: '0', balanceCents: '50000', createdAt: '2026-11-25T00:00:00Z', updatedAt: '2026-11-26T00:00:00Z', lastConsumeAt: null };
 const config = { version: '0', services: [{ id: 'cut', name: '剪发', priceCents: '3500' }, { id: 'care', name: '护理', priceCents: '8800' }], rechargePlans: [], rechargeSettings: { giftEnabled: true, giftRateBasisPoints: 1000 } };
-let ui, Sale, Members, Cashier, Configuration, Reports, Voice, reactive;
+let ui, Sale, Members, Cashier, Configuration, Reports, Voice, Store, reactive;
 before(async t => {
   ui = await vueUi(t, { modules: Object.fromEntries(['@capacitor/app', './relational-native-session.js', './relational-native-workspace.js', './native-update.js'].map(id => [id, bridge])) });
   ({ reactive } = await import('vue'));
   const components = [];
-  for (const name of ['components/RelationalSale', 'components/RelationalMembers', 'NativeCashier', 'components/RelationalConfiguration', 'components/RelationalReports', 'components/VoiceSettings']) components.push(await ui.component(new URL('../src/' + name + '.vue', import.meta.url)));
-  [Sale, Members, Cashier, Configuration, Reports, Voice] = components;
+  for (const name of ['components/RelationalSale', 'components/RelationalMembers', 'NativeCashier', 'components/RelationalConfiguration', 'components/RelationalReports', 'components/VoiceSettings', 'components/StoreSettings']) components.push(await ui.component(new URL('../src/' + name + '.vue', import.meta.url)));
+  [Sale, Members, Cashier, Configuration, Reports, Voice, Store] = components;
 });
 afterEach(() => { ui.unmount(); delete globalThis[fixtureKey]; });
 async function settle() { for (let i = 0; i < 8; i++) { await new Promise(resolve => setImmediate(resolve)); await ui.nextTick(); } }
@@ -57,7 +57,8 @@ test('gift, credit and payment review stay identical; explicit zero overrides th
   const f = fixture();
   await ui.mount(Sale, { workspace: f.workspace, scope, type: 'recharge', member, configuration: config });
   await ui.input('.recharge-content input[inputmode=decimal]', '100'); await settle();
-  assert.equal(document.querySelector('[aria-label="赠送金额"]').value, '10.00');
+  assert.equal(document.querySelector('[aria-label="赠送金额"]').value, '');
+  assert.equal(document.querySelector('[aria-label="赠送金额"]').placeholder, '10.00');
   assert.match(document.querySelector('.recharge-totals').textContent, /110\.00/);
   ui.button('现金').click(); await review();
   assert.match(document.querySelector('.feedback-dialog').textContent, /收款方式现金/);
@@ -167,4 +168,171 @@ test('voice everyday controls precede advanced details and draft status accurate
   state.active = false; await settle(); assert.equal(stopped, 1); assert.ok(has('有未保存的修改'));
   state.active = true; await settle();
   ui.button('保存播报配置').click(); await settle(); assert.ok(has('当前显示已保存配置'));
+});
+
+test('gift edits retain every keystroke, reject invalid states and submit freshly parsed cents', async () => {
+  const f = fixture();
+  await ui.mount(Sale, { workspace: f.workspace, scope, type: 'recharge', member, configuration: config });
+  await ui.input('.recharge-content input[inputmode=decimal]', '100');
+  const gift = document.querySelector('[aria-label="赠送金额"]');
+  gift.focus();
+  for (const value of ['2', '2.', '2.5']) {
+    gift.value = value; gift.setSelectionRange(value.length, value.length);
+    gift.dispatchEvent(new window.Event('input', { bubbles: true })); await settle();
+    assert.equal(gift.value, value);
+    assert.equal(gift.selectionStart, value.length);
+    assert.equal(ui.button('核对金额').disabled, value === '2.');
+    if (value === '2.') { await review(); assert.equal(document.querySelector('.feedback-dialog'), null); }
+  }
+  assert.match(document.querySelector('.recharge-totals').textContent, /102\.50/);
+  await review(); assert.match(document.querySelector('.feedback-dialog').textContent, /赠送额度¥2\.50/);
+  ui.button('返回修改').click();
+  for (const invalid of ['2.00.5', '-1', '0.001', 'Infinity']) {
+    await ui.input('[aria-label="赠送金额"]', invalid); await review();
+    assert.equal(document.querySelector('.feedback-dialog'), null);
+    assert.equal(ui.button('核对金额').disabled, true);
+    assert.equal(f.writes.length, 0);
+  }
+  for (const value of ['0', '12.50', '', '2.5']) {
+    await ui.input('[aria-label="赠送金额"]', value); await review();
+    assert.ok(document.querySelector('.feedback-dialog'));
+    if (value !== '2.5') ui.button('返回修改').click();
+  }
+  ui.button('确认充值').click(); await settle();
+  assert.equal(f.writes.length, 1); assert.equal(f.writes[0].draft.giftCents, '250');
+});
+
+test('editing after review invalidates its snapshot, including programmatic invalid input', async () => {
+  const f = fixture();
+  await ui.mount(Sale, { workspace: f.workspace, type: 'recharge', member, configuration: config });
+  await ui.input('.recharge-content input[inputmode=decimal]', '100');
+  await ui.input('[aria-label="赠送金额"]', '2.5'); await review();
+  const confirm = ui.button('确认充值');
+  await ui.input('[aria-label="赠送金额"]', '2.00.5');
+  assert.equal(document.querySelector('.feedback-dialog'), null);
+  confirm.click(); await settle(); assert.equal(f.writes.length, 0);
+});
+
+test('archived members expose history but no new cashier action or configuration read', async () => {
+  const f = fixture(), archived = { ...member, archivedAt: '2026-11-26T00:00:00Z' };
+  const read = f.workspace.read;
+  f.workspace.read = async (method, input) => method === 'listMembers'
+    ? { items: [archived], total: 1, nextCursor: null } : method === 'getMember' ? archived : read(method, input);
+  await ui.mount(Members, { workspace: f.workspace, owner: true, writable: true, cashierWritable: true, feature: () => true, balanceFilter: 'archived' });
+  await settle();
+  assert.equal(document.querySelector('.customer-consume'), null);
+  ui.button(member.name).click(); await settle();
+  assert.equal(document.querySelector('.member-detail-actions'), null);
+  assert.ok(ui.button('查看会员流水'));
+  assert.equal(f.reads.filter(row => row.method === 'getConfiguration').length, 0);
+});
+
+test('header registration and the profile editor share online and standalone write availability', async () => {
+  const f = fixture({ online: false }); await ui.mount(Cashier); await settle();
+  assert.equal(ui.button('新增会员').disabled, true);
+  assert.ok(has('登记与修改会员资料需联网'));
+  assert.ok(document.querySelector('.customer-consume'));
+  ui.button('新增会员').click(); await settle();
+  assert.equal(document.querySelector('.profile-sheet'), null);
+  f.session.state.online = true; await settle();
+  assert.equal(ui.button('新增会员').disabled, false);
+  ui.button('新增会员').click(); await settle(); assert.ok(document.querySelector('.profile-sheet'));
+  ui.unmount(); fixture({ online: false, mode: 'standalone' }); await ui.mount(Cashier); await settle();
+  assert.equal(ui.button('新增会员').disabled, false);
+  ui.button('新增会员').click(); await settle(); assert.ok(document.querySelector('.profile-sheet'));
+});
+
+test('Android return and identity refresh choose an authorized home for every feature combination', async () => {
+  for (const features of [['core', 'reports'], ['core', 'cashier'], ['core', 'members'], ['core', 'voice'], ['core', 'settings'], [...LICENSE_FEATURES]]) {
+    const f = fixture(); f.session.state.deviceAccess.features = features;
+    await ui.mount(Cashier); await settle();
+    const expected = features.includes('members') ? '会员收银' : features.includes('cashier') || features.includes('reports') ? '财务流水' : '账号与设置';
+    const current = () => document.querySelector('.app-nav [aria-current=page]')?.getAttribute('aria-label');
+    assert.equal(current(), expected);
+    for (let i = 0; i < 2; i++) { await f.listeners.get('backButton')(); await settle(); assert.equal(current(), expected); }
+    f.session.state.generation++; await settle(); assert.equal(current(), expected);
+    if (!features.includes('members')) {
+      assert.equal(document.querySelector('[aria-label="会员档案"]'), null);
+      assert.equal(f.reads.filter(row => row.method === 'listMembers').length, 0);
+    }
+    if (features.includes('cashier') && !features.includes('reports')) assert.ok(document.querySelector('[aria-label="财务流水"]'));
+    ui.unmount();
+  }
+});
+
+test('reports keep the successful date and breakdown scope while drafts and account revisions change', async () => {
+  const f = fixture(); await ui.mount(Reports, { workspace: f.workspace, initialPeriod: 'today' }); await settle();
+  const label = document.querySelector('.cash-period').textContent;
+  const original = f.reads.find(row => row.method === 'reportBusiness').input;
+  await ui.input('[aria-label="统计周期"]', 'custom', 'change');
+  const dates = document.querySelectorAll('input[type=date]');
+  await ui.input('input[type=date]', '2026-10-01');
+  dates[1].value = '2026-10-02'; dates[1].dispatchEvent(new window.Event('input', { bubbles: true })); await settle();
+  assert.equal(document.querySelector('.cash-period').textContent, label);
+  assert.ok(has('日期已修改，点击查询后更新'));
+  assert.equal(f.reads.filter(row => row.method === 'reportBusiness').length, 1);
+  f.workspace.state.revision++; await settle();
+  assert.equal(document.querySelector('.cash-period').textContent, label);
+  assert.equal(f.reads.filter(row => row.method === 'reportBusiness').at(-1).input.from, original.from);
+  await review();
+  assert.equal(document.querySelector('.cash-period').textContent, '2026-10-01 至 2026-10-02');
+  assert.equal(f.reads.filter(row => row.method === 'reportBreakdown').at(-1).input.from, f.reads.filter(row => row.method === 'reportBusiness').at(-1).input.from);
+  assert.equal(document.querySelectorAll('.cash-snapshot').length, 1);
+  assert.ok(has('0.01–50元')); assert.ok(has('低余额名单含零余额'));
+  assert.equal(has('可用储值总额'), false); assert.equal(has('待收欠款总额'), false);
+  assert.equal(document.querySelector('.cash-balance-distribution').open, false);
+});
+
+test('invalid report requests discard results and supersede an earlier in-flight query', async () => {
+  const f = fixture(), read = f.workspace.read, pending = [];
+  f.workspace.read = (method, input) => method === 'reportBusiness'
+    ? new Promise(resolve => pending.push({ input, resolve })) : read(method, input);
+  await ui.mount(Reports, { workspace: f.workspace, initialPeriod: 'today' }); await settle();
+  await ui.input('[aria-label="统计周期"]', 'custom', 'change');
+  await ui.input('input[type=date]', '2026-10-01');
+  const last = document.querySelectorAll('input[type=date]')[1];
+  last.value = '2026-10-02'; last.dispatchEvent(new window.Event('input', { bubbles: true })); await review();
+  const makeReport = request => businessReportResult(businessReportInput(request.input), { daily: [], balances: {}, ranking: [], consumeMemberCount: '0' });
+  pending[1].resolve(makeReport(pending[1])); await settle();
+  assert.equal(document.querySelector('.cash-period').textContent, '2026-10-01 至 2026-10-02');
+  pending[0].resolve(makeReport(pending[0])); await settle();
+  assert.equal(document.querySelector('.cash-period').textContent, '2026-10-01 至 2026-10-02');
+  await ui.input('input[type=date]', '2026-10-03'); await review();
+  assert.equal(document.querySelector('.cash-overview'), null); assert.ok(has('结束日期不能早于起始日期'));
+  await ui.input('input[type=date]', '2026-10-01'); await review();
+  await ui.input('input[type=date]', '2026-10-03'); await review();
+  pending[2].resolve(makeReport(pending[2])); await settle();
+  assert.equal(document.querySelector('.cash-overview'), null);
+  assert.equal(document.querySelector('[role=status]'), null);
+});
+
+test('store settings retain legacy thanks data while directing all recharge copy editing to voice settings', async () => {
+  const profile = { name: '合成门店', rechargeThanks: '保留已有旧字段', version: 3 }, saves = [];
+  await ui.mount(Store, { profile, saveProfile: async (value, version) => { saves.push({ value, version }); return { ...value, version: 4 }; } });
+  assert.equal(document.querySelector('textarea[maxlength="300"]'), null);
+  assert.ok(has('充值播报文案在“语音播报设置”中统一编辑'));
+  await ui.input('input[maxlength="128"]', '新门店'); await review();
+  assert.equal(saves[0].value.rechargeThanks, profile.rechargeThanks);
+  assert.equal(saves[0].version, 3); assert.ok(has('门店设置已保存'));
+});
+
+test('automatic report refresh retains the most recently submitted scope while its first request is pending', async () => {
+  const f = fixture(), read = f.workspace.read, pending = [];
+  await ui.mount(Reports, { workspace: f.workspace, initialPeriod: 'today' }); await settle();
+  f.workspace.read = (method, input) => method === 'reportBusiness'
+    ? new Promise(resolve => pending.push({ input, resolve })) : read(method, input);
+  await ui.input('[aria-label="统计周期"]', 'custom', 'change');
+  await ui.input('input[type=date]', '2026-10-01');
+  const last = document.querySelectorAll('input[type=date]')[1];
+  last.value = '2026-10-02'; last.dispatchEvent(new window.Event('input', { bubbles: true })); await review();
+  f.workspace.state.revision++; await settle();
+  assert.equal(pending.length, 2); assert.deepEqual(pending[0].input, pending[1].input);
+  const report = request => businessReportResult(businessReportInput(request.input), { daily: [], balances: {}, ranking: [], consumeMemberCount: '0' });
+  pending[1].resolve(report(pending[1])); await settle();
+  pending[0].resolve(report(pending[0])); await settle();
+  assert.equal(document.querySelector('.cash-period').textContent, '2026-10-01 至 2026-10-02');
+  await ui.input('input[type=date]', '2026-10-03'); await review();
+  f.workspace.state.revision++; await settle();
+  assert.equal(pending.length, 2); assert.equal(document.querySelector('.cash-overview'), null);
+  assert.ok(has('结束日期不能早于起始日期'));
 });

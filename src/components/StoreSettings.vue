@@ -11,8 +11,7 @@
       <label class="block font-bold">门店地址<input v-model="form.address" maxlength="256" :disabled="!canEdit || saving" class="block border rounded-xl p-3 w-full mt-2" /></label>
       <label class="block font-bold">会员备注标题<input v-model="form.memberNotesLabel" required maxlength="32" :disabled="!canEdit || saving" class="block border rounded-xl p-3 w-full mt-2" /><small class="text-slate-500 font-normal">例如：服务偏好、注意事项、客户需求</small></label>
       <label class="block font-bold">语音欢迎词<textarea v-model="form.welcomeText" required maxlength="200" :disabled="!canEdit || saving" rows="2" class="block border rounded-xl p-3 w-full mt-2" /><small class="text-slate-500 font-normal">用 {store} 自动带入门店名称。</small></label>
-      <label class="block font-bold">充值通知致谢<textarea v-model="form.rechargeThanks" maxlength="300" :disabled="!canEdit || saving" rows="3" class="block border rounded-xl p-3 w-full mt-2" /></label>
-      <p class="text-sm text-slate-500">服务项目、价格和充值赠送规则在“服务与价格”中设置。</p>
+      <p class="text-sm text-slate-500">服务项目、价格和充值赠送规则在“服务与价格”中设置；充值播报文案在“语音播报设置”中统一编辑。</p>
       <div class="flex gap-3"><button v-if="canEdit" :disabled="saving || !dirty" type="submit" class="rounded-xl p-4 bg-indigo-700 text-white font-bold disabled:opacity-50">{{ saving ? '正在保存…' : '保存门店设置' }}</button>
         <button v-if="loadProfile" @click="reload" type="button" :disabled="saving" class="rounded-xl p-4 border font-bold">重新加载</button></div>
     </form>

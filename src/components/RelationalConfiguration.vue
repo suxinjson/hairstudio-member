@@ -74,7 +74,7 @@
             </div>
             <div class="w-28 sm:w-32 shrink-0">
               <label :for="'service-price-' + row.id" class="sr-only">单价（元）</label>
-              <div class="flex items-center bg-white border border-slate-200 rounded-lg px-2.5 h-10 focus-within:border-emerald-600">
+              <label :for="'service-price-' + row.id" class="configuration-currency flex items-center bg-white border border-slate-200 rounded-lg px-2.5 focus-within:border-emerald-600">
                 <span class="text-slate-400 font-black text-xs mr-1 shrink-0 select-none">¥</span>
                 <input
                   :id="'service-price-' + row.id"
@@ -84,7 +84,7 @@
                   required
                   class="w-full bg-transparent border-0 outline-none p-0 text-xs font-black text-slate-900 tabular-nums focus:ring-0"
                 />
-              </div>
+              </label>
             </div>
             <button
               type="button"
@@ -137,7 +137,7 @@
             <label for="default-gift-rate">默认赠送比例</label>
             <span class="text-[11px] text-emerald-700 font-medium">手工输入金额时自动折算赠送</span>
           </div>
-          <div class="flex items-center bg-white border border-emerald-300 rounded-lg px-3 h-10 focus-within:border-emerald-600">
+          <label for="default-gift-rate" class="configuration-currency flex items-center bg-white border border-emerald-300 rounded-lg px-3 focus-within:border-emerald-600">
             <input
               id="default-gift-rate"
               v-model.trim="form.rate"
@@ -147,7 +147,7 @@
               class="w-full bg-transparent border-0 outline-none p-0 text-xs font-black text-slate-900 tabular-nums focus:ring-0"
             />
             <span class="text-emerald-800 font-bold text-xs shrink-0 select-none ml-1">%</span>
-          </div>
+          </label>
         </div>
 
         <!-- 快捷充值套餐列表 -->
@@ -168,7 +168,7 @@
           >
             <div class="flex-1 min-w-0">
               <label :for="'plan-pay-' + row.id" class="text-[10px] text-slate-500 font-bold block mb-0.5">套餐实收（元）</label>
-              <div class="flex items-center bg-white border border-slate-200 rounded-lg px-2.5 h-10 focus-within:border-emerald-600">
+              <label :for="'plan-pay-' + row.id" class="configuration-currency flex items-center bg-white border border-slate-200 rounded-lg px-2.5 focus-within:border-emerald-600">
                 <span class="text-slate-400 font-black text-xs mr-1 shrink-0 select-none">¥</span>
                 <input
                   :id="'plan-pay-' + row.id"
@@ -178,13 +178,13 @@
                   required
                   class="w-full bg-transparent border-0 outline-none p-0 text-xs font-black text-slate-900 tabular-nums focus:ring-0"
                 />
-              </div>
+              </label>
             </div>
 
             <!-- 仅在开启赠送时显示套餐赠送金额 -->
             <div v-if="form.giftEnabled" class="w-28 sm:w-36 shrink-0 animate-fade-in">
               <label :for="'plan-gift-' + row.id" class="text-[10px] text-emerald-700 font-bold block mb-0.5">赠送额度（元）</label>
-              <div class="flex items-center bg-white border border-slate-200 rounded-lg px-2.5 h-10 focus-within:border-emerald-600">
+              <label :for="'plan-gift-' + row.id" class="configuration-currency flex items-center bg-white border border-slate-200 rounded-lg px-2.5 focus-within:border-emerald-600">
                 <span class="text-emerald-600 font-black text-xs mr-1 shrink-0 select-none">¥</span>
                 <input
                   :id="'plan-gift-' + row.id"
@@ -194,7 +194,7 @@
                   :required="form.giftEnabled"
                   class="w-full bg-transparent border-0 outline-none p-0 text-xs font-black text-emerald-800 tabular-nums focus:ring-0"
                 />
-              </div>
+              </label>
             </div>
 
             <button

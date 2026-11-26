@@ -9,6 +9,7 @@ import { createRelationalSqlite, sha256 } from '../src/relational-sqlite.js';
 import { canonicalJSON } from '../src/canonical-json.js';
 import { LICENSE_FEATURES } from '../src/license-policy.js';
 import { verifyMemberTotals } from './helpers/member-totals.mjs';
+import { verifyLowBalanceBoundaries } from './helpers/low-balance-boundaries.mjs';
 
 const ledgerEpoch = '00000000-0000-4000-8000-000000000001';
 const storeId = 'sqlite-test-store', deviceId = 'sqlite-test-device-2026';
@@ -32,6 +33,15 @@ async function fixture(t, mode = 'standalone') {
 }
 async function recharge(db, memberId, extra = {}) { const member = await db.getMember(memberId); return db.executeCommand({ id: randomUUID(), ledgerEpoch: (await db.getBook()).ledgerEpoch, type: 'recharge', memberId, expectedAccountVersion: member.accountVersion, actualPayCents: '1010', giftCents: '101', ...extra }); }
 async function restore(f, backup) { return f.db.restoreBackup(backup, { id: randomUUID(), ...await f.db.getBook(), actorId: 'local-owner', deviceId, digest: backup.digest }); }
+
+test('SQLite inclusive low-balance list equals the zero and positive-low report bands at every cent boundary', async t => {
+  const f = await fixture(t);
+  await verifyLowBalanceBoundaries({
+    importMembers: data => f.db.importOpeningBalances({ ...data, ledgerEpoch }),
+    list: input => f.db.listMembers(input),
+    report: input => f.db.reportBusiness(input)
+  });
+});
 
 test('recent consumers, actual visit timestamps and scoped totals agree with effective SQLite entries', async t => {
   const f = await fixture(t); await f.db.importOpeningBalances(source());

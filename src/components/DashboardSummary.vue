@@ -32,6 +32,16 @@
         <dd class="text-sm font-black text-slate-900 mt-0.5">{{ balances?.memberCount || 0 }}<small class="font-normal text-slate-500"> 人</small></dd>
       </div>
     </dl>
+    <details class="cash-balance-distribution">
+      <summary>会员余额分布 <small>当前账户</small></summary>
+      <dl>
+        <div><dt>50元以上</dt><dd>{{ balances?.fundedCount || 0 }} 人</dd></div>
+        <div><dt>0.01–50元</dt><dd>{{ balances?.lowCount || 0 }} 人</dd></div>
+        <div><dt>零余额</dt><dd>{{ balances?.zeroCount || 0 }} 人</dd></div>
+        <div><dt>欠款会员</dt><dd>{{ balances?.debtCount || 0 }} 人</dd></div>
+      </dl>
+      <p>低余额名单含零余额及 0.01–50 元两档。</p>
+    </details>
   </section>
 </template>
 
