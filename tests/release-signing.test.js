@@ -145,6 +145,69 @@ test('both APK modes compile native tests and collect downloadable files without
   }
 });
 
+function runGradleAttempts(t, attempts, variant = 'release', prefix = '') {
+  const { directory, env } = fixture(t);
+  mkdirSync(join(directory, 'android'));
+  attempts.forEach((attempt, index) => {
+    writeFileSync(join(directory, `gradle-output-${index + 1}`), attempt.output);
+    writeFileSync(join(directory, `gradle-status-${index + 1}`), String(attempt.status));
+  });
+  writeFileSync(join(directory, 'android', 'gradlew'), '#!/usr/bin/env bash\nset -e\n' +
+    'printf "%s\\n" "$*" >> ../gradle-calls\n' +
+    'attempt=$(wc -l < ../gradle-calls)\ncat "../gradle-output-$attempt"\nexit "$(cat "../gradle-status-$attempt")"\n', { mode: 0o755 });
+  const result = run('sleep() { printf "%s\\n" "$*" >> ../gradle-waits; }\n' + prefix + stepScript('8. 编译 Android 安装包与测试'),
+    directory, { ...env, APK_VARIANT: variant });
+  const lines = name => existsSync(join(directory, name)) ? readFileSync(join(directory, name), 'utf8').trim().split('\n') : [];
+  return { ...result, calls: lines('gradle-calls'), waits: lines('gradle-waits') };
+}
+const repositoryFailure = status => `Could not GET 'https://repo.maven.apache.org/maven2/junit/junit/4.13.2/junit-4.13.2.pom'. Received status code ${status} from server: repository error\n`;
+
+test('Android repository rate limits and transient HTTP errors retry the original build with backoff', { skip: !bashAvailable }, t => {
+  for (const variant of ['release', 'debug']) {
+    for (const status of [429, 502, 503, 504]) {
+      const result = runGradleAttempts(t, [
+        { status: 7, output: repositoryFailure(status) },
+        { status: 7, output: repositoryFailure(status) },
+        { status: 0, output: 'BUILD SUCCESSFUL\n' }
+      ], variant);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.equal(result.calls.length, 3);
+      assert.equal(new Set(result.calls).size, 1);
+      assert.ok(result.calls[0].includes(':app:assemble' + (variant === 'release' ? 'Release' : 'Debug')));
+      assert.ok(result.calls[0].includes(':app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac'));
+      assert.deepEqual(result.waits, ['30', '60']);
+    }
+  }
+});
+
+test('persistent Android dependency rate limits stop after three attempts and preserve the Gradle exit code', { skip: !bashAvailable }, t => {
+  const result = runGradleAttempts(t, Array(3).fill({ status: 7, output: repositoryFailure(429) }));
+  assert.equal(result.status, 7, result.stdout + result.stderr);
+  assert.equal(result.calls.length, 3);
+  assert.deepEqual(result.waits, ['30', '60']);
+});
+
+test('Java, test, signing, authorization and missing-artifact errors fail without a retry', { skip: !bashAvailable }, t => {
+  for (const output of [':app:compileReleaseJavaWithJavac FAILED', ':app:testDebugUnitTest FAILED', 'Release keystore does not exist',
+    repositoryFailure(401), repositoryFailure(403), repositoryFailure(404)]) {
+    const result = runGradleAttempts(t, [{ status: 9, output }]);
+    assert.equal(result.status, 9, result.stdout + result.stderr);
+    assert.equal(result.calls.length, 1);
+    assert.deepEqual(result.waits, []);
+  }
+  const changed = runGradleAttempts(t, [{ status: 7, output: repositoryFailure(429) }, { status: 9, output: ':app:compileReleaseJavaWithJavac FAILED' }]);
+  assert.equal(changed.status, 9, changed.stdout + changed.stderr);
+  assert.equal(changed.calls.length, 2);
+  assert.deepEqual(changed.waits, ['30']);
+});
+
+test('failure to capture the Android build log cannot turn the pipeline into a success', { skip: !bashAvailable }, t => {
+  const result = runGradleAttempts(t, [{ status: 0, output: 'BUILD SUCCESSFUL\n' }], 'debug', 'tee() { cat; return 23; }\n');
+  assert.equal(result.status, 23, result.stdout + result.stderr);
+  assert.equal(result.calls.length, 1);
+  assert.deepEqual(result.waits, []);
+});
+
 test('missing compiled APK fails collection instead of uploading an empty or wrong variant artifact', { skip: !bashAvailable }, t => {
   const { directory, env } = fixture(t);
   mkdirSync(join(directory, 'android', 'app', 'build', 'outputs', 'apk', 'debug'), { recursive: true });

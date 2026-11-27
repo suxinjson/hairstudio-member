@@ -182,11 +182,30 @@ jobs:
         RELEASE_KEY_PASSWORD: ${{ env.SERVER_ONLY_REQUESTED != 'true' && env.APK_VARIANT == 'release' && secrets.RELEASE_KEY_PASSWORD || '' }}
       run: |
         cd android
-        if [ "$APK_VARIANT" = 'release' ]; then
-          ./gradlew :app:validateReleaseSigning :app:assembleRelease :app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac --no-daemon --stacktrace
-        else
-          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac --no-daemon --stacktrace
-        fi
+        run_gradle() {
+          if [ "$APK_VARIANT" = 'release' ]; then
+            ./gradlew :app:validateReleaseSigning :app:assembleRelease :app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac --no-daemon --stacktrace
+          else
+            ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestJavaWithJavac --no-daemon --stacktrace
+          fi
+        }
+        GRADLE_LOG=$(mktemp "$RUNNER_TEMP/member-gradle-XXXXXX.log")
+        trap 'rm -f -- "$GRADLE_LOG"' EXIT
+        for GRADLE_ATTEMPT in 1 2 3; do
+          set +e
+          run_gradle 2>&1 | tee "$GRADLE_LOG"
+          GRADLE_STATUS=("${PIPESTATUS[@]}")
+          set -e
+          if [ "${GRADLE_STATUS[1]}" -ne 0 ]; then exit "${GRADLE_STATUS[1]}"; fi
+          if [ "${GRADLE_STATUS[0]}" -eq 0 ]; then break; fi
+          # Retry only temporary repository HTTP errors; keep the downloaded cache.
+          if [ "$GRADLE_ATTEMPT" -eq 3 ] || ! grep -Eq "Could not (GET|HEAD) 'https://[^']+'.*Received status code (429|502|503|504) from server" "$GRADLE_LOG"; then
+            exit "${GRADLE_STATUS[0]}"
+          fi
+          GRADLE_WAIT=$((GRADLE_ATTEMPT * 30))
+          echo "::warning::依赖仓库暂时限流或不可用，${GRADLE_WAIT} 秒后重试 Android 编译（$GRADLE_ATTEMPT/3）"
+          sleep "$GRADLE_WAIT"
+        done
 
     - name: 清理发布签名临时文件
       if: ${{ always() }}
