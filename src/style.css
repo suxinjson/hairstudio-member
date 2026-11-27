@@ -5,24 +5,24 @@ html {
   font-size: 16px;
   text-size-adjust: 100%;
   -webkit-text-size-adjust: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100%;
 }
 
 /* 移动端与水滴屏/挖孔屏专属安全区与字体规范 */
 :root {
-  --safe-top: max(env(safe-area-inset-top, 0px), 48px);
-  --safe-bottom: max(env(safe-area-inset-bottom, 0px), 24px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
   --app-accent: #167c68;
   --app-ink: #1a2722;
   --app-border: #d8e3de;
   --app-canvas: #f2f6f4;
 }
 
-/* Android 已在原生窗口预留状态栏、刘海和导航栏，只保留按钮边缘间距。 */
+/* Android 按实际系统栏/输入法 Insets 避让 WebView，网页不得重复预留。 */
 html.native-system-insets {
   --safe-top: 0px;
-  --safe-bottom: 12px;
+  --safe-bottom: 0px;
 }
 
 * {
@@ -42,7 +42,7 @@ body {
   -webkit-text-size-adjust: 100%;
   overflow-wrap: break-word;
   word-break: break-word;
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100%;
   width: 100%;
 }
@@ -50,7 +50,7 @@ body {
 #app {
   max-width: 880px;
   width: 100%;
-  overflow-x: hidden;
+  overflow-x: clip;
   min-height: 100vh;
   margin: 0 auto;
   background-color: var(--app-canvas);
@@ -459,13 +459,6 @@ body {
   }
 }
 
-/* 极窄屏或短屏允许顶部随页面滚动，防止固定头部遮住操作区域。 */
-@media (max-width: 320px), (max-height: 600px) {
-  .app-header {
-    position: relative;
-  }
-}
-
 @media (max-width: 380px) {
   .recharge-plans {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -583,7 +576,7 @@ body {
 /* 会员详情只滚动内容，底部两项操作始终保持可见。 */
 .app-shell .member-detail-sheet { height: min(90dvh, 900px); max-height: min(90dvh, 900px); overflow: hidden; }
 .app-shell .member-detail-sheet > .member-detail-content { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.app-shell .member-detail-sheet > .member-detail-actions.grid.grid-cols-2 { flex: none; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px 12px var(--safe-bottom); }
+.app-shell .member-detail-sheet > .member-detail-actions.grid.grid-cols-2 { flex: none; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px 12px max(12px, var(--safe-bottom)); }
 .app-shell .member-detail-actions button { white-space: nowrap; font-size: 16px; min-height: 52px; }
 .member-detail-actions button > span { white-space: nowrap; }
 .member-detail-actions .detail-action-icon { font-size: 18px; }

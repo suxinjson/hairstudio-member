@@ -157,6 +157,20 @@ test('HeyGen TTS synthesis requests audio URL and downloads audio stream', async
   assert.equal(result.buffer.toString(), 'FAKE-WAV-AUDIO-DATA');
 });
 
+test('Fish Audio accepts a blank voice ID without silently inserting a reference', async () => {
+  for (const voiceId of [undefined, '', '   ']) {
+    let request;
+    const config = sanitizeVoiceConfig({ voiceId: '' }, readVoiceConfig({}));
+    assert.equal(readVoiceConfig(config).voiceId, '');
+    const result = await synthesizeTTS({ provider: 'fish_audio', apiKey: 'fish-test-key', voiceId, text: 'Hello! Welcome to Fish Audio.', fetchFn: async (_url, options) => {
+      request = options; return new Response('mp3', { headers: { 'content-type': 'audio/mpeg' } });
+    } });
+    assert.deepEqual(JSON.parse(request.body), { text: 'Hello! Welcome to Fish Audio.', format: 'mp3' });
+    assert.equal(request.headers.model, 's2.1-pro-free');
+    assert.equal(result.contentType, 'audio/mpeg');
+  }
+});
+
 test('switching voice providers resets old endpoints, voices, models, and credentials', async () => {
   const previous = sanitizeVoiceConfig({ enabled: true, apiUrl: PROVIDER_DEFAULTS.fish_audio.apiUrl, apiKey: 'fish-only-secret' });
   const next = sanitizeVoiceConfig({ provider: 'heygen', apiKey: '****' }, previous);
@@ -232,7 +246,7 @@ test('HeyGen download timeout remains active until the entire body is read', asy
 
 test('both voice APIs explain credential, balance, rate limit, and network failures without echoing upstream secrets', async () => {
   for (const provider of ['fish_audio', 'heygen']) {
-    for (const [status, hint] of [[401, /API Key/], [402, /额度/], [429, /繁忙/]]) {
+    for (const [status, hint] of [[401, /API Key/], [402, /额度/], [422, /请求参数/], [429, /繁忙/], [503, /繁忙/]]) {
       await assert.rejects(synthesizeTTS({ provider, apiKey: 'fresh-key', text: '测试', fetchFn: async () => new Response('upstream-secret', { status }) }), err => {
         assert.equal(err.status, 502); assert.match(err.message, hint); assert.equal(err.message.includes('upstream-secret'), false); return true;
       });

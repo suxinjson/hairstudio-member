@@ -1,5 +1,5 @@
 <template>
-  <!-- 顶部状态栏与大搜索框 (适配水滴屏/挖孔屏，48px+ safe-area 防遮挡) -->
+  <!-- 系统安全区由运行环境提供，搜索和登记入口随头部固定。 -->
   <header class="app-header bg-white text-slate-800 pt-status-safe sticky top-0 z-30 shadow-xs border-b border-slate-200/90">
     <div class="header-inner max-w-4xl mx-auto px-3.5 py-2.5 sm:px-6">
       <!-- 标题行与新建按钮 -->
@@ -49,49 +49,46 @@
 
       <p v-if="createMemberHint && showCreateMember && !cloudLocked && ['customers', 'members'].includes(activeTab)" id="header-create-member-hint" class="text-xs text-slate-500 mt-2" role="status">{{ createMemberHint }}</p>
 
-      <!-- 紧凑搜索框与聚合筛选下拉 (仅在会员或流水交易时显示) -->
+      <!-- 会员范围嵌入搜索框内，保留输入与清空操作的独立空间。 -->
       <div v-if="!cloudLocked && (['customers', 'members'].includes(activeTab) || (['ledgers', 'ledger'].includes(activeTab) && ledgerView === 'transactions'))" class="header-search-area mt-2.5">
-        <div class="header-search-row flex items-center gap-2">
+        <form class="header-search-row flex items-center gap-2" role="search" @submit.prevent="emit('search', searchModel)">
           <div class="header-search relative flex-1 min-w-0">
-            <span class="sr-only">搜索会员</span>
+            <Search :size="18" class="header-search-icon text-slate-400" aria-hidden="true" />
             <input
               v-model="searchModel"
-              @keyup.enter="emit('search', searchModel)"
               type="text"
               enterkeyhint="search"
               :placeholder="placeholder || (['ledgers', 'ledger'].includes(activeTab) ? '搜索交易明细（会员、手机、项目）' : '姓名、电话或备注')"
-              maxlength="64"
-              class="header-search-input pl-10 pr-9 text-sm w-full h-10 bg-slate-100 hover:bg-slate-100/90 focus:bg-white border border-slate-200/90 rounded-xl text-slate-900 placeholder:text-slate-400 font-medium focus:border-emerald-600 outline-none transition-colors"
+              maxlength="128"
+              class="header-search-input text-sm text-slate-900 placeholder:text-slate-400 font-medium outline-none"
               :aria-label="['ledgers', 'ledger'].includes(activeTab) ? '搜索交易明细' : '搜索会员'"
               :aria-describedby="searchHint ? 'header-search-hint' : undefined"
             />
-            <Search :size="17" class="absolute left-3 top-2.5 text-slate-400 pointer-events-none" aria-hidden="true" />
             <button
               v-if="searchModel"
               type="button"
               @click="emit('clear-search')"
-              class="header-search-clear absolute text-slate-400 hover:text-slate-600 text-xs flex items-center justify-center rounded-full"
+              class="header-search-clear text-slate-400 hover:text-slate-600 text-xs flex items-center justify-center rounded-full"
               aria-label="清空搜索"
             >
               ✕
             </button>
+            <CustomerFilter
+              v-if="showMemberFilter && ['customers', 'members'].includes(activeTab)"
+              :filter="customerFilter"
+              :open="filterOpen"
+              @update:filter="emit('update:customerFilter', $event)"
+              @update:open="emit('update:filterOpen', $event)"
+            />
           </div>
-          <CustomerFilter
-            v-if="showMemberFilter && ['customers', 'members'].includes(activeTab)"
-            :filter="customerFilter"
-            :open="filterOpen"
-            @update:filter="emit('update:customerFilter', $event)"
-            @update:open="emit('update:filterOpen', $event)"
-          />
           <button
-            type="button"
+            type="submit"
             aria-label="查询"
             class="h-10 px-3.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-xs shrink-0 btn-press active:bg-emerald-900 transition-colors"
-            @click="emit('search', searchModel)"
           >
             查询
           </button>
-        </div>
+        </form>
         <p v-if="searchHint" id="header-search-hint" class="header-search-hint text-[11px] text-slate-500 mt-1">{{ searchHint }}</p>
       </div>
     </div>
@@ -99,7 +96,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { Bell, Search, CreditCard } from 'lucide-vue-next';
 import CustomerFilter from './CustomerFilter.vue';
 
@@ -141,4 +138,6 @@ const searchModel = computed({
   get: () => props.searchQuery,
   set: (val) => emit('update:searchQuery', val)
 });
+
+watch(() => [props.activeTab, props.cloudLocked], () => emit('update:filterOpen', false));
 </script>

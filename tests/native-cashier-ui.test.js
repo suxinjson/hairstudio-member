@@ -63,7 +63,7 @@ test('Android back steps through a reviewed sale and its member before counting 
   await back(); assert.equal(shown('核对金额'), false); assert.ok(shown('收起档案'));
   await back(); assert.equal(shown('收起档案'), false); assert.equal(fixture.exits, 0);
   ui.button('财务流水').click(); await ui.nextTick();
-  await back(); assert.ok(shown('搜索会员'));
+  await back(); assert.ok(document.querySelector('[aria-label="搜索会员"]'));
   await back(); assert.ok(shown('再按两次返回键'));
   now += 2001; await back(); assert.ok(shown('再按两次返回键'));
   await back(); assert.ok(shown('再按一次返回键'));

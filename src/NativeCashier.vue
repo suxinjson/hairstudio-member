@@ -1,10 +1,9 @@
 <template>
-  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none max-w-full overflow-x-hidden">
+  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none max-w-full overflow-x-clip" :class="{ 'has-app-navigation': unlocked }">
     <!-- 顶部状态栏与大搜索框 (AppHeader 经典复刻) -->
     <AppHeader
       :active-tab="workbench?.activeTab || 'members'"
       :ledger-view="workbench?.ledgerView || 'summary'"
-      :show-member-filter="false"
       :show-create-member="state.user?.role !== 'viewer' && feature('members')"
       v-model:customer-filter="headerCustomerFilter"
       v-model:filter-open="headerFilterOpen"
@@ -73,7 +72,8 @@
                   </div>
                 </div>
                 <p v-if="state.deviceAccess.authorizedUntil" class="text-xs text-slate-500 m-0">授权有效期至：{{ new Date(state.deviceAccess.authorizedUntil).toLocaleString() }}</p>
-                <button type="button" :disabled="accountBusy || state.busy || workspace.state.busy" @click="signOut" class="account-signout">退出登录 / 切换账号</button>
+                <button type="button" :disabled="accountBusy || state.busy || workspace.state.busy" @click="signOut" class="account-signout"><LogOut :size="18" aria-hidden="true" /><span>{{ accountBusy ? '正在退出…' : '退出登录 / 切换账号' }}</span></button>
+                <p class="account-signout-hint">退出后可重新登录，本机账本与待同步记录会保留。</p>
                 <div class="pt-2 border-t border-slate-100">
                   <a v-if="!standalone && state.online" :href="state.serverUrl + '/admin/'" target="_blank" rel="noopener noreferrer" class="text-xs font-bold text-emerald-700 hover:text-emerald-800 block">
                     打开电脑端商家后台（员工、设备、审计和云端备份） ›
@@ -105,7 +105,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue';
 import { App as CapacitorApp } from '@capacitor/app';
-import { Bell } from 'lucide-vue-next';
+import { LogOut } from 'lucide-vue-next';
 import { createRelationalNativeSession, cloudDeviceBridge } from './relational-native-session.js';
 import { createNativeWorkspace } from './relational-native-workspace.js';
 import { createNativeArchiveController } from './relational-native-files.js';
@@ -231,6 +231,11 @@ function onOffline() { void session.heartbeat().catch(() => {}); voice.stop(); }
 function onForeground() { foregroundToken.value++; void resume().then(updateCheck.checkOnOpen); }
 function closeTop() {
   if (confirmation.value) { finishConfirm(false); return true; }
+  if (headerFilterOpen.value) {
+    headerFilterOpen.value = false;
+    document.querySelector('.customer-filter-trigger')?.focus({ preventScroll: true });
+    return true;
+  }
   if (noticesOpen.value) { noticesOpen.value = false; return true; }
   return workbench.value?.goHome() ?? false;
 }

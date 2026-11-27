@@ -2,6 +2,10 @@ import { formatSpokenAmount } from './voice-text.js';
 
 const cancelled = () => Object.assign(new Error('播放已停止'), { code: 'VOICE_CANCELLED' });
 const amountVariables = new Set(['amount', 'balance', 'gift', 'totalCredit']);
+// A valid, silent WAV unlocks the same media element used after synthesis.
+const SILENT_AUDIO = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQIAAAAAAA==';
+export const VOICE_PLAYBACK_START_TIMEOUT_MS = 15000;
+export const VOICE_PLAYBACK_TIMEOUT_MS = 180000;
 
 export class VoicePlayer {
   constructor({ api, context = () => '', canBroadcast = () => true } = {}) {
@@ -17,6 +21,22 @@ export class VoicePlayer {
     this.currentItem = null;
     this.currentRequest = null;
     this.cachedContext = null;
+    this.audioElement = null;
+  }
+
+  getAudioElement() {
+    return this.audioElement ||= new Audio();
+  }
+
+  preparePlayback() {
+    if (this.isPlaying) return;
+    try {
+      const audio = this.getAudioElement();
+      audio.preload = 'auto';
+      audio.src = SILENT_AUDIO;
+      // This must run synchronously inside the user's click handler.
+      Promise.resolve(audio.play()).catch(() => {});
+    } catch {}
   }
 
   async getConfig(forceRefresh = false) {
@@ -77,13 +97,14 @@ export class VoicePlayer {
     }
   }
 
-  async queueSpeak(text, { volume = 1.0, testOptions = null, onStatus = null } = {}) {
+  async queueSpeak(text, { volume = 1.0, testOptions = null, onStatus = null, audioBlob = null } = {}) {
     return new Promise((resolve, reject) => {
       this.queue.push({
         text,
         volume,
         testOptions,
         onStatus,
+        audioBlob,
         resolve,
         reject,
         context: this.context(), version: this.version
@@ -103,23 +124,29 @@ export class VoicePlayer {
       if (item.version !== this.version || item.context !== this.context()) throw cancelled();
     };
 
-    let objectUrl = null;
+    let objectUrl = null, blob = null;
     try {
       check();
       const options = item.testOptions
         ? { text: item.text, test: true, ...item.testOptions }
         : { text: item.text };
 
-      item.onStatus?.('synthesizing');
-      const blob = await this.api.synthesizeVoice(options, { signal: controller.signal });
+      if (!item.audioBlob) item.onStatus?.('synthesizing');
+      // A blocked preview retries its existing audio directly in the click event.
+      blob = item.audioBlob || await this.api.synthesizeVoice(options, { signal: controller.signal });
       check();
       objectUrl = URL.createObjectURL(blob);
 
-      item.onStatus?.('playing');
-      await this.playAudioUrl(objectUrl, item.volume);
+      await this.playAudioUrl(objectUrl, item.volume, () => item.onStatus?.('playing'));
       check();
       item.resolve();
     } catch (err) {
+      if (err.code === 'VOICE_PLAYBACK_BLOCKED' && blob && item.onStatus) {
+        err.retryPlayback = ({ onStatus = item.onStatus } = {}) => {
+          try { check(); } catch (error) { return Promise.reject(error); }
+          return this.queueSpeak(item.text, { volume: item.volume, testOptions: item.testOptions, onStatus, audioBlob: blob });
+        };
+      }
       item.reject(err);
     } finally {
       if (objectUrl) {
@@ -133,9 +160,9 @@ export class VoicePlayer {
     }
   }
 
-  playAudioUrl(url, volume = 1.0) {
+  playAudioUrl(url, volume = 1.0, onPlaying = null) {
     return new Promise((resolve, reject) => {
-      const audio = new Audio();
+      const audio = this.getAudioElement();
       this.currentAudio = audio;
       audio.volume = Math.max(0, Math.min(1, volume));
       audio.preload = 'auto';
@@ -148,6 +175,7 @@ export class VoicePlayer {
         if (timeoutTimer) clearTimeout(timeoutTimer);
         audio.removeEventListener('ended', onEnded);
         audio.removeEventListener('error', onError);
+        audio.removeEventListener('playing', onStarted);
         try { audio.pause(); audio.removeAttribute('src'); audio.load(); } catch {}
         if (this.currentAudio === audio) this.currentAudio = null;
         this.stopCurrent = null;
@@ -160,11 +188,18 @@ export class VoicePlayer {
         resolve();
       };
 
-      const onError = () => {
+      const fail = error => {
         if (settled) return;
         settled = true;
         cleanup();
-        reject(new Error('音频解码或播放失败'));
+        reject(error);
+      };
+      const onError = () => fail(Object.assign(new Error('音频解码或播放失败'), { code: 'VOICE_PLAYBACK_FAILED' }));
+      const onStarted = () => {
+        if (settled) return;
+        clearTimeout(timeoutTimer);
+        timeoutTimer = setTimeout(() => fail(Object.assign(new Error('音频播放超时，请重试'), { code: 'VOICE_PLAYBACK_TIMEOUT' })), VOICE_PLAYBACK_TIMEOUT_MS);
+        onPlaying?.();
       };
 
       this.stopCurrent = () => {
@@ -180,27 +215,18 @@ export class VoicePlayer {
 
       audio.addEventListener('ended', onEnded);
       audio.addEventListener('error', onError);
+      audio.addEventListener('playing', onStarted, { once: true });
 
-      // Max playback safety timeout (60 seconds) to avoid hanging
-      timeoutTimer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          cleanup();
-          try { audio.pause(); } catch {}
-          resolve();
-        }
-      }, 60000);
+      timeoutTimer = setTimeout(() => fail(Object.assign(new Error('音频未能开始播放，请重试并检查设备声音权限'), { code: 'VOICE_PLAYBACK_TIMEOUT' })), VOICE_PLAYBACK_START_TIMEOUT_MS);
 
-      audio.play().catch(err => {
-        if (settled) return;
-        settled = true;
-        cleanup();
+      const playFailed = err => {
         if (err.name === 'NotAllowedError') {
-          reject(new Error('浏览器拦截了音频播放，请先在页面上任意点击以激活音频权限'));
+          fail(Object.assign(new Error('音频已合成，浏览器阻止了自动播放，请在语音设置中点击试听以激活声音'), { code: 'VOICE_PLAYBACK_BLOCKED' }));
         } else {
-          reject(err);
+          fail(err);
         }
-      });
+      };
+      try { Promise.resolve(audio.play()).catch(playFailed); } catch (err) { playFailed(err); }
     });
   }
 
@@ -218,6 +244,10 @@ export class VoicePlayer {
         this.currentAudio.currentTime = 0;
       } catch {}
       this.currentAudio = null;
+    }
+    if (this.audioElement) {
+      try { this.audioElement.pause(); this.audioElement.removeAttribute('src'); this.audioElement.load(); } catch {}
+      // Keep the user's activated element for later transaction announcements.
     }
     while (this.queue.length > 0) {
       const item = this.queue.shift();

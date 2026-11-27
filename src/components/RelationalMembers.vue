@@ -1,15 +1,12 @@
 <template>
   <section class="customers-page space-y-3" aria-label="会员档案">
     <div class="member-toolbar">
-      <label class="member-range"><span class="sr-only">会员范围</span>
-        <select v-model="balance" aria-label="会员范围" @change="setBalanceFilter(balance)">
-          <option v-for="opt in filterOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </select>
-      </label>
+      <span class="member-scope">{{ currentFilterLabel }}</span>
       <span class="member-count" aria-live="polite">{{ page.total.value === null ? `本页 ${page.rows.value.length} 人` : `共 ${page.total.value} 人` }}</span>
     </div>
     <form v-if="showSearch" class="member-search" @submit.prevent="searchLocal">
       <input v-model="query" aria-label="搜索会员" maxlength="128" placeholder="姓名、电话、尾号或备注" type="search" />
+      <CustomerFilter :filter="balance" v-model:open="filterOpen" @update:filter="setBalanceFilter" />
       <button type="submit" class="book-primary">查询</button>
       <button v-if="canEdit" type="button" :disabled="blocked" @click="create">登记会员</button>
     </form>
@@ -315,6 +312,8 @@ import { BUSINESS_OFFSET, displayAbsoluteCents, displayCents } from '../relation
 import { useRelationalPage } from '../composables/useRelationalPage.js';
 import { memberIdentitySignature } from '../member-identity.js';
 import RelationalSale from './RelationalSale.vue';
+import CustomerFilter from './CustomerFilter.vue';
+import { MEMBER_FILTERS } from '../member-filters.js';
 
 const props = defineProps({
   workspace: { type: Object, required: true },
@@ -332,15 +331,8 @@ const props = defineProps({
 
 const emit = defineEmits(['history', 'update:balanceFilter', 'update:searchQuery']);
 
-const filterOptions = [
-  { value: 'all', label: '全部会员', description: '查看完整会员名单' },
-  { value: 'recent', label: '最近消费', description: '按消费时间，显示最近会员' },
-  { value: 'low', label: '低余额', description: '可用余额 0–50 元（含零余额）' },
-  { value: 'debt', label: '欠款会员', description: '查看待还款会员' },
-  { value: 'archived', label: '已归档会员', description: '保留历史，退出在用名单' }
-];
-
 const balance = ref(props.balanceFilter || 'all');
+const filterOpen = ref(false);
 const query = ref(props.searchQuery || '');
 const error = ref('');
 const receipt = ref('');
@@ -368,7 +360,7 @@ const canCashier = computed(() => Boolean(props.cashierWritable && props.feature
 const blocked = computed(() => Boolean(!props.workspace.state.book || props.workspace.state.busy || props.workspace.state.pending || props.workspace.state.pendingError || saleLoading.value));
 
 const currentFilterLabel = computed(() => {
-  return filterOptions.find(o => o.value === balance.value)?.label || '全部会员';
+  return MEMBER_FILTERS.find(o => o.value === balance.value)?.label || '全部会员';
 });
 
 let criteria = { search: query.value, balance: balance.value };
@@ -386,6 +378,7 @@ function searchLocal() { emit('update:searchQuery', query.value); criteria = { s
 
 watch(() => props.balanceFilter, val => {
   if (val && val !== balance.value) {
+    clearTimeout(searchTimer);
     balance.value = val;
     criteria = { search: query.value, balance: balance.value };
     void page.load();
@@ -412,6 +405,7 @@ watch([() => props.workspace.state.book, () => props.workspace.state.revision], 
 }, { immediate: true });
 
 function setBalanceFilter(val) {
+  clearTimeout(searchTimer);
   balance.value = val;
   emit('update:balanceFilter', val);
   criteria = { search: query.value, balance: balance.value };

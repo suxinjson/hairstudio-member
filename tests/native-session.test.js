@@ -31,7 +31,7 @@ function fixture() {
   const deviceId = randomUUID(), ledgerEpoch = randomUUID();
   const device = nativeCredentials(deviceId);
   const user = { id: 'native-owner', storeId: 'native-store', role: 'owner' };
-  let online = true, clock = Date.now(), saved = null, revoked = false, failSession = false, logins = 0, refreshes = 0, expireSpeech = false;
+  let online = true, clock = Date.now(), saved = null, revoked = false, failSession = false, logins = 0, refreshes = 0, expireSpeech = false, logouts = 0, failLogout = false;
   const credentials = { ...device, async saveSession(value) {
     if (failSession) throw new Error('Keystore not ready');
     return device.saveSession(value);
@@ -44,6 +44,11 @@ function fixture() {
       const { pathname } = new URL(url);
       if (pathname === '/api/v1/auth/login') return Response.json(auth(++logins));
       if (pathname === '/api/v2/book') return Response.json({ storeId: user.storeId, ledgerEpoch });
+      if (pathname === '/api/v1/auth/logout') {
+        logouts++;
+        if (failLogout) throw new TypeError('Synthetic logout network failure');
+        return Response.json({ ok: true });
+      }
       if (revoked) return Response.json({ code: 'DEVICE_DISABLED', error: '设备已禁用' }, { status: 403 });
       if (pathname === '/api/v1/device/authorization') return Response.json({ user, authorization: grant() });
       if (pathname === '/api/v1/auth/refresh') return Response.json(auth('rotation-' + ++refreshes));
@@ -57,7 +62,28 @@ function fixture() {
     } });
   return { create, device, user, get logins() { return logins; }, get refreshes() { return refreshes; },
     online(value) { online = value; }, advance(ms) { clock += ms; }, revoke() { revoked = true; }, expireSpeech() { expireSpeech = true; },
+    get logouts() { return logouts; }, failLogout() { failLogout = true; },
     failSession(value) { failSession = value; } };
+}
+
+for (const scenario of ['online', 'offline', 'lost-response']) {
+  test(`native logout clears credentials, retains the book binding and cannot restore the old user (${scenario})`, async () => {
+    const f = fixture(), client = f.create();
+    await client.login(origin, 'native-owner', 'synthetic-password');
+    const binding = await f.device.loadBookBinding();
+    assert.ok((await f.device.loadSession()).session);
+    if (scenario === 'offline') f.online(false);
+    if (scenario === 'lost-response') { f.failLogout(); await assert.rejects(client.logout()); }
+    else await client.logout();
+    assert.equal(client.state.user, null);
+    assert.equal((await f.device.loadSession()).session, null);
+    assert.deepEqual(await f.device.loadBookBinding(), binding);
+    assert.equal(f.logouts, scenario === 'offline' ? 0 : 1);
+    const reopened = f.create(); await reopened.init();
+    assert.equal(reopened.state.user, null);
+    assert.equal(reopened.state.binding.storeId, f.user.storeId);
+    assert.throws(() => reopened.authorize({ mode: 'cloud', storeId: f.user.storeId }));
+  });
 }
 
 test('native refresh retries audio with updated credentials and no provider secret', async () => {

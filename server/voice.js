@@ -186,11 +186,13 @@ async function assertVoiceResponse(response, label, controller) {
   try { await readVoiceBody(response, 8192, controller); } catch {}
   const hints = {
     400: '请检查模型、音色 ID 和请求参数',
+    422: '请检查模型、音色 ID 和请求参数',
     401: 'API Key 无效或已失效，请重新配置当前服务商的密钥',
     403: 'API Key 无权访问此接口或音色',
     402: '当前模型额度不足，请检查 API 余额',
     404: '请检查接口地址和音色 ID',
-    429: '请求过于频繁或免费模型繁忙，请稍后重试'
+    429: '请求过于频繁或免费模型繁忙，请稍后重试',
+    503: '当前模型繁忙或服务暂不可用，请稍后重试'
   };
   throw new ApiError(502, `${label} 接口错误 (${response.status})：${hints[response.status] || '上游服务暂时不可用，请稍后重试'}`, 'VOICE_UPSTREAM_ERROR');
 }
@@ -246,7 +248,7 @@ export async function synthesizeTTS({
   } else if (provider === 'fish_audio') {
     const endpoint = apiUrl?.trim() || PROVIDER_DEFAULTS.fish_audio.apiUrl;
     const targetModel = model?.trim() || PROVIDER_DEFAULTS.fish_audio.model;
-    const targetRefId = voiceId?.trim() || PROVIDER_DEFAULTS.fish_audio.voiceId;
+    const targetRefId = voiceId?.trim();
 
     return voiceOperation(provider, '语音合成', VOICE_SYNTHESIS_TIMEOUT_MS[provider], async controller => {
       const response = await request(endpoint, {
@@ -258,7 +260,7 @@ export async function synthesizeTTS({
         },
         body: JSON.stringify({
           text: trimmedText,
-          reference_id: targetRefId,
+          ...(targetRefId && { reference_id: targetRefId }),
           format: 'mp3'
         }),
         signal: controller.signal

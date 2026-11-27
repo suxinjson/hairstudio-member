@@ -48,7 +48,7 @@ function fixture({ online = true, mode = 'cloud' } = {}) {
     }
   };
   const f = { workspace, reads, writes, listeners: new Map(), exits: 0,
-    session: { state, init: async () => {}, heartbeat: async () => {}, checkpoint: async () => {}, publishAccess() {}, async loadStoreProfile() { return state.storeProfile; }, async saveStoreProfile(profile) { state.storeProfile = profile; return profile; }, getVoiceConfig: async () => ({ version: 0, provider: 'xfyun', enabled: false, serverXfyunConfigured: true, appId: 'test', voiceId: 'x4_xiaoyan' }), getUsers: async () => [] },
+    session: { state, init: async () => {}, heartbeat: async () => {}, checkpoint: async () => {}, activateOffline: async () => {}, publishAccess() {}, async loadStoreProfile() { return state.storeProfile; }, async saveStoreProfile(profile) { state.storeProfile = profile; return profile; }, getVoiceConfig: async () => ({ version: 0, provider: 'xfyun', enabled: false, serverXfyunConfigured: true, appId: 'test', voiceId: 'x4_xiaoyan' }), getUsers: async () => [] },
     update: { check: async () => null, installedBuild: async () => 1 } };
   globalThis[fixtureKey] = f; return f;
 }
@@ -112,16 +112,123 @@ test('member pagination stays bounded while refresh and previous page preserve t
   const f = fixture();
   const original = f.workspace.read;
   f.workspace.read = async (method, input) => method !== 'listMembers' ? original(method, input) : { items: Array.from({ length: 30 }, (_, i) => ({ ...member, id: String((input.cursor ?? 0) * 30 + i), name: '分页会员' + ((input.cursor ?? 0) * 30 + i) })), total: 10000, nextCursor: (input.cursor ?? 0) < 333 ? (input.cursor ?? 0) + 1 : null };
-  await ui.mount(Members, { workspace: f.workspace, feature: () => true }); await settle();
+  await ui.mount(Members, { workspace: f.workspace, feature: () => true, showSearch: true }); await settle();
   for (let i = 0; i < 21; i++) { ui.button('下一页').click(); await settle(); assert.equal(document.querySelectorAll('.customer-row').length, 30); }
   const first = document.querySelector('.customer-open').textContent; f.workspace.state.revision++; await settle();
   assert.equal(document.querySelector('.customer-open').textContent, first); assert.ok(has('第 22 页'));
   ui.button('上一页').click(); await settle(); assert.ok(has('第 21 页')); assert.equal(document.querySelectorAll('.customer-row').length, 30);
   const read = f.workspace.read;
   f.workspace.read = async (method, input) => { if (method === 'listMembers' && input.balance === 'debt') throw new Error('范围读取失败'); return read(method, input); };
-  await ui.input('[aria-label="会员范围"]', 'debt', 'change'); await settle();
+  document.querySelector('.customer-filter-trigger').click(); await settle();
+  [...document.querySelectorAll('[role="menuitemradio"]')].find(el => el.textContent.includes('欠款会员')).click(); await settle();
   assert.ok(has('范围读取失败')); assert.equal(document.querySelectorAll('.customer-row').length, 0);
   assert.equal(document.querySelector('[aria-label="会员分页"]'), null);
+});
+
+test('embedded member scope preserves the search, reaches every range and submits once', async () => {
+  const f = fixture(); await ui.mount(Cashier); await settle();
+  const trigger = () => document.querySelector('.header-search .customer-filter-trigger');
+  assert.ok(trigger());
+  assert.equal(document.querySelector('select[aria-label="会员范围"]'), null);
+  assert.equal(document.querySelectorAll('.customer-filter-trigger').length, 1);
+  await ui.input('[aria-label="搜索会员"]', '1380');
+  const initialReads = f.reads.filter(row => row.method === 'listMembers').length;
+  for (const [value, label] of [['recent', '最近消费'], ['low', '低余额'], ['debt', '欠款会员'], ['archived', '已归档会员'], ['all', '全部会员']]) {
+    trigger().click(); await settle();
+    const options = [...document.querySelectorAll('[role="menuitemradio"]')];
+    assert.equal(options.length, 5);
+    options.find(el => el.querySelector('strong').textContent === label).click(); await settle();
+    const last = f.reads.filter(row => row.method === 'listMembers').at(-1).input;
+    assert.equal(last.balance, value); assert.equal(last.search, '1380');
+    assert.equal(document.querySelector('.member-scope').textContent, label);
+    assert.equal(trigger().getAttribute('aria-expanded'), 'false');
+    assert.equal(document.activeElement, trigger());
+    assert.equal(Boolean(document.querySelector('.filter-active-dot')), value !== 'all');
+  }
+  await new Promise(resolve => setTimeout(resolve, 180)); await settle();
+  assert.equal(f.reads.filter(row => row.method === 'listMembers').length, initialReads + 5);
+  const before = f.reads.filter(row => row.method === 'listMembers').length;
+  ui.button('查询').click(); await settle();
+  await new Promise(resolve => setTimeout(resolve, 180)); await settle();
+  assert.equal(f.reads.filter(row => row.method === 'listMembers').length, before + 1);
+  ui.button('清空搜索').click(); await settle();
+  assert.equal(document.querySelector('[aria-label="搜索会员"]').value, '');
+  assert.equal(f.reads.filter(row => row.method === 'listMembers').at(-1).input.search, '');
+  assert.equal(f.writes.length, 0);
+});
+
+test('scope menu handles keyboard, outside taps, Android back and page changes', async () => {
+  const f = fixture(); await ui.mount(Cashier); await settle();
+  const trigger = () => document.querySelector('.customer-filter-trigger');
+  const key = value => document.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true }));
+  trigger().focus(); key('ArrowDown'); await settle();
+  assert.equal(document.activeElement.getAttribute('aria-checked'), 'true');
+  key('End'); assert.ok(document.activeElement.textContent.includes('已归档会员'));
+  key('Home'); assert.ok(document.activeElement.textContent.includes('全部会员'));
+  key('ArrowDown'); assert.ok(document.activeElement.textContent.includes('最近消费'));
+  key('Escape'); await settle();
+  assert.equal(trigger().getAttribute('aria-expanded'), 'false'); assert.equal(document.activeElement, trigger());
+  trigger().click(); await settle();
+  document.querySelector('[aria-label="搜索会员"]').dispatchEvent(new window.Event('pointerdown', { bubbles: true })); await settle();
+  assert.equal(document.querySelector('[role="menu"]'), null);
+  trigger().click(); await settle(); await f.listeners.get('backButton')(); await settle();
+  assert.equal(document.querySelector('[role="menu"]'), null); assert.equal(f.exits, 0); assert.equal(has('再按两次返回键'), false);
+  trigger().click(); await settle(); ui.button('财务流水').click(); await settle();
+  assert.equal(document.querySelector('.customer-filter-trigger'), null);
+  ui.button('会员收银').click(); await settle(); assert.equal(trigger().getAttribute('aria-expanded'), 'false');
+});
+
+test('scope menu fits the visual viewport as the keyboard and orientation change', async t => {
+  const viewport = new window.EventTarget(); viewport.height = 420; viewport.offsetTop = 0;
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+  t.after(() => { delete window.visualViewport; });
+  fixture(); await ui.mount(Cashier); await settle();
+  document.querySelector('.customer-filter-control').getBoundingClientRect = () => ({ bottom: 126 });
+  document.querySelector('.customer-filter-trigger').click(); await settle();
+  const menu = () => document.querySelector('[role="menu"]');
+  assert.equal(menu().style.maxHeight, '274px');
+  viewport.height = 300; viewport.dispatchEvent(new window.Event('resize')); await settle();
+  assert.equal(menu().style.maxHeight, '154px');
+  viewport.height = 800; window.dispatchEvent(new window.Event('resize')); await settle();
+  assert.equal(menu().style.maxHeight, '380px');
+  document.querySelector('.app-nav').getBoundingClientRect = () => ({ top: 300, height: 65 });
+  window.dispatchEvent(new window.Event('resize')); await settle();
+  assert.equal(menu().style.maxHeight, '154px');
+});
+
+for (const settings of [{ mode: 'cloud', online: true }, { mode: 'cloud', online: false }, { mode: 'standalone', online: false }]) {
+  test(`account settings sign out once and retain the book and pending records (${settings.mode}, online=${settings.online})`, async () => {
+    const f = fixture(settings), state = f.session.state;
+    const book = f.workspace.state.book;
+    f.workspace.state.pendingCount = 2;
+    f.workspace.state.pending = { id: 'original-pending-member-command', type: 'recharge' };
+    let release, calls = 0; const waiting = new Promise(resolve => { release = resolve; });
+    f.session.logout = async () => { calls++; await waiting; state.user = null; state.deviceAccess.allowed = false; state.generation++; };
+    await ui.mount(Cashier); await settle();
+    ui.button('账号与设置').click(); await settle(); ui.button('账号与连接').click(); await settle();
+    const button = document.querySelector('.account-signout'); assert.ok(button);
+    f.workspace.state.busy = true; await settle(); assert.equal(button.disabled, true); button.click(); assert.equal(calls, 0);
+    f.workspace.state.busy = false; await settle(); button.click(); button.click(); await settle();
+    assert.equal(calls, 1); assert.equal(button.disabled, true); assert.ok(button.textContent.includes('正在退出'));
+    release(); await settle();
+    assert.ok(has(settings.mode === 'standalone' ? '登录本地账号' : '登录门店账号'));
+    assert.equal(document.querySelector('[aria-label="主导航"]'), null);
+    assert.equal(document.querySelector('.has-app-navigation'), null);
+    assert.equal(document.querySelector('[aria-label="搜索会员"]'), null);
+    assert.equal(f.workspace.state.book, book); assert.equal(f.workspace.state.pendingCount, 2);
+    assert.equal(f.workspace.state.pending.id, 'original-pending-member-command');
+    assert.equal(f.writes.length, 0);
+  });
+}
+
+test('viewer accounts can find sign out without any member write permission', async () => {
+  const f = fixture(); f.session.state.user.role = 'viewer';
+  f.session.logout = async () => { f.session.state.user = null; f.session.state.generation++; };
+  await ui.mount(Cashier); await settle();
+  assert.equal(document.querySelector('.register-member'), null);
+  ui.button('账号与设置').click(); await settle(); ui.button('账号与连接').click(); await settle();
+  assert.equal(document.querySelector('.account-signout').disabled, false);
+  document.querySelector('.account-signout').click(); await settle(); assert.ok(has('登录门店账号'));
 });
 
 test('global ledger clears member scope, and member and ledger searches stay independent', async () => {

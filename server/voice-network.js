@@ -44,7 +44,7 @@ export function isPublicAddress(address) {
 }
 export async function resolveVoiceTarget(url, resolve = lookup) {
   const addresses = await resolve(url.hostname, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some(row => !isPublicAddress(row.address))) throw new ApiError(400, '语音目标不能解析到内网或保留地址', 'VOICE_TARGET_FORBIDDEN');
+  if (!addresses.length || addresses.some(row => !isPublicAddress(row.address))) throw new ApiError(400, '语音服务域名解析到了内网或保留地址，请检查服务器 DNS 或代理设置', 'VOICE_TARGET_FORBIDDEN');
   // Many deployments have IPv6 DNS records but only IPv4 outbound routing.
   return addresses.find(row => row.family === 4) || addresses[0];
 }

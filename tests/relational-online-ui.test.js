@@ -149,6 +149,30 @@ test('cashier uses authenticated v2 pages and recovers from a failed handshake w
   assert.equal(requests.some(({ path }) => /^\/api\/v1\/(?:account|sync)(?:[/?]|$)/.test(path)), false);
 });
 
+for (const loseResponse of [false, true]) {
+  test(`web account settings clear the login and sensitive views on sign out (lost response=${loseResponse})`, async () => {
+    await api.login(storeA.username, password);
+    await ui.mount(Cashier); await waitFor(() => has(storeA.name));
+    assert.ok(document.querySelector('.has-app-navigation'));
+    ui.button('账号与设置').click(); await ui.nextTick();
+    ui.button('账号与连接').click(); await ui.nextTick();
+    requestHandler = async (path, options) => {
+      const response = await direct(path, options);
+      if (loseResponse && path === '/api/v1/auth/logout') throw new TypeError('退出回执丢失');
+      return response;
+    };
+    const button = document.querySelector('.account-signout'); assert.ok(button); button.click(); button.click();
+    await waitFor(() => has('登录门店账号')); await drainRequests();
+    assert.equal(api.user.value, null); assert.equal(api.accessToken.value, '');
+    assert.equal(localStorage.getItem(sessionKey), null);
+    assert.equal(document.querySelector('[aria-label="主导航"]'), null);
+    assert.equal(document.querySelector('.has-app-navigation'), null);
+    assert.equal(has(storeA.name), false);
+    assert.equal(requests.filter(row => row.path === '/api/v1/auth/logout').length, 1);
+    if (loseResponse) await waitFor(() => has('本机已退出，云端会话撤销未确认'));
+  });
+}
+
 test('a posted recharge with a lost response keeps the original number across reload and recovers it without another write', async () => {
   await api.login(storeA.username, password);
   await ui.mount(Cashier); await waitFor(() => has(storeA.name));

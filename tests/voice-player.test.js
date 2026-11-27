@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { voicePlayer } from '../admin/src/utils/voice-player.js';
 import { MerchantSessionClient } from '../admin/src/api/merchant-session.js';
-import { VoicePlayer } from '../src/voice-player.js';
+import { VoicePlayer, VOICE_PLAYBACK_START_TIMEOUT_MS, VOICE_PLAYBACK_TIMEOUT_MS } from '../src/voice-player.js';
 
 const memoryStorage = () => {
   const data = new Map();
@@ -175,13 +175,14 @@ test('shared announcements use saved templates and volume and cache config by lo
     if (i === 2) context = 'store-B';
     const operation = player.broadcast('consume', { name: '张姐', amount: '38.00', balance: '62.00' });
     await flush();
-    assert.equal(audio.instances[i].volume, 0.4);
-    audio.instances[i].dispatchEvent(new Event('ended'));
+    assert.equal(audio.instances[0].volume, 0.4);
+    audio.instances[0].dispatchEvent(new Event('ended'));
     assert.equal(await operation, true);
   }
   assert.equal(getVoiceConfig.mock.callCount(), 2);
   assert.deepEqual(calls, Array(3).fill({ text: '张姐消费38元，余额62元' }));
   assert.equal(audio.revoked.length, 3);
+  assert.equal(audio.instances.length, 1);
   assert.ok(audio.instances.every(instance => instance.paused && instance.released && !instance.src));
 });
 
@@ -229,7 +230,8 @@ test('announcements play sequentially and stop releases active and queued audio'
   const stopped = Promise.all([second, third].map(operation => assert.rejects(operation, { code: 'VOICE_CANCELLED' })));
   player.stop(); await stopped; await flush();
   assert.equal(audio.revoked.length, 2);
-  assert.ok(audio.instances[1].paused && audio.instances[1].released);
+  assert.ok(audio.instances[0].paused && audio.instances[0].released);
+  assert.equal(audio.instances.length, 1);
   t.mock.timers.tick(300); await flush();
   assert.deepEqual(calls, ['第一笔', '第二笔']);
 });
@@ -284,9 +286,97 @@ test('playback failure reports an error and frees audio so later transactions ca
   assert.deepEqual(errors, ['音频解码或播放失败']);
   assert.deepEqual(audio.revoked, ['blob:test-1']);
   const second = player.broadcast('recharge', { amount: '20.00' });
-  await flush(); audio.instances[1].dispatchEvent(new Event('ended'));
+  await flush(); audio.instances[0].dispatchEvent(new Event('ended'));
   assert.equal(await second, true);
 });
+
+test('preview primes a valid audio source synchronously and plays synthesized speech on the same element', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const audio = audioHarness(t), synthesis = deferred(), statuses = [];
+  const play = t.mock.method(Audio.prototype, 'play', function () {
+    assert.ok(this.src); return Promise.resolve();
+  });
+  const player = new VoicePlayer({ api: { synthesizeVoice: () => synthesis.promise } });
+  t.after(() => player.stop());
+  player.preparePlayback();
+  assert.equal(play.mock.callCount(), 1);
+  const primer = audio.instances[0];
+  assert.match(primer.src, /^data:audio\/wav;base64,/);
+  const wav = Buffer.from(primer.src.split(',')[1], 'base64');
+  assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(wav.readUInt32LE(4) + 8, wav.length);
+  const operation = player.queueSpeak('试听', { onStatus: status => statuses.push(status) });
+  assert.deepEqual(statuses, ['synthesizing']);
+  synthesis.resolve(new Blob(['mp3'], { type: 'audio/mpeg' }));
+  await flush();
+  assert.equal(audio.instances.length, 1);
+  assert.equal(player.currentAudio, primer);
+  assert.deepEqual(statuses, ['synthesizing']);
+  primer.dispatchEvent(new Event('playing'));
+  assert.deepEqual(statuses, ['synthesizing', 'playing']);
+  primer.dispatchEvent(new Event('ended')); await operation;
+});
+
+test('stopping a preview retains the activated audio element for later announcements', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const audio = audioHarness(t);
+  const player = new VoicePlayer({ api: { synthesizeVoice: async () => new Blob(['mp3'], { type: 'audio/mpeg' }) } });
+  t.after(() => player.stop());
+  player.preparePlayback();
+  const activated = audio.instances[0];
+  player.stop();
+  assert.equal(activated.src, undefined);
+  const operation = player.queueSpeak('交易播报');
+  await flush();
+  assert.equal(audio.instances.length, 1);
+  assert.equal(player.currentAudio, activated);
+  activated.dispatchEvent(new Event('playing'));
+  activated.dispatchEvent(new Event('ended'));
+  await operation;
+});
+
+test('blocked preview retries its existing audio synchronously without another synthesis request', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const audio = audioHarness(t); let permitted = false;
+  const play = t.mock.method(Audio.prototype, 'play', () => permitted ? Promise.resolve() : Promise.reject(new DOMException('blocked', 'NotAllowedError')));
+  const synthesizeVoice = t.mock.fn(async () => new Blob(['mp3'], { type: 'audio/mpeg' }));
+  const player = new VoicePlayer({ api: { synthesizeVoice } });
+  t.after(() => player.stop());
+  let failure;
+  await assert.rejects(player.queueSpeak('试听', { onStatus() {} }), error => { failure = error; return error.code === 'VOICE_PLAYBACK_BLOCKED'; });
+  assert.equal(typeof failure.retryPlayback, 'function');
+  permitted = true;
+  const statuses = [], operation = failure.retryPlayback({ onStatus: status => statuses.push(status) });
+  assert.equal(play.mock.callCount(), 2, 'retry invokes play inside the click call stack');
+  assert.equal(synthesizeVoice.mock.callCount(), 1);
+  assert.equal(audio.instances.length, 1);
+  audio.instances[0].dispatchEvent(new Event('playing'));
+  assert.deepEqual(statuses, ['playing']);
+  audio.instances[0].dispatchEvent(new Event('ended')); await operation;
+  assert.equal(audio.revoked.length, 2);
+  player.stop();
+  await assert.rejects(failure.retryPlayback(), { code: 'VOICE_CANCELLED' });
+  assert.equal(synthesizeVoice.mock.callCount(), 1);
+});
+
+for (const phase of ['start', 'completion']) {
+  test(`playback ${phase} timeout rejects instead of reporting success and frees the queue`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const audio = audioHarness(t), statuses = [];
+    const player = new VoicePlayer({ api: { synthesizeVoice: async () => new Blob(['mp3'], { type: 'audio/mpeg' }) } });
+    t.after(() => player.stop());
+    const rejected = assert.rejects(player.queueSpeak('试听', { onStatus: status => statuses.push(status) }), { code: 'VOICE_PLAYBACK_TIMEOUT' });
+    await flush();
+    if (phase === 'completion') audio.instances[0].dispatchEvent(new Event('playing'));
+    t.mock.timers.tick(phase === 'start' ? VOICE_PLAYBACK_START_TIMEOUT_MS : VOICE_PLAYBACK_TIMEOUT_MS);
+    await rejected;
+    assert.equal(player.isPlaying, false);
+    assert.equal(player.currentAudio, null);
+    assert.equal(audio.revoked.length, 1);
+    const next = player.queueSpeak('下一条');
+    await flush(); audio.instances[0].dispatchEvent(new Event('ended')); await next;
+  });
+}
 
 test('admin synthesis cancellation does not refresh login or become a timeout', async t => {
   const controller = new AbortController();

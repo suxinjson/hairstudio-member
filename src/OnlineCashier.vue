@@ -1,10 +1,10 @@
 <template>
-  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none max-w-full overflow-x-hidden">
+  <div class="app-shell flex flex-col min-h-screen bg-slate-100/90 text-slate-900 select-none max-w-full overflow-x-clip" :class="{ 'has-app-navigation': user && !locked }">
     <!-- 顶部状态栏与大搜索框 (AppHeader 经典复刻) -->
     <AppHeader
       :active-tab="workbench?.activeTab || 'members'"
       :ledger-view="workbench?.ledgerView || 'summary'"
-      :show-member-filter="false" :show-notices="false"
+      :show-notices="false"
       :show-create-member="writable && feature('members')"
       v-model:customer-filter="headerCustomerFilter"
       v-model:filter-open="headerFilterOpen"
@@ -43,11 +43,9 @@
                 <h2 class="text-base font-black text-slate-900 m-0">账号与连接</h2>
                 <p class="text-xs text-slate-500 m-0 mt-0.5">当前登录账号：<strong class="text-slate-800">{{ user.displayName }}</strong>（{{ user.role === 'owner' ? '店主' : user.role === 'viewer' ? '只读账号' : '收银员' }}）</p>
               </div>
-              <button type="button" @click="signOut" :disabled="busy || workspace.state.busy" class="px-3 py-1.5 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-xl btn-press">
-                退出登录
-              </button>
             </div>
             <p class="text-xs text-slate-600 m-0 pt-2 border-t border-slate-100">网页在线版实时连接云端数据库，数据自动持久化入库。</p>
+            <button type="button" @click="signOut" :disabled="busy || workspace.state.busy" class="account-signout"><LogOut :size="18" aria-hidden="true" /><span>{{ busy ? '正在退出…' : '退出登录 / 切换账号' }}</span></button>
             <div class="pt-2">
               <a href="/admin/" target="_blank" class="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 hover:text-emerald-800">
                 打开电脑端商家管理后台（管理设备、员工与高级报表） ›
@@ -68,6 +66,7 @@
 
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { LogOut } from 'lucide-vue-next';
 import { adminApi } from '../admin/src/api/session.js';
 import { voicePlayer } from '../admin/src/utils/voice-player.js';
 import VoiceSettingsView from '../admin/src/views/VoiceSettingsView.vue';
@@ -129,7 +128,7 @@ async function signIn() {
   finally { busy.value = false; password.value = ''; }
 }
 async function signOut() {
-  if (busy.value) return;
+  if (busy.value || workspace.state.busy) return;
   busy.value = true; notice.value = '';
   try { await adminApi.logout(); }
   catch (error) { notice.value = '本机已退出，云端会话撤销未确认：' + error.message; }

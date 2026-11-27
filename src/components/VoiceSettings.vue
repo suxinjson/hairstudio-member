@@ -67,13 +67,14 @@
           </select>
           <input v-else
             v-model="form.voiceId"
+            aria-label="播报音色"
             :disabled="!isOwner"
             type="text"
-            :placeholder="defaultVoiceId"
+            :placeholder="form.provider === 'fish_audio' ? '可选，留空使用模型生成的音色' : defaultVoiceId"
             class="w-full h-10 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono focus:outline-none focus:border-emerald-600 disabled:opacity-60"
           />
           <p class="text-[10px] text-slate-400">
-            可直接试听当前音色，保存后用于交易播报。
+            {{ form.provider === 'fish_audio' ? '音色 ID 可留空；填写时请使用当前账号可访问的 Fish Audio 音色。保存后用于交易播报。' : '可直接试听当前音色，保存后用于交易播报。' }}
           </p>
         </div>
 </section>
@@ -170,7 +171,7 @@
       <div class="space-y-3">
         <div class="flex flex-col sm:flex-row gap-3">
           <input
-            v-model="testText"
+            v-model="testText" aria-label="试听文本"
             type="text"
             placeholder="输入需要试听的测试文本..."
             class="flex-1 h-11 px-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-none focus:border-emerald-600"
@@ -179,14 +180,14 @@
           <button
             type="button"
             :disabled="testStatus !== 'idle' || !testText.trim()"
-            :aria-label="testStatus === 'idle' ? '试听测试' : testStatus === 'synthesizing' ? '正在合成试听' : '正在播放试听'"
+            :aria-label="testStatus === 'idle' ? (previewRetry ? '播放已合成音频' : '试听测试') : testStatus === 'synthesizing' ? '正在合成试听' : '正在播放试听'"
             @click="handleTestPlay"
             class="h-11 px-6 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-black transition flex items-center justify-center gap-2 shadow-md shadow-emerald-900/20 disabled:opacity-50 shrink-0"
           >
             <span v-if="testStatus === 'synthesizing'" class="animate-spin text-sm">⏳</span>
             <span v-else-if="testStatus === 'playing'" class="animate-pulse text-sm">🔊</span>
             <span v-else>▶</span>
-            <span>{{ testStatus === 'synthesizing' ? '合成中...' : (testStatus === 'playing' ? '正在播放中' : '试听测试') }}</span>
+            <span>{{ testStatus === 'synthesizing' ? '合成中...' : (testStatus === 'playing' ? '正在播放中' : (previewRetry ? '播放已合成音频' : '试听测试')) }}</span>
           </button>
           <button
             v-if="testStatus !== 'idle'"
@@ -556,6 +557,7 @@ const providerName = computed(() => ({ fish_audio: 'Fish Audio', heygen: 'HeyGen
 const showKey = ref(false);
 const testText = ref('欢迎光临，张三消费 50 元，卡内余额 200 元');
 const testStatus = ref('idle');
+const previewRetry = ref(null);
 const testMessage = ref('');
 const testMessageType = ref('success');
 const isTesting = computed(() => testStatus.value === 'synthesizing');
@@ -634,7 +636,7 @@ async function loadConfig() {
     serverXfyunAppId.value = data.appId || '';
     serverXfyunConfigured.value = Boolean(data.serverXfyunConfigured);
     form.model = data.model || DEFAULTS[form.provider].model;
-    form.voiceId = data.voiceId || DEFAULTS[form.provider].voiceId;
+    form.voiceId = data.voiceId ?? DEFAULTS[form.provider].voiceId;
     form.volume = typeof data.volume === 'number' ? data.volume : 1.0;
     form.events.consume = data.events?.consume !== false;
     form.events.recharge = data.events?.recharge !== false;
@@ -682,14 +684,14 @@ async function handleTestPlay() {
   testStatus.value = 'synthesizing';
   testMessage.value = '';
 
+  const retry = previewRetry.value;
+  previewRetry.value = null;
+  if (!retry) props.player.preparePlayback?.();
+  const onStatus = status => {
+    if (alive && sequence === previewSequence) testStatus.value = status;
+  };
   try {
-    const dummyAudio = new Audio();
-    dummyAudio.volume = 0;
-    dummyAudio.play().catch(() => {});
-  } catch {}
-
-  try {
-    await props.player.queueSpeak(testText.value.trim(), {
+    await (retry ? retry({ onStatus }) : props.player.queueSpeak(testText.value.trim(), {
       volume: form.volume,
       testOptions: isOwner.value ? {
         provider: form.provider,
@@ -697,15 +699,18 @@ async function handleTestPlay() {
         apiKey: form.apiKey,
         appId: form.appId,
         model: form.model || defaultModel.value,
-        voiceId: form.voiceId || defaultVoiceId.value
+        voiceId: form.voiceId.trim()
       } : null,
-      onStatus: status => {
-        if (alive && sequence === previewSequence) testStatus.value = status;
-      }
-    });
+      onStatus
+    }));
     if (alive && sequence === previewSequence) showTestTip('音频合成并播放成功！', 'success');
   } catch (err) {
-    if (alive && sequence === previewSequence && err.code !== 'VOICE_CANCELLED') showTestTip('试听失败: ' + err.message, 'error');
+    if (alive && sequence === previewSequence && err.code !== 'VOICE_CANCELLED') {
+      if (err.code === 'VOICE_PLAYBACK_BLOCKED' && typeof err.retryPlayback === 'function') {
+        previewRetry.value = err.retryPlayback;
+        showTestTip('音频已合成，浏览器阻止了自动播放，请点击“播放已合成音频”。', 'error');
+      } else showTestTip('试听失败: ' + err.message, 'error');
+    }
   } finally {
     if (alive && sequence === previewSequence) testStatus.value = 'idle';
   }
@@ -713,6 +718,7 @@ async function handleTestPlay() {
 
 function handleStopPlay() {
   previewSequence++;
+  previewRetry.value = null;
   props.player.stop();
   testStatus.value = 'idle';
   showTestTip('试听已停止', 'success');
@@ -772,9 +778,15 @@ async function handleSave() {
 onMounted(() => { if (props.online) loadConfig(); });
 watch(() => props.online, online => { if (online && !loaded.value) void loadConfig(); if (!online) stopPreview(); });
 watch(() => props.active, active => { if (!active) stopPreview(); });
+watch([form, testText], () => {
+  if (testStatus.value !== 'idle' || previewRetry.value) stopPreview();
+  if (message.value === testMessage.value) message.value = '';
+  testMessage.value = '';
+}, { flush: 'sync' });
 
 function stopPreview() {
   previewSequence++;
+  previewRetry.value = null;
   props.player.stop();
   testStatus.value = 'idle';
 }
